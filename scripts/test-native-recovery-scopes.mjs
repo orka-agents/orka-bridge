@@ -176,12 +176,12 @@ assert.throws(() => checkSend('send-unsupported', { ...unsupported, buttons: ['C
 assert.throws(() => checkSend('send-earlier-target', { ...sendProbe, text: 'fixture-captured fixture-selected' }, false));
 assert.throws(() => checkSend('send-failed', { ...sendProbe, detailsOpen: true, extras: ['Check again'] }, true));
 // Exercise the queued-state predicate with the rendered summary, including its workspace wording.
-const queuedGuard = source.split('\n').find(line => line.includes('if (!queued.status'));
+const queuedGuard = source.split('\n').find(line => line.includes("if (queued.pill !== 'Queued'"));
 assert.ok(queuedGuard);
 const checkQueued = Function('queued', 'name', queuedGuard);
-const queuedState = { status: true, inChoice: false, change: true, cancel: false, text: 'GitHub Copilot, connects when the workspace is ready' };
+const queuedState = { pill: 'Queued', inChoice: false, change: false, cancel: true, text: 'Connect the AI\nQueued\nGitHub Copilot · gpt-5.6-terra\nConnects when the workspace is ready.\nCancel' };
 assert.doesNotThrow(() => checkQueued(queuedState, 'setup-transfer-queued'));
-assert.throws(() => checkQueued({ ...queuedState, cancel: true }, 'setup-transfer-queued'));
+for (const mutation of [{ cancel: false }, { change: true }, { inChoice: true }, { pill: undefined }, { text: 'Connects through the local cluster.' }]) assert.throws(() => checkQueued({ ...queuedState, ...mutation }, 'setup-transfer-queued'));
 const welcomeGuard = source.split('\n').find(line => line.includes('if (!welcome.primary'));
 assert.ok(welcomeGuard);
 const checkWelcome = Function('welcome', welcomeGuard);

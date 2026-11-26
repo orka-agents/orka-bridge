@@ -98,8 +98,6 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [modelState, setModelState] = useState<ModelState>('idle');
-  const [stepChoice, setStepChoice] = useState<HTMLDivElement | null>(null);
-  const [stepRecovery, setStepRecovery] = useState<HTMLDivElement | null>(null);
   const [placeRecovery, setPlaceRecovery] = useState<HTMLDivElement | null>(null);
   const observeModel = useCallback((value: ModelState) => { setModelState(value); onModelState?.(value); }, [onModelState]);
   const [check, setCheck] = useState(0);
@@ -139,6 +137,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const snapshotEpoch = useRef(0);
   const [requirements, setRequirements] = useState<WorkspaceRequirements | null>();
   const [preflightBlocked, setPreflightBlocked] = useState(true);
+  const [preflightFailed, setPreflightFailed] = useState(false);
   const [location, setLocation] = useState<'local' | 'cluster'>('local');
   const epoch = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -349,10 +348,10 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   if (welcome && status) return <Welcome titleId={titleId} onStart={start} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
   const selected = status?.selected === 'localVm';
   const modelRecovery = ['failed', 'resetFailed', 'removalFailed', 'resetting'].includes(modelState);
+  // A failed connection keeps the stage's name; the AI card beside the steps says what went wrong.
   const aiHeadings: Partial<Record<ModelState, string>> = {
     resetFailed: "The AI connection couldn't be reset",
     removalFailed: "The saved sign-in couldn't be removed",
-    failed: "The AI couldn't connect",
     resetting: 'Resetting the AI connection',
     connected: 'Run your first agent',
   };
@@ -369,13 +368,15 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const noClusters = !snapshotUnavailable && snapshot?.persistenceState === 'complete' && snapshot.places.length === 0;
   const localNext = !modelRecovery && !error && !!status && !placesView.done && (selected || noClusters);
   const showPayoff = !workspace && !payoffDismissed && eligiblePayoff;
+  // Outside the guided first run, a first workspace that is getting ready is two cards: the workspace and the AI, as the board shows.
+  const twoCards = !guided && !workspace && selected && !!status && ['preparing', 'installing', 'starting'].includes(status.localVm) && !upgradePanel;
   const localStage = status?.localVm === 'ready' ? aiHeading : status?.localVm === 'failed'
     ? status.preflightFailure ? 'Check this computer' : workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready';
   return <div className="places-workspace">
-    {(view === 'cluster' || view === 'local' && workspace && !showPayoff) && <Button type="button" kind="quiet" className="places-back" onClick={back}>Back to clusters</Button>}
+    {(view === 'cluster' || view === 'local' && (workspace || twoCards) && !showPayoff) && <Button type="button" kind="quiet" className="places-back" onClick={back}>Back to clusters</Button>}
     <div className="workspace-heading places-heading" hidden={!!showPayoff}>
       <h1 ref={heading} tabIndex={-1} id={showPayoff ? undefined : titleId}>{view === 'places' ? 'Clusters' : view === 'cluster' ? clusterName ? <code>{clusterName}</code> : entry?.remembered ? 'Use a cluster' : 'Add a cluster' : workspace || selected ? 'This computer' : 'Where should your agents run?'}</h1>
-      {view === 'local' && !workspace && selected && !presentation.done && <p className="muted">{localStage}</p>}
+      {view === 'local' && !workspace && !twoCards && selected && !presentation.done && <p className="muted">{localStage}</p>}
       {view === 'places' && <p className="muted">Choose where agents run</p>}
       {view === 'places' && <Button type="button" kind={noClusters && !localNext ? 'primary' : 'secondary'} onClick={() => chooseCluster()}>Add a cluster</Button>}
     </div>
@@ -383,7 +384,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     {showPayoff && firstPass && <FirstPass snapshot={firstPass} titleId={titleId} onOpen={openExample} />}
     <div hidden={view !== 'local' || !!showPayoff}>
       {cluster && <Button type="button" kind="secondary" onClick={chooseComputer}>Use this computer</Button>}
-      <div className={workspace ? `setup workspace-setup-grid returning-grid${updateBlocked || status?.localVm === 'failed' ? ' returning-grid-wide' : ''}` : selected ? `setup workspace-setup-grid${status?.localVm === 'failed' || modelRecovery ? ' workspace-setup-failed' : ''}` : 'workspace-choice local-preflight'}>
+      <div className={workspace ? `setup workspace-setup-grid returning-grid${updateBlocked || status?.localVm === 'failed' ? ' returning-grid-wide' : ''}` : selected ? `setup workspace-setup-grid${status?.localVm === 'failed' ? ' workspace-setup-failed' : ''}${twoCards ? ' returning-grid setup-cards' : ''}` : 'workspace-choice local-preflight'}>
         {!selected && !workspace && <>
           <section className="card">
             <p className="workspace-choice-step muted">Step 1 of 4 · Choose where agents run</p>
@@ -393,14 +394,14 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                 <input id="workspace-local" name="workspace-location" type="radio" value="local" checked={location === 'local'} onChange={() => { setPreflightBlocked(true); setLocation('local'); }} />
                 <label htmlFor="workspace-local">On this computer</label><span className="chip">Recommended</span>
                 <div className="workspace-option-detail">
-                  <p>{requirements ? `${requirements.downloadBytes !== null ? `Downloads about ${formatRequirementGB(requirements.downloadBytes)}. ` : ''}Needs virtualization and ${formatRequirementGB(requirements.memoryBytes)} of memory. Data disk can grow to ${formatRequirementGB(requirements.stateDiskBytes)}.` : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>
-                  {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated' && <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} onCluster={() => { setLocation('cluster'); document.getElementById('workspace-cluster')?.focus(); }} onSetUpLater={onSetUpLater} />}
-                  <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
+                  {!(location === 'local' && preflightFailed) && <p className="workspace-option-lede">The workspace includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>}
+                  <p className="workspace-option-req">{requirements ? `${requirements.downloadBytes !== null ? `Downloads about ${formatRequirementGB(requirements.downloadBytes)}. ` : ''}Needs virtualization and ${formatRequirementGB(requirements.memoryBytes)} of memory. Data disk can grow to ${formatRequirementGB(requirements.stateDiskBytes)}.` : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>
+                  {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated' && <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} onFailed={setPreflightFailed} onCluster={() => { setLocation('cluster'); document.getElementById('workspace-cluster')?.focus(); }} onSetUpLater={onSetUpLater} />}
+                  {requirements && <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
                     <div id="workspace-inside" hidden={!inside}>
-                      <p>The workspace includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>
-                      {requirements && <p>{`This build's image size is ${formatRequirementGB(requirements.imageBytes)} after installation, not the amount downloaded.`}</p>}
+                      <p>{`This build's image size is ${formatRequirementGB(requirements.imageBytes)} after installation, not the amount downloaded.`}</p>
                     </div>
-                  </Disclosure>
+                  </Disclosure>}
                 </div>
               </div>
               <div className={`workspace-option${location === 'cluster' ? ' workspace-selected' : ''}`}>
@@ -409,23 +410,25 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                 <div className="workspace-option-detail"><p>Use Orka on a Kubernetes cluster you already have.</p></div>
               </div>
             </fieldset>
-          <div className="workspace-step-actions">{continueAction}</div>
+          <div className="workspace-step-actions">{continueAction}
+            {/* What Continue does next, beside it, as the boards show. */}
+            {(location === 'cluster' || status?.localVm !== 'notIntegrated') && <span className="workspace-continue-hint" aria-hidden={location === 'local' && !preflightFailed ? true : undefined}>{location === 'cluster' ? 'Next, you pick the cluster. Setup on this computer is skipped.' : preflightFailed ? 'Continue is off until the check passes.' : 'These checks do not change this computer.'}</span>}</div>
           {location === 'local' && status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
           </section>
         </>}
         <div className="setup-column setup-main">
         {!workspace && !selected && upgradePanel}
         {workspace && status && <Workspace ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} onStart={() => { void chooseLocal(); }} onCancel={() => { void chooseLocal('cancel'); }} onCluster={() => chooseCluster()} active={active && view === 'local'} />}
-        {!workspace && selected && status && <SetupProgress ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending || upgradeBusy || !!upgrade?.busy && !ordinaryStarting || upgradeObservation.pending || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} guided={guided} onSetUpLater={onSetUpLater} />}
+        {!workspace && selected && status && <SetupProgress ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending || upgradeBusy || !!upgrade?.busy && !ordinaryStarting || upgradeObservation.pending || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} guided={guided} onSetUpLater={onSetUpLater} cards={twoCards} />}
         </div>
         <div className="setup-column setup-side">
-        {workspace && status?.localVm !== 'ready' && <section className="card"><h2>AI</h2>{savedConnection ? <>
+        {workspace && status?.localVm !== 'ready' && <section className="card workspace-ai-waiting"><h2>AI</h2>{savedConnection ? <>
           <p>A saved connection can be reused without connecting automatically.</p>
           <Button type="button" kind="secondary" disabled>Use saved connection</Button>
           <p className="muted">Start the workspace before changing its saved connection</p>
         </> : <p className="muted">{status && ['cancelled', 'closed'].includes(status.localVm) ? 'Start the workspace before connecting the AI.' : 'Waiting for the workspace to start.'}</p>}</section>}
-        {status && modelMounted && <div className="setup-model-slot" hidden={workspace && status.localVm !== 'ready'}><Model key={upgrade?.credential === 'transferred' ? 'shared' : 'ordinary'} sharedConnection={upgrade?.credential === 'transferred'} title={workspace ? 'AI' : undefined} inline={!workspace && !status.workspaceReplaced && canQueueModel(status)} choiceTarget={workspace ? null : stepChoice} changeRequest={providerChange} onPlaceCard={view === 'places'} recoveryTarget={view === 'places' ? placeRecovery : workspace ? null : stepRecovery} enabled={status.model === 'available'} queueable={!status.workspaceReplaced && canQueueModel(status)} paused={!!error || changing} away={cluster} primary={status.localVm === 'ready'} onConnectRequest={() => { chooseComputer(); if (view === 'places') setPanel('local'); }} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
-        {!workspace && selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet guided={guided} onRead={openExample} onName={onExampleName} />}
+        {status && modelMounted && <div className="setup-model-slot" hidden={workspace && status.localVm !== 'ready'}><Model key={upgrade?.credential === 'transferred' ? 'shared' : 'ordinary'} sharedConnection={upgrade?.credential === 'transferred'} title={workspace ? 'AI' : undefined} inline={!workspace && !twoCards && !status.workspaceReplaced && canQueueModel(status)} setupCard={!workspace} changeRequest={providerChange} onPlaceCard={view === 'places'} recoveryTarget={view === 'places' ? placeRecovery : null} enabled={status.model === 'available'} queueable={!status.workspaceReplaced && canQueueModel(status)} paused={!!error || changing} away={cluster} primary={status.localVm === 'ready'} onConnectRequest={() => { chooseComputer(); if (view === 'places') setPanel('local'); }} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
+        {!workspace && !twoCards && selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet guided={guided} onRead={openExample} onName={onExampleName} />}
         </div>
       </div>
     </div>

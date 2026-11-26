@@ -352,8 +352,9 @@ try {
       await clickAction('Connect the AI');
     }
     if (queue) {
-      await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Change')`), 'inline AI choice collapsed');
-      await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Change').click()`);
+      // Outside the guided first run the AI card beside a downloading workspace shows its choices; a compact card opens them with Change.
+      await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => ['Change', 'Connect the AI'].includes(button.textContent))`), 'AI choice');
+      await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Change')?.click()`);
       await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI')`), 'queueable model action');
       await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI').click()`);
     }
@@ -365,9 +366,12 @@ try {
     const observed = !failLater && localVm !== 'failed';
     const step = localVm === 'ready' ? 3 : 2;
     if (/step \d+ of 5/i.test(chrome) || observed && !chrome.includes(`step ${step} of 4`) || observed && size === 'wide' && !chrome.includes(`Setting up, step ${step} of 4`) || !observed && /step \d+ of 4/i.test(chrome)) throw Error(`${name}: incorrect shared step counter: ${chrome}`);
-    const rows = await evaluate(`({ count: document.querySelectorAll('[aria-label="Setup steps"] > li').length, current: document.querySelector('[aria-current="step"] b')?.textContent, barRow: document.querySelector('[role="progressbar"]')?.closest('li')?.querySelector('b')?.textContent, value: document.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow') })`);
-    if (rows.count !== 4 || observed && rows.current !== (step === 2 ? 'Get your workspace ready' : 'Connect the AI')) throw Error(`${name}: list and shell disagree: ${JSON.stringify(rows)}`);
-    if (observed && localVm !== 'ready' && rows.barRow !== 'Get your workspace ready') throw Error(`${name}: progress is outside the active workspace row`);
+    // Outside the guided first run, a workspace that is getting ready is one card beside the AI card, without the steps.
+    const cards = ['preparing', 'installing', 'starting'].includes(localVm);
+    const rows = await evaluate(`({ count: document.querySelectorAll('[aria-label="Setup steps"] > li').length, current: document.querySelector('[aria-current="step"] b')?.textContent, barRow: document.querySelector('[role="progressbar"]')?.closest('li')?.querySelector('b')?.textContent, barCard: !!document.querySelector('[role="progressbar"]')?.closest('.setup-progress'), pill: document.querySelector('.setup-progress .steps-head .pill')?.textContent, value: document.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow') })`);
+    if (cards ? rows.count !== 0 || observed && rows.pill !== (localVm === 'starting' ? 'Starting' : 'Getting ready')
+      : rows.count !== 4 || observed && rows.current !== (step === 2 ? 'Get your workspace ready' : 'Connect the AI')) throw Error(`${name}: card and shell disagree: ${JSON.stringify(rows)}`);
+    if (observed && localVm !== 'ready' && (cards ? !rows.barCard : rows.barRow !== 'Get your workspace ready')) throw Error(`${name}: progress is outside the workspace card`);
     if (localVm === 'starting' && rows.value !== null) throw Error(`${name}: startup must be indeterminate`);
     await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     if (!modelSupported && !await evaluate(`document.body.textContent.includes('Waiting') && !document.body.textContent.includes('Queued') && ![...document.querySelectorAll('button')].some(button => button.textContent === 'Connect the AI')`)) {
@@ -384,13 +388,14 @@ try {
       if (!refusal.disabled || refusal.title !== 'Open the matching Bridge version.' || !refusal.text.includes('Open the matching Bridge version.') || refusal.text.includes("couldn't be verified") || refusal.replace) throw Error(`${name}: misleading or actionable image refusal ${JSON.stringify(refusal)}`);
     }
     if (name === 'setup-transfer') {
-      const meet = await evaluate(`(() => { const card = document.querySelector('.workspace-meet'); return { tools: [...card.querySelectorAll('.workspace-tool code')].map(code => code.textContent), text: card.innerText }; })()`);
-      if (meet.tools.join('|') !== 'web_fetch' || !meet.text.includes('Copies the checksum from the page')) throw Error(`${name}: Meet must list the file's tools and tests: ${JSON.stringify(meet)}`);
+      // Two cards, as the board draws them: the workspace and the AI. Meet belongs to the guided first run.
+      const page = await evaluate(`({ meet: !!document.querySelector('.workspace-meet'), model: !!document.querySelector('.setup-side .setup-model.card'), back: [...document.querySelectorAll('button')].some(button => button.textContent === 'Back to clusters') })`);
+      if (page.meet || !page.model || !page.back) throw Error(`${name}: the downloading workspace must be the workspace and AI cards: ${JSON.stringify(page)}`);
     }
     if (queue) {
-      // The queued connection has no Cancel of its own; clearing it goes through the inline Change control.
-      const queued = await evaluate(`(() => { const status = [...document.querySelectorAll('.setup-model [role=status]')].find(item => item.textContent.includes('Queued')); const change = [...document.querySelectorAll('.setup-model button')].find(button => button.textContent === 'Change'); const cancel = document.querySelector('button[aria-label="Cancel queued connection"]'); return { status: !!status, inChoice: !!status?.closest('fieldset'), change: !!change, cancel: !!cancel, text: document.querySelector('.setup-model').innerText }; })()`);
-      if (!queued.status || queued.inChoice || queued.cancel || !queued.change || /local cluster/.test(queued.text)) throw Error(`${name}: queued AI must be a status row with no Cancel, only Change: ${JSON.stringify(queued)}`);
+      // The queued connection reads as the board draws it: Queued in the AI card's head, the connection that will be made and Cancel.
+      const queued = await evaluate(`(() => { const card = document.querySelector('.setup-side .setup-model.card'); const pill = card?.querySelector('.steps-head .pill'); const change = [...(card?.querySelectorAll('button') ?? [])].find(button => button.textContent === 'Change'); const cancel = card?.querySelector('button[aria-label="Cancel queued connection"]'); return { pill: pill?.textContent, inChoice: !!card?.querySelector('fieldset'), change: !!change, cancel: !!cancel, text: card?.innerText ?? '' }; })()`);
+      if (queued.pill !== 'Queued' || queued.inChoice || !queued.cancel || queued.change || !queued.text.includes('Connects when the workspace is ready.') || /local cluster/.test(queued.text)) throw Error(`${name}: queued AI must be the Queued card with Cancel: ${JSON.stringify(queued)}`);
     }
     await checkLayout(theme, size, name);
     const image = await call('Page.captureScreenshot', { format: 'png' });
@@ -1253,7 +1258,8 @@ try {
     }
     if (name === 'ai-reset') {
       // One mount walks frames 1g/1h, so the added states stay within the fixed CI budget.
-      const row = '[aria-label="Setup steps"] > li:nth-child(3) .model-recovery';
+      // The saved connection's recovery is the AI card beside the steps.
+      const row = '.setup-side .model-recovery';
       const probe = scope => evaluate(`(() => {
         const root = document.querySelector(${JSON.stringify(scope)});
         const shown = [...document.querySelectorAll('button')].filter(b => b.getClientRects().length).map(b => b.textContent.trim());

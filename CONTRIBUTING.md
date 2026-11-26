@@ -30,7 +30,7 @@ globally to install dependencies.
 
 For quick UI work without a VM, start the dev server from `app/` with `npm run dev` and open `http://127.0.0.1:1420/?scenario=fresh`. In development builds only, a `scenario` query loads a scripted stand-in for the native commands (`app/src/preview/backend.ts`), so screens can be walked and captured in any browser. Scenarios are `fresh`, `ready`, `connected`, `restart`, `ghMissing`, `ghSignedOut`, `runFails` and `vmFailed`. Add `speed=20` to shorten waits, `clean` to hide the scenario toolbar and `page=Home`, `Overview`, `Designer` or `Clusters` to open that page. Like the app, the preview opens on Welcome while nothing is set up (`fresh`, `ghMissing`, `ghSignedOut`, `vmFailed`), on Clusters while setup is in progress (`restart`), and on Home once a workspace is ready (`ready`, `connected`, `runFails`, `clusterReady`). The preview is not native verification: it never runs a VM, an agent or a model.
 
-These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer, `memoryLow` opens on Welcome, and the rest open on Home; the steps say where the state appears, starting from Clusters unless they name another page.
+These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer, `memoryLow` and the `first…` ones open on Welcome in the guided first run, and the rest open on Home; the steps say where the state appears, starting from Clusters unless they name another page.
 
 | Scenario | State | Where it appears |
 | --- | --- | --- |
@@ -42,6 +42,10 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `wsRestore` | Interrupted update, restore offered | Opens there |
 | `wsRecovery` | Interrupted update, setup incomplete | Opens there |
 | `wsStarting` | First setup, the workspace starting with its progress | Opens there |
+| `firstDownloadFails` | First run: the workspace download fails partway, then Try again finishes it | Get started → Set up → Continue |
+| `firstTestFails` | First run: the first agent's test fails | Get started → Set up → Continue, then Connect the AI |
+| `firstTestStale` | First run: the first test's result is from an earlier edit, so it needs running again | Get started → Set up → Continue, then Connect the AI |
+| `firstTestUnknown` | First run: the first test's result can't be confirmed | Get started → Set up → Continue, then Connect the AI |
 | `keyRejected` | API key not accepted | This computer → Manage → Your own API key, enter a key starting `sk-`, Connect the AI |
 | `aiMismatch` | Saved AI connection from an earlier setup | This computer → Manage → Connect the AI |
 | `clusterDenied` | Cluster access denied | `team-dev` → Use this cluster |

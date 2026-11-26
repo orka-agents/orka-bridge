@@ -32,10 +32,14 @@
 .steps-four > li:has(> .status-needs-you) > .step-result { color: var(--color-status-pending); }
 .steps-four > li:has(> .status-failed) > .step-result { color: var(--color-status-failed); }
 .step-waiting b { color: var(--color-text); }
+/* A finished step is drawn in ink, as the boards draw it; colour is kept for the step that needs something. */
+.steps-four > li.step-done > .status-icon { color: var(--color-text); }
 .step-failed [role="alert"] { color: var(--color-status-failed); }
 .step-more { grid-column: 2 / -1; min-width: 0; }
 .step-more:not(:empty) { display: grid; gap: var(--space-2); }
 .step-more p { margin: 0; font: var(--type-body); }
+.step-more > .step-cancel, .step-more > div > .step-cancel { margin-top: var(--space-1); }
+.step-more p.step-paused { color: var(--color-text-secondary); font-size: 15px; }
 .infra-bar { height: 6px; border-radius: var(--radius-small); overflow: hidden; margin: var(--space-1) 0; background: var(--color-chrome); position: relative; }
 .infra-bar > span { display: block; height: 100%; background: var(--color-status-running); transition: width .4s ease; }
 .infra-bar.indeterminate > span { position: absolute; inset: 0 auto 0 0; width: 35%; animation: workspace-sweep 1.5s linear infinite; }
@@ -73,26 +77,47 @@
 .workspace-tool code { font: 500 var(--size-body)/18px var(--font-mono); font-size: .92em; font-variant-ligatures: none; padding: 1px var(--space-1-5); border-radius: var(--radius-small); background: var(--color-chrome); color: var(--color-text); }
 
 /* The AI card. Code values are chips; the connection choice is a pair of option rows on first run. */
-.model-recovery-slot:empty, .model-choice-slot:empty, .setup-model-slot:empty { display: none; }
+.setup-model-slot:empty { display: none; }
 .setup-model > div[hidden] { display: none; }
 .setup-model p { margin: var(--space-2) 0 0; }
 .setup-model code, .model-recovery code { font: 500 var(--size-body)/18px var(--font-mono); font-size: .92em; font-variant-ligatures: none; padding: 1px var(--space-1-5); border-radius: var(--radius-small); background: var(--color-chrome); }
 .setup-model pre, .model-recovery pre { margin: var(--space-1) 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-card); font: 500 var(--size-body)/18px var(--font-mono); font-variant-ligatures: none; white-space: pre-wrap; overflow-wrap: anywhere; }
 .model-inline-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; color: var(--color-text-secondary); }
 .model-inline-head .button { margin-left: auto; }
-.model-choice-slot .model-choice { margin: var(--space-2) 0; }
 .setup-model .steps-head h2 { margin: 0; }
 .model-choice, .setup .model-choice { border: 0; padding: 0; margin: var(--space-3) 0 var(--space-2); display: grid; gap: var(--space-2); min-width: 0; }
-.model-choice label, .setup .model-choice label { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-1) 0; font: var(--type-body); }
+.model-option > label, .setup .model-option > label { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-1) 0; font: var(--type-body); }
 .model-choice input[type="radio"], .setup .model-choice input[type="radio"] { width: 16px; height: 16px; margin: 0; accent-color: var(--color-text); }
-.model-choice label:has(input:checked) { font-weight: 600; }
-.model-choice label .muted { font-weight: 400; }
-.setup:has(.setup-progress) .setup-model.card .model-choice label { padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border-strong); border-radius: var(--radius-card); background: var(--color-card); font: var(--type-card); }
-.setup:has(.setup-progress) .setup-model.card .model-choice label:has(input:checked) { border: var(--border-control) solid var(--color-text); padding: calc(var(--space-3) - .5px) calc(var(--space-4) - .5px); }
+.model-option > label:has(input:checked) { font-weight: 600; }
+.model-option > label .muted { font-weight: 400; }
+/* Each option holds its own detail. In a compact card both options come first and the selected one's detail follows them. */
+.model-option { display: contents; }
+.model-option-detail { order: 1; display: grid; gap: var(--space-2); min-width: 0; }
+.model-option-detail > p, .setup-model .model-option-detail > p { margin: 0; }
+.model-option-detail > .model-key-form { margin-top: 0; }
+/* First setup draws the options as cards, and the selected card holds its detail, at the boards' sizes. */
+.setup:has(.setup-progress) .setup-model.card .model-choice { gap: 10px; }
+.setup:has(.setup-progress) .setup-model.card .model-option { display: grid; gap: var(--space-2); padding: 15px 17px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-card); background: var(--color-card); }
+.setup:has(.setup-progress) .setup-model.card .model-option-selected { padding: 14px 16px; border: var(--border-editing) solid var(--color-text); }
+.setup:has(.setup-progress) .setup-model.card .model-option > label { gap: var(--space-3); padding: 0; font: var(--type-card); }
+.setup:has(.setup-progress) .setup-model.card .model-option > label > input[type="radio"] { width: 18px; height: 18px; }
+.setup:has(.setup-progress) .setup-model.card .model-option-detail { order: 0; padding-left: 30px; font: var(--type-body); }
+.setup:has(.setup-progress) .setup-model.card .model-option-detail .muted { color: var(--color-text-secondary); }
 .model-key-form { display: grid; justify-items: start; gap: var(--space-2); max-width: 520px; margin-top: var(--space-3); }
 .model-key-form > label, .setup .model-key-form > label { padding: 0; font-weight: 600; }
 .model-key-form > .view-switch, .setup .model-key-form > .view-switch { margin: 0; padding: 3px; border: 0; }
 .model-key-form > input { width: 100%; }
+/* A refused key is cleared; until another is typed the primary action keeps its place, waiting rather than broken. */
+.setup-model .button-primary.model-connect-waiting:disabled { background: var(--color-action); border-color: var(--color-action); color: var(--color-action-text); opacity: .4; }
+/* First setup's compact AI card during the download: the choice in one line, what choosing now does below it. */
+.setup-model.model-compact { display: grid; gap: var(--space-3); }
+.setup-model.model-compact > .model-inline-head { color: var(--color-text); font: var(--type-body); }
+.setup-model.model-compact > .model-inline-head b { font-weight: 600; }
+.setup-model.model-compact > p.model-compact-hint { margin: 0; }
+.setup-model.model-compact > div[hidden] { display: none; }
+.setup-model .model-copy-row { margin-top: var(--space-2); }
+.setup-model .model-copy-row:empty { display: none; }
+.setup-model .model-another { margin-top: var(--space-3); }
 .model-key-form > p { margin: 0; }
 .model-key-form > a { color: var(--color-text); text-decoration: underline; text-underline-offset: 4px; font-weight: 500; }
 .model-state { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
@@ -116,7 +141,7 @@
 .workspace-failure-explanation .workspace-step-actions { margin-top: var(--space-1); }
 .workspace-failure-explanation .workspace-step-actions:empty { display: none; }
 .step-failed .workspace-failure[role="alert"] { color: var(--color-text); }
-.workspace-failure .failure-summary { color: var(--color-status-failed); font: var(--type-card); }
+.workspace-failure .failure-summary { color: var(--color-status-failed); font: 700 15px/22px var(--font-ui); }
 .workspace-failure > [role="status"]:empty { display: none; }
 .workspace-failure > [role="status"] { margin: 0; }
 .workspace-fallback { display: block; width: fit-content; max-width: 100%; }
@@ -151,7 +176,7 @@
 /* Workspace update and recovery inside the workspace card. */
 .workspace-upgrade { display: grid; gap: var(--space-3); min-width: 0; }
 .workspace-upgrade p, .setup .workspace-upgrade p { margin: 0; }
-.workspace-upgrade > p[role="status"]:first-child { font: var(--type-card); }
+.workspace-upgrade > p[role="status"]:first-child { font: 700 15px/22px var(--font-ui); }
 .workspace-upgrade > p[role="status"]:first-child:focus { outline: none; }
 .workspace-upgrade > p.muted { font: var(--type-caption); }
 .workspace-upgrade > .button { justify-self: start; }
@@ -195,3 +220,16 @@
   .workspace-meet dl > div, .workspace-facts > div { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
   .first-pass-stories > .test-answer { padding: var(--space-4); }
 }
+
+/* Outside the guided first run, a first workspace getting ready is two cards, as This computer draws them. */
+.setup-cards .setup-progress > .steps-head h2, .setup-cards .setup-model.card .steps-head h2 { font: var(--type-card); letter-spacing: normal; }
+.setup-cards .setup-progress > p[role="status"] { margin: 0 0 var(--space-2); font: var(--type-body); }
+.workspace-card-progress { display: grid; gap: var(--space-2); min-width: 0; }
+.workspace-card-progress:empty { display: none; }
+.workspace-card-progress p { margin: 0; }
+.workspace-card-progress > .step-cancel { display: grid; justify-items: start; gap: var(--space-2); margin-top: var(--space-2); }
+.workspace-card-progress > .step-cancel > .muted { font: var(--type-caption); }
+.setup-cards .setup-model .model-state { display: grid; justify-items: start; gap: var(--space-3); }
+/* The returning AI card while the workspace is not running: its saved-connection action keeps the boards' spacing. */
+.workspace-ai-waiting > .button { margin-top: var(--space-3); }
+.setup .workspace-ai-waiting > .button + p { margin-top: 10px; font: var(--type-caption); }

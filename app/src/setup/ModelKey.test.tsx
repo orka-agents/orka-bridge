@@ -137,7 +137,9 @@ test('a failed reopened key connection uses the saved company rather than Copilo
   invoke.mockRejectedValue({ kind: 'modelCredentialRejected', vendor: 'anthropic', message: key });
   render(<Model enabled />); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect((await screen.findByRole('alert')).textContent).toContain("Anthropic didn't accept this key");
-  expect(screen.getByRole('status').textContent).toBe('Key removed.');
+  // The refusal is said under the field; the cleared key needs no second notice.
+  expect(screen.getByLabelText('API key').getAttribute('aria-invalid')).toBe('true');
+  expect(screen.queryByText('Key removed.')).toBeNull();
   expect(document.body.textContent).not.toContain('GitHub CLI stays signed in');
 });
 test('reopened connection uses native company metadata, not the initial Copilot choice', async () => {

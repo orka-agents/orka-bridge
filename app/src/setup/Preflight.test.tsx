@@ -91,20 +91,22 @@ test('returning to local while its check is pending cannot start early or accept
   expect(onPlace).not.toHaveBeenCalled();
 });
 
-test('insufficient installed memory blocks preparation and offers the cluster route, not a futile recheck', async () => {
+test('insufficient installed memory blocks preparation and offers the cluster route and help, not a futile recheck', async () => {
   const { ipc } = await native({ ...ready, memory: 'insufficient', installedMemoryBytes: 4294967296 });
   const user = userEvent.setup();
   const panel = await screen.findByRole('region', { name: 'Computer requirements' });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true));
   const memory = within(panel).getByRole('region', { name: 'Installed memory' });
-  await waitFor(() => expect(within(memory).getByRole('alert').textContent).toBe('This computer has 4.3 GB of memory; Bridge needs 6.4 GB.'));
+  await waitFor(() => expect(within(memory).getByRole('alert').textContent).toBe('Not enough memory. This computer has 4.3 GB of memory; Bridge needs 6.4 GB.'));
+  expect(within(memory).getByText('Not enough memory.', { selector: 'b' })).toBeTruthy();
   await user.click(within(memory).getByRole('button', { name: 'About this check' }));
   expect(memory.textContent).toMatch(/installed RAM, not currently free memory/);
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
   expect(within(panel).getByRole('status').textContent).toBe('');
   expect(memory.querySelector('.status-failed')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Copy details for help' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Copy details for help' }).className).toContain('button-quiet');
+  expect(screen.getByText('Continue is off until the check passes.')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
   await user.click(screen.getByRole('button', { name: 'Use a cluster instead' }));
@@ -176,7 +178,7 @@ test.each([
   expect(screen.getByText(`Bridge couldn't check ${virtualization === 'unknown' ? 'virtualization' : 'memory'} yet. It checks again when the workspace starts.`)).toBeTruthy();
   expect(screen.queryByText(/Fix the computer requirements|couldn't check this computer/)).toBeNull();
   expect(!!screen.queryByRole('button', { name: 'Check again' })).toBe(virtualization === 'disabled');
-  expect(!!screen.queryByRole('button', { name: 'Copy details for help' })).toBe(virtualization === 'disabled');
+  expect(screen.getByRole('button', { name: 'Copy details for help' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
 });
 
