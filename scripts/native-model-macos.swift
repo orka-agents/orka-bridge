@@ -1213,7 +1213,8 @@ func nativeOverviewResultIsVisible(_ agent: String, before nextAgent: String, _ 
         let end = enabledButton("Show places for \(nextAgent)").flatMap(nativeBounds) else { return false }
     return nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
-            attribute(element, "AXValue") as? String == expected,
+            // WebKit can report a pill's text in its drawn capitals; accept the authored copy or exactly its capitals.
+            (attribute(element, "AXValue") as? String).map({ isText($0, expected) }) == true,
             let bounds = nativeBounds(element) else { return false }
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
             && bounds.minY >= start.maxY && bounds.maxY <= end.minY
