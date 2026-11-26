@@ -179,7 +179,8 @@ a { color: var(--color-text); text-underline-offset: 3px; }
 .icon-tile { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex: none; border-radius: var(--radius-control); color: var(--color-action); background: var(--color-icon-tile); }
 /* List rows (Clusters) use a larger outlined tile; the sidebar keeps the small filled one. */
 .icon-tile-row { width: 36px; height: 36px; border: var(--border-control) solid var(--color-text); background: var(--color-card); color: var(--color-text); }
-.card { padding: var(--space-4); border: 1px solid var(--color-border-strong); border-radius: var(--radius-card); background: var(--color-card); min-width: 0; }
+/* A plain card's edge is the ink at 70%, so it reads as a line on paper; .card-strong is the full ink at 1.5px. */
+.card { padding: var(--space-4); border: 1px solid color-mix(in srgb, var(--color-text) 70%, transparent); border-radius: var(--radius-card); background: var(--color-card); min-width: 0; }
 .setup { max-width: 760px; display: grid; gap: 16px; margin-top: 16px; }
 .setup h3 { font-size: var(--size-body); font-weight: 600; margin: 0; }
 .setup p { max-width: 70ch; margin-top: 8px; }
