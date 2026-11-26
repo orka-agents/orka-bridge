@@ -112,6 +112,7 @@ for (const [name, header] of [
   ['send-passed', [{ label: 'See in Overview', primary: true }, { label: 'Run cluster tests again', primary: false }]],
 ]) {
   const probe = { ...sendProbe, header, title: name === 'send-passed' ? sendProbe.title : '', id: name === 'send-passed' ? sendProbe.id : '',
+    heading: ['send-ready', 'send-blocked'].includes(name) ? 'Send your agent' : sendProbe.heading,
     checks: ['send-blocked', 'send-sending'].includes(name) ? '1 check passed Show checks' : sendProbe.checks,
     inlineChecks: name === 'send-blocked' ? ['blocked'] : [], changeDisabled: name === 'send-sending' };
   checkSend(name, probe, false);
