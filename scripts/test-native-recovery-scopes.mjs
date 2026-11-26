@@ -475,11 +475,13 @@ assert.ok(smoke.includes('return (popoverBounds(element) ?? bodyBounds()).contai
 const nativeUpgradeVisibility = model.slice(model.indexOf('func nativeChatTextIsVisible('), model.indexOf('func waitForButton('));
 assert.ok(nativeUpgradeVisibility.includes('showsText(text, expected)') && nativeUpgradeVisibility.includes('"AXStaticText"'), 'upgrade fallback must use actual expected native text, not OCR spelling aliases');
 assert.ok(nativeUpgradeVisibility.includes('bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)') && nativeUpgradeVisibility.includes('bounds.maxY <= window()!.1.maxY - 32'), 'hidden, clipped, off-window and footer text cannot satisfy upgrade fallback');
-assert.equal(captureManifest.model.length, 208);
+assert.equal(captureManifest.model.length, 210);
 assert.equal(captureManifest['destinations-workspace'].length, 121);
-assert.equal(new Set([...captureManifest.model, ...captureManifest['destinations-workspace']]).size, 329);
+assert.equal(new Set([...captureManifest.model, ...captureManifest['destinations-workspace']]).size, 331);
 const overviewCaptures = [
   ...['disconnected', 'connected'].flatMap(ai => ['wide', 'minimum'].flatMap(size => ['collapsed', 'expanded'].map(state => `local-overview-ai-${ai}-${state}-${size}`))),
+  // At 540x640 the expanded row's Run tests is captured in its own frame below the page heading.
+  ...['disconnected', 'connected'].map(ai => `local-overview-ai-${ai}-expanded-run-minimum`),
   ...['wide', 'compact', 'minimum'].flatMap(size => ['collapsed', 'expanded-earlier-pass', 'expanded-earlier-failed', 'expanded-draft'].map(state => `local-controls-overview-${state}-${size}`)),
 ];
 assert.deepEqual(captureManifest.model.filter(name => name.includes('overview')).sort(), overviewCaptures.sort(), 'scoped manifest must retain every list/evidence capture with no obsolete grouping names');

@@ -36,7 +36,7 @@ func runNativeModelScopeTests(_ manifest: NativeModelCaptureManifest) throws {
     try check(!nativeSelectedControlLabelMatches("ServiceAccount: task-reader", label: "ServiceAccount", expected: "team-runner"), "selected control rejects wrong value")
     try check(!nativeSelectedControlLabelMatches("ServiceAccount", label: "ServiceAccount", expected: "team-runner"), "selected control rejects label without value")
     try manifest.validate()
-    try check(manifest.model.count == 208 && manifest.destinationsWorkspace.count == 121, "208/121 including Overview list, long-Chat and upgrade captures")
+    try check(manifest.model.count == 210 && manifest.destinationsWorkspace.count == 121, "210/121 including Overview list, long-Chat and upgrade captures")
     for name in ["local-catalog-no-destination-wide", "local-workspace-ready-wide", "local-workspace-stop-failed-details-minimum", "local-designer-waiting-chat-minimum", "local-workspace-image-update-minimum", "local-workspace-image-unsupported-minimum"] {
         try check(manifest.destinationsWorkspace.contains(name), "complete allocated journey includes \(name)")
     }
@@ -103,12 +103,12 @@ struct NativeModelCaptureManifest: Decodable {
         }
     }
     func validate() throws {
-        guard model.count == 208, destinationsWorkspace.count == 121,
+        guard model.count == 210, destinationsWorkspace.count == 121,
               Set(model).count == model.count,
               Set(destinationsWorkspace).count == destinationsWorkspace.count,
               Set(model).isDisjoint(with: Set(destinationsWorkspace)),
               !(model + destinationsWorkspace).contains("local-probe") else {
-            throw NativeModelHarnessError("Capture manifest must partition 329 unique named captures into 208 model and 121 destination/workspace names")
+            throw NativeModelHarnessError("Capture manifest must partition 331 unique named captures into 210 model and 121 destination/workspace names")
         }
     }
 }
