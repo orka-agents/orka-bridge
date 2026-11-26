@@ -87,10 +87,15 @@ try {
     const native = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText');
     Object.defineProperty(HTMLElement.prototype, 'innerText', { configurable: true, set: native.set, get() {
       let text = native.get.call(this);
+      // Fast path: without a run of three capitals, CSS capitalised nothing a check could read.
+      if (!/[A-Z]{3}/.test(text)) return text;
       for (const node of [this, ...this.querySelectorAll('*')]) {
-        if (!(node instanceof HTMLElement) || getComputedStyle(node).textTransform !== 'uppercase') continue;
+        // Cheap string tests first: only an element whose capitalised copy appears in the text needs its computed style.
         const authored = node.textContent;
-        if (authored && authored !== authored.toUpperCase()) text = text.split(authored.toUpperCase()).join(authored);
+        const upper = authored ? authored.toUpperCase() : '';
+        if (!authored || upper === authored || !text.includes(upper)) continue;
+        if (!(node instanceof HTMLElement) || getComputedStyle(node).textTransform !== 'uppercase') continue;
+        text = text.split(upper).join(authored);
       }
       return text;
     } });

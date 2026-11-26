@@ -752,8 +752,17 @@ assert.ok(!/topCandidates\(1\)\.first\?\.string == "Get started"/.test(smoke) &&
   class HTMLElement { constructor(text, children = [], transform = 'none') { this.rendered = text; this.children = children; this.textContent = text; this.transform = transform; }
     querySelectorAll() { return this.children.flatMap(child => [child, ...child.querySelectorAll()]); } }
   Object.defineProperty(HTMLElement.prototype, 'innerText', { configurable: true, get() { return this.rendered; }, set() {} });
-  const world = { HTMLElement, getComputedStyle: node => ({ textTransform: node.transform }) };
+  let styleReads = 0;
+  const world = { HTMLElement, getComputedStyle: node => { styleReads += 1; return { textTransform: node.transform }; } };
   vm.runInNewContext(authored, world);
+  // Polling reads stay cheap: no capitals run means no tree walk, and only candidate elements cost a style read.
+  const lower = new HTMLElement('Tests on this computer\nWaiting', [new HTMLElement('Waiting', [], 'uppercase')]);
+  lower.querySelectorAll = () => { throw Error('fast path must not walk the tree'); };
+  assert.equal(lower.innerText, 'Tests on this computer\nWaiting');
+  const mixed = new HTMLElement('Saved\nPASSED\nOther copy', [new HTMLElement('Saved'), new HTMLElement('Passed', [], 'uppercase'), new HTMLElement('Other copy')]);
+  assert.equal(mixed.innerText, 'Saved\nPassed\nOther copy');
+  assert.equal(styleReads, 1, 'only the element whose capitals appear in the text reads its computed style');
+  styleReads = 0;
   const pill = new HTMLElement('Not started', [], 'uppercase');
   const card = new HTMLElement('Tests on this computer\nNOT STARTED\nWaiting', [pill]);
   assert.equal(card.innerText, 'Tests on this computer\nNot started\nWaiting');
