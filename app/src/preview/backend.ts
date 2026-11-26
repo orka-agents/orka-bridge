@@ -46,6 +46,10 @@ export const scenarios = {
   overviewEmpty: 'No saved agents yet',
   clusterContexts: 'Add a cluster with kubectl contexts',
   wsStarting: 'First setup, the workspace starting',
+  firstDownloadFails: 'First run: the workspace download fails once',
+  firstTestFails: 'First run: the first test fails',
+  firstTestStale: 'First run: the first test needs running again',
+  firstTestUnknown: 'First run: the first test result is unknown',
   navThinking: 'Navigator: thinking about an answer',
   navReplyFailed: 'Navigator: could not answer',
   navNoModel: 'Navigator: no model connected',
@@ -73,7 +77,11 @@ let gh: Gh = (['missing', 'signedOut', 'signedIn'] as const).find(value => value
   ?? (scenario === 'ghMissing' ? 'missing' : scenario === 'ghSignedOut' ? 'signedOut' : 'signedIn');
 
 const now = () => Date.now() * speed;
-const fresh = scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow';
+// The first-run scenarios start as a new computer does and differ only where they say.
+const firstRun = scenario === 'firstDownloadFails' || scenario === 'firstTestFails' || scenario === 'firstTestStale' || scenario === 'firstTestUnknown';
+const fresh = scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow' || firstRun;
+// firstDownloadFails: the first download stops partway with a network failure; Try again then succeeds.
+let downloadFails = scenario === 'firstDownloadFails';
 let selected: 'localVm' | null = fresh ? null : 'localVm';
 // wsStarting opens a first setup 12 seconds into starting, after the files were checked and installed.
 let startedAt: number | null = scenario === 'restart' ? now() : scenario === 'wsStarting' ? now() - (timing.verify + timing.copy + 12) * 1000 : null;
@@ -111,6 +119,7 @@ function phase(): Phase {
   if (scenario === 'vmFailed') return { localVm: 'failed', progress: null };
   if (startedAt === null) return { localVm: 'ready', progress: null };
   const s = (now() - startedAt) / 1000;
+  if (downloadFails && !reopened && s >= timing.verify + timing.copy / 2) return { localVm: 'failed', progress: null };
   const ms = (value: number) => Math.max(0, Math.round(value * 1000 / speed));
   if (!reopened) {
     if (s < timing.verify) return { localVm: s < 1 ? 'preparing' : 'installing', progress: { phase: 'verifying', bytes: null, totalBytes: null, elapsedMs: ms(s), remainingMs: null } };
@@ -129,7 +138,9 @@ function status() {
   return {
     selected, localVm: p.localVm, localVmError: null, model: p.localVm === 'ready' ? 'available' : 'locked', modelSupported: true,
     workspaceProgress: p.progress,
-    ...(p.localVm === 'failed' ? { preflightFailure: 'virtualizationDisabled' } : {}),
+    ...(p.localVm === 'failed' ? downloadFails
+      ? { localVmError: 'Downloading the workspace failed: connection reset', workspaceFailure: { operation: 'download', cause: 'network', codes: [] } }
+      : { preflightFailure: 'virtualizationDisabled' } : {}),
   };
 }
 
@@ -150,7 +161,9 @@ function runSnapshot(documentId: string) {
     id: 'published-checksum', title: 'Published checksum', phase: 'Cancelled', question: 'Open the download page and report the SHA-256 checksum it publishes.', answer: null, completedTools: [], assertions: [], verdict: 'cancelled',
   }] } };
   if (elapsed < runSeconds) return { ...captured, busy: { documentId, name: doc?.name ?? 'agent' }, state: 'running', stage: 'observe', canRun: false, canCancel: true, report: null };
-  const pass = scenario !== 'runFails' && scenario !== 'sendLocalFailed';
+  // firstTestUnknown: the run ends without a result Bridge can confirm, reported as the model being unreachable.
+  if (scenario === 'firstTestUnknown' && run.count === 1) return { ...captured, state: 'unknown', stage: 'done', canRun, report: null, error: 'model' };
+  const pass = scenario !== 'runFails' && scenario !== 'sendLocalFailed' && scenario !== 'firstTestFails';
   const checksum = 'cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918';
   return { ...captured, state: 'complete', stage: 'done', canRun, report: { verdict: pass ? 'passed' : 'failed', cases: [{
     id: 'published-checksum', title: 'Published checksum', phase: 'Succeeded',
@@ -334,7 +347,7 @@ function clusterReply(command: string, args?: Record<string, unknown>): unknown 
 // Scenarios that open in states the ordinary walk can't reach. Replies come from ./fixtures; a command
 // a scenario doesn't own falls through to the ordinary script in handle().
 const unscripted = Symbol('unscripted');
-const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed', 'clusterReady', 'clusterContexts', 'wsStarting'].includes(scenario);
+const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed', 'clusterReady', 'clusterContexts', 'wsStarting', 'firstDownloadFails', 'firstTestFails', 'firstTestStale', 'firstTestUnknown'].includes(scenario);
 const upgradeScenario = scenario === 'wsUpdate' || scenario === 'wsRestore' || scenario === 'wsRecovery';
 const sendScenario = ['sendBlocked', 'sendRunning', 'sendFailed', 'sendPassed', 'sendLocalFailed'].includes(scenario);
 const remoteScenario = sendScenario || scenario === 'clusterDenied' || scenario === 'clusterUnreachable';
@@ -599,6 +612,8 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
     case 'setup_status': return status();
     case 'setup_select_local':
       await wait(0.3);
+      // Try again after the failed download continues it, as native resumes the kept files.
+      if (downloadFails && phase().localVm === 'failed') { downloadFails = false; startedAt = now() - (timing.verify + timing.copy / 2) * 1000; return status(); }
       if (!selected || stopped) { selected = 'localVm'; stopped = null; startedAt = now(); }
       return status();
     case 'setup_cancel_local': stopped = 'cancelled'; startedAt = null; return status();
@@ -648,7 +663,9 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
       const id = documentId(args);
       if (!runSnapshot(id).canRun) return runSnapshot(id);
       const doc = docs.get(id);
-      run = { documentId: id, startedAt: now(), attemptId: typeof args?.attemptId === 'string' ? args.attemptId : null, count: ++runCount, source: doc ? source(doc) : null, cancelledAt: null };
+      // firstTestStale: the first run is recorded against an earlier edit of the files, so its result needs running again.
+      const ran = doc ? scenario === 'firstTestStale' && runCount === 0 ? { ...source(doc), agent: digest(`${doc.agent}\nAn earlier edit.`) } : source(doc) : null;
+      run = { documentId: id, startedAt: now(), attemptId: typeof args?.attemptId === 'string' ? args.attemptId : null, count: ++runCount, source: ran, cancelledAt: null };
       return runSnapshot(id);
     }
     case 'agent_run_cancel': {
