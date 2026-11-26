@@ -19,19 +19,21 @@ const contrast = (foreground: string, background: string) => {
 
 describe('Orka ink and paper theme contract', () => {
   it.each([
-    ['light', 0, '#ffffff', '#f6f6f7', '#f0f0f2', '#0b0b0c', '#a64b00', '#0369a1', '#047857', '#be123c'],
-    ['dark', 1, '#09090a', '#1b1b1e', '#1b1b1e', '#f4f4f5', '#f5b544', '#4cb8f5', '#4ade80', '#f87171'],
-  ] as const)('%s uses the Orka neutrals and state colours', (_, index, page, surface, soft, ink, pending, running, succeeded, failed) => {
+    // The boards' bg, bar, well, line and state colours. Dark red is a step lighter than the boards' #f87171 so it reads
+    // at 4.5:1 over the page artwork.
+    ['light', 0, '#ffffff', '#ffffff', '#fafafa', '#f3f3f5', '#f3f3f5', '#d4d4d8', '#0b0b0c', '#b45309', '#0369a1', '#15803d', '#b91c1c'],
+    ['dark', 1, '#09090a', '#09090a', '#121214', '#18181b', '#1b1b1e', '#353539', '#f4f4f5', '#f5b544', '#4cb8f5', '#4ade80', '#f97b7b'],
+  ] as const)('%s uses the Orka neutrals and state colours', (_, index, page, card, bar, well, soft, line, ink, pending, running, succeeded, failed) => {
     expect(palettes[index]).toMatchObject({
-      'color-page': page, 'color-chrome': surface, 'color-hover': soft,
-      'color-text': ink, 'color-action': ink, 'color-status-pending': pending,
+      'color-page': page, 'color-card': card, 'color-bar': bar, 'color-well': well, 'color-chrome': well, 'color-hover': soft,
+      'color-border-strong': line, 'color-text': ink, 'color-action': ink, 'color-status-pending': pending,
       'color-status-running': running, 'color-status-succeeded': succeeded, 'color-status-failed': failed,
     });
   });
   it.each([0, 1])('keeps every text role readable on shared surfaces in palette %s', index => {
     const palette = palettes[index];
     for (const ink of ['color-text-secondary', 'color-text-tertiary', 'color-status-pending', 'color-status-running', 'color-status-succeeded', 'color-status-failed']) {
-      for (const surface of ['color-page', 'color-card', 'color-chrome', 'color-hover']) {
+      for (const surface of ['color-page', 'color-card', 'color-bar', 'color-well', 'color-chrome', 'color-hover']) {
         expect(contrast(palette[ink], palette[surface])).toBeGreaterThanOrEqual(4.5);
       }
     }

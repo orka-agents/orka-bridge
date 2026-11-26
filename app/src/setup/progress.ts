@@ -27,7 +27,8 @@ export function workspaceView(status: SetupStatus, { stopping = false, starting 
   }
   if (status.localVm === 'failed') return { word: status.workspaceFailure?.operation === 'stop' ? "Couldn't stop" : "Couldn't start", detail: status.workspaceFailure?.operation === 'stop' ? 'The workspace may still be stopping. Quit Bridge and reopen it before trying again.' : "The workspace couldn't start. Your agents and files are kept.", status: 'failed', tone: 'bad' };
   if (status.localVm === 'ready') return { word: 'Ready', detail: 'The workspace is ready on this computer.', status: 'passed', tone: 'ready' };
-  return { word: 'Stopped', detail: 'The workspace is stopped. Your agents and their files are kept.', status: 'not-started', tone: 'wait' };
+  // Stopped is a needs-you state: the workspace waits for someone to start it again.
+  return { word: 'Stopped', detail: 'The workspace is stopped. Your agents and their files are kept.', status: 'needs-you', tone: 'needs-you' };
 }
 export function setupView(status: SetupStatus | undefined, { checking = false, stopping = false, starting = false, workspace = false, model = 'idle', check, initialAutomatic = false }: { checking?: boolean; stopping?: boolean; starting?: boolean; workspace?: boolean; model?: ModelState; check?: CheckStepState; initialAutomatic?: boolean } = {}): SetupView {
   const view = (place: SetupView['place'], step: number, line: string, detail: string, tone: Tone, done = false): SetupView => ({
