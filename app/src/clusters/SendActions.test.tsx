@@ -32,8 +32,9 @@ test.each(['failed', 'cancelled', 'unknown', 'passed'] as const)('%s result lead
   // The checks fold into Details once a result is shown.
   expect(screen.getByText(/Ready to send: \d+ checks? passed/).closest('.card-details')).toBeTruthy();
   const buttons = within(actionRow()).getAllByRole('button');
-  expect(buttons.map(b => b.textContent)).toEqual(verdict === 'passed' ? ['See in Overview', 'Run cluster tests again'] : ['Run cluster tests again', 'See in Overview']);
-  expect(buttons[0].className).toContain('button-primary');
+  expect(buttons.map(b => b.textContent)).toEqual(['Run cluster tests again', 'See in Overview']);
+  // A passing result has nothing to fix: running again and Overview are two equal, secondary choices.
+  expect(buttons[0].className).toContain(verdict === 'passed' ? 'button-secondary' : 'button-primary');
   // A cancelled result offers Overview as a quiet link, as the cancelled board shows.
   expect(buttons[1].className).toContain(verdict === 'cancelled' ? 'button-quiet' : 'button-secondary');
   expect(screen.getByRole('button', { name: 'Send as a separate agent' }).closest('details')?.open).toBe(false);

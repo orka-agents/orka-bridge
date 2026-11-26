@@ -116,7 +116,9 @@ test('global history refreshes when another document’s Send releases admission
     throw Error('Unexpected operation');
   });
   render(panel());
-  await screen.findByText('No saved Sends yet.');
+  // Beside the Send card, an empty history shows nothing until a Send is saved.
+  await waitFor(() => expect(screen.queryByText('Reading saved Sends…')).toBeNull());
+  expect(screen.queryByRole('region', { name: 'Past Sends' })).toBeNull();
   history = [summary]; busy = null;
   expect(await screen.findByText('bridge-run-before-restart')).toBeTruthy();
 });
@@ -139,7 +141,7 @@ test.each(['pending', 'failed'])('remote saved Sends are readable while the docu
 });
 
 test('empty history says no saved Sends, not that no remote Agents exist', async () => {
-  native([]); render(panel());
+  native([]); render(<SendHistory revision="r" />);
   expect(await screen.findByText('No saved Sends yet.')).toBeTruthy();
   expect(screen.queryByText(/no agents/i)).toBeNull();
 });

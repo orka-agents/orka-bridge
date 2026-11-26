@@ -33,7 +33,8 @@ test('an unsent card heads Send your agent, then one summary, honest collapsed c
   const checks = screen.getByText('Ready to send: 1 check passed').closest('details')!;
   expect(checks.open).toBe(false);
   expect(checks.contains(screen.getByText('Checked when tests run.'))).toBe(true);
-  expect(screen.getByRole('region', { name: 'Past Sends' }).classList.contains('card')).toBe(true);
+  // Past Sends waits until a Send has been saved.
+  expect(screen.queryByRole('region', { name: 'Past Sends' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Change' })); expect(choose).toHaveBeenCalledOnce();
 });
 test('capturing a model is not presented as a completed Send after a storage rejection', async () => {
