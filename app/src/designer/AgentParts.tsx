@@ -75,7 +75,9 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
   useEffect(() => {
     if (toolReason) { setPicker(false); setQuery(''); return; }
     if (!picker) return;
-    popover.current?.querySelector('input')?.focus();
+    // Focus alone scrolls only the search field into view; bring the whole picker in so its tools aren't below the window.
+    popover.current?.querySelector('input')?.focus({ preventScroll: true });
+    popover.current?.scrollIntoView?.({ block: 'nearest' });
     // The picker sits in the page under the tools; a press outside it still closes it, as a popover would.
     const outside = (event: PointerEvent) => {
       const target = event.target as Node | null;
