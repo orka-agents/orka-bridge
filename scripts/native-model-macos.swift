@@ -418,10 +418,10 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
         CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
     }
     // A hovered tab in the narrow rail shows its name over the page (shell.css .page-tab::after); move the pointer
-    // to the native window title so later captures, including after a resize, show only the page.
+    // onto the page's bare corner, a move WebKit sees inside the web view, so later captures show only the page.
     if ["Home", "Overview", "Designer", "Clusters"].contains(label) {
-        let frame = window()!.1
-        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: frame.midX, y: frame.minY + 12), mouseButton: .left)?.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.3)
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: pageGutter(), mouseButton: .left)?.post(tap: .cghidEventTap)
     }
     Thread.sleep(forTimeInterval: 1)
 }
