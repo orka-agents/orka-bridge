@@ -78,7 +78,7 @@ Fields:
 
 Choices:
 
-- Two to four exclusive views (Agent, Chat, File; By cluster, By agent) are a segmented control: a well track, the
+- Two to four exclusive views (Agent, Try a task, File; By cluster, By agent) are a segmented control: a well track, the
   chosen one on card fill with a line-2 edge. Not a row of secondary buttons.
 - Pickers open as a popover over the page. They close with the X at the top right, Escape, or a click outside.
 
