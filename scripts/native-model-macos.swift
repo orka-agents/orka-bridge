@@ -667,6 +667,8 @@ click("Clusters", [])
 // The fixture always remembers team-dev, so this synthetic reset counts as set up and
 // shows the Clusters list, not Welcome.
 try "preflight-ready".write(to: setupProgress, atomically: true, encoding: .utf8)
+// Clusters reopens on its last view (This computer here); pressing it again while on Clusters shows the list.
+click("Clusters", [])
 waitForButton("Set up")
 for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
     try "preflight-\(state)".write(to: setupProgress, atomically: true, encoding: .utf8)
