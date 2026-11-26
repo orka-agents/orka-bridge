@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { helpDetails, workspaceRecovery, type WorkspaceFailure } from './recovery-info';
 import { preflightRecovery, type PreflightFailure } from './preflight-state';
+import SetUpLater from '../firstrun/SetUpLater';
 
-export default function Recovery({ detail, preflightFailure, failure, disabled, onRetry, onCluster }: { detail?: string | null; preflightFailure?: PreflightFailure; failure?: WorkspaceFailure; disabled: boolean; onRetry: () => void; onCluster?: () => void }) {
+export default function Recovery({ detail, preflightFailure, failure, disabled, onRetry, onCluster, onSetUpLater }: { detail?: string | null; preflightFailure?: PreflightFailure; failure?: WorkspaceFailure; disabled: boolean; onRetry: () => void; onCluster?: () => void; onSetUpLater?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [notice, setNotice] = useState('');
   const [quitting, setQuitting] = useState(false);
@@ -37,7 +38,10 @@ export default function Recovery({ detail, preflightFailure, failure, disabled, 
     <Disclosure label={expanded ? 'Hide details' : 'Show details'} open={expanded} controls="workspace-failure-details" onOpenChange={setExpanded}>
     {expanded && <div id="workspace-failure-details" className="workspace-progress-details"><p>Stage: {info.stage}</p><pre tabIndex={0}>{preflightFailure ? info.summary : detail || 'No further error details were reported.'}</pre></div>}</Disclosure>
     </div>
-    {onCluster && <Button kind="secondary" className="workspace-fallback" disabled={disabled} onClick={onCluster}>Use a cluster you already have instead</Button>}
+    {onSetUpLater ? <div className="workspace-step-actions guided-later-row">
+      {onCluster && <Button kind="secondary" className="workspace-fallback" disabled={disabled} onClick={onCluster}>Use a cluster you already have instead</Button>}
+      <SetUpLater onClick={onSetUpLater} />
+    </div> : onCluster && <Button kind="secondary" className="workspace-fallback" disabled={disabled} onClick={onCluster}>Use a cluster you already have instead</Button>}
     <p className="muted" role="status">{notice}</p>
   </div>;
 }

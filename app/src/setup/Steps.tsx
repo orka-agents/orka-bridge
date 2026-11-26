@@ -12,6 +12,7 @@ import './steps.css';
 import { readForm } from '../designer/agent-form';
 import { builtInTools } from '../designer/built-in-tools';
 import { testDefinitions } from '../designer/test-definitions';
+import SetUpLater from '../firstrun/SetUpLater';
 
 export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
 
@@ -22,8 +23,8 @@ type Props = {
   modelUnavailable?: boolean;
   firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void; onChooseProvider?: () => void;
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onOpenExample: () => void;
-  // During the guided first run the agent's instructions open in place.
-  guided?: boolean;
+  // During the guided first run: the agent's instructions open in place, and stuck screens offer Set up later.
+  guided?: boolean; onSetUpLater?: () => void;
 };
 const rowClass: Record<Status, string> = { passed: 'step-done', failed: 'step-failed', running: 'step-current', 'needs-you': 'step-current', stale: 'step-waiting', 'not-started': 'step-waiting' };
 // Completed rows stay in place; only the active row opens its progress.
@@ -54,7 +55,7 @@ function stepRows({ status, stopping, updating, updateBlocked, error, modelState
 }
 
 export function SetupProgress(props: Props) {
-  const { status, busy, stopping, error, onCancel, onRestart, onCluster, onOpenExample, guided } = props;
+  const { status, busy, stopping, error, onCancel, onRestart, onCluster, onOpenExample, guided, onSetUpLater } = props;
   const [details, setDetails] = useState(false);
   const { view, failed: failedStatus, paused, infra } = stepRows(props);
   const failed = failedStatus && !error;
@@ -93,17 +94,20 @@ export function SetupProgress(props: Props) {
       <p>The first test could not be confirmed. If the AI could not be reached, check your connection or choose another provider.</p>
       <p className="muted">Changing provider first asks you to remove the current sign-in or key. Your agent files are kept.</p>
       <div className="workspace-step-actions"><Button type="button" kind="primary" disabled={busy} onClick={onOpenExample}>Try again in Designer</Button>
-        {props.onChooseProvider && <Button type="button" kind="secondary" disabled={busy} onClick={props.onChooseProvider}>Choose another provider</Button>}</div>
+        {props.onChooseProvider && <Button type="button" kind="secondary" disabled={busy} onClick={props.onChooseProvider}>Choose another provider</Button>}
+        {onSetUpLater && <SetUpLater onClick={onSetUpLater} />}</div>
     </div>}
     {!failed && <div className="workspace-step-actions">
       {['preparing', 'installing', 'starting'].includes(status.localVm) && <><Button type="button" kind="secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</Button><span className="muted">Cancel pauses setup. Your downloaded files are kept.</span></>}
       {status.localVm === 'notIntegrated' && onCluster && <Button type="button" kind="secondary" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</Button>}
       {paused && (props.ordinaryRecovery ?? !props.upgrade) && <Button type="button" kind="primary" disabled={busy || !!error} onClick={onRestart}>Start again</Button>}
+      {onSetUpLater && (status.localVm === 'notIntegrated' || paused) && <SetUpLater onClick={onSetUpLater} />}
       {ready && <>{props.modelState === 'connected' && !needsModel && <>
         {props.firstCheck === 'stale' ? <Button type="button" kind="primary" disabled={busy || !!error} onClick={onOpenExample}>Run it again</Button>
           : (props.firstCheck === 'unknown' || ((props.firstCheck === 'passed' || props.firstCheck === 'failed') && !props.firstTestResult)) ? <Button type="button" kind="primary" disabled={busy || !!error || !props.onCheckFirstTest} onClick={props.onCheckFirstTest}>Check again</Button>
           : !props.firstCheck && <Button type="button" kind="primary" disabled={busy || !!error} onClick={onOpenExample}>Open your first agent</Button>}
         {props.firstTestResult && <Button type="button" kind={props.firstCheck === 'stale' || props.firstCheck === 'unknown' || props.firstCheck === 'running' ? 'secondary' : 'primary'} disabled={busy || !!error} onClick={onOpenExample}>See what it answered</Button>}
+        {onSetUpLater && (props.firstCheck === 'failed' || props.firstCheck === 'unknown') && <SetUpLater onClick={onSetUpLater} />}
       </>}{!needsModel && !guided && <Button type="button" kind="secondary" disabled={busy || !!error} onClick={onOpenExample}>Read its instructions</Button>}</>}
     </div>}
     {/* Guided, the instructions open here instead of in Designer, so reading them doesn't leave the first run. */}
@@ -111,17 +115,19 @@ export function SetupProgress(props: Props) {
   </section>;
 }
 
-export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster' | 'upgrade' | 'updating' | 'updateBlocked' | 'ordinaryRecovery'> & { workspaceDetails?: ReactNode; modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement> }) {
-  const { status, busy, error, onRestart, onCluster } = props;
+export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster' | 'upgrade' | 'updating' | 'updateBlocked' | 'ordinaryRecovery' | 'onSetUpLater'> & { workspaceDetails?: ReactNode; modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement> }) {
+  const { status, busy, error, onRestart, onCluster, onSetUpLater } = props;
   const { view, failed, rows } = stepRows(props);
+  const aiFailed = ['failed', 'resetFailed', 'removalFailed'].includes(props.modelState ?? 'idle');
   return <ol className="steps-four" aria-label="Setup steps">
       {rows.map(({ name, state, result }, index) => {
         return <li key={name} className={rowClass[state]} aria-current={!view.done && index + 1 === view.step && ['running', 'needs-you'].includes(state) ? 'step' : undefined}>
         <StatusIcon state={state} /><b>{name}</b><span className="step-result">{result}</span>
         {index === 1 && props.workspaceDetails && <div className="step-more">{props.workspaceDetails}</div>}
-        {index === 2 && <><div ref={props.modelChoiceRef} className="step-more model-choice-slot" /><div ref={props.modelRecoveryRef} className="step-more model-recovery-slot" /></>}
+        {index === 2 && <><div ref={props.modelChoiceRef} className="step-more model-choice-slot" /><div ref={props.modelRecoveryRef} className="step-more model-recovery-slot" />
+          {onSetUpLater && aiFailed && <div className="step-more workspace-step-actions guided-later-row"><SetUpLater onClick={onSetUpLater} /></div>}</>}
         {failed && (props.ordinaryRecovery ?? !props.upgrade) && index === 1 && <div className="step-more">
-          <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /></div>}
+          <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} onSetUpLater={onSetUpLater} /></div>}
       </li>; })}
     </ol>;
 }

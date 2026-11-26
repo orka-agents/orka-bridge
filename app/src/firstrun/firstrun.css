@@ -1,5 +1,6 @@
 /* Guided first run: the title bar holds the setup steps, and the page is the whole window under it, edge to edge.
-   There is no sidebar: Show all of Bridge, in the title bar after Welcome, brings it back. The status card leaves
+   There is no sidebar until guidance ends: the first test's payoff, a cluster, opening Designer from the agent's
+   instructions, or Set up later on a screen where setup has stopped. The status card leaves
    the screen but stays in the accessibility tree, so its live status lines are still announced; only its place
    button, which opens a menu of places, is taken out. */
 .app-shell.guided { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "title" "main"; }
@@ -25,7 +26,6 @@
 .guided-steps li.current { background: var(--color-action); border-color: var(--color-action); color: var(--color-action-text); }
 .guided-step-dot { display: inline-grid; place-items: center; width: 20px; font: 700 13px/1 var(--font-ui); }
 .guided-step-dot svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.guided-exit, .guided-exit.button { margin-inline: var(--space-3); font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
 @media (max-width: 820px) {
   .guided-steps li + li { margin-left: 32px; }
   .guided-steps li + li::before { right: calc(100% + 6px); width: 20px; }
@@ -35,7 +35,6 @@
   .guided-steps li:not(.current) { font-size: 0; gap: 0; padding-inline: var(--space-1); }
   .guided-steps li + li { margin-left: 16px; }
   .guided-steps li + li::before { width: 10px; right: calc(100% + 3px); }
-  .guided-exit.button { margin-inline: var(--space-1); max-width: 96px; white-space: normal; text-align: right; line-height: 1.2; font: var(--type-small); font-family: var(--font-mono); }
 }
 
 /* First-run screens follow the boards, which are drawn at 1200 by 820: display type and the larger sizes grow a
@@ -75,3 +74,7 @@
 .app-shell.guided .first-pass .test-story h5 { font-size: 12px; }
 .app-shell.guided .first-pass .test-story .reading { font-size: 14px; line-height: 20px; }
 .app-shell.guided .setup.workspace-setup-failed { max-width: none; }
+
+/* Set up later sits in the row of the recovery actions it follows, without the row's usual gap above. */
+.workspace-failure > .guided-later-row { margin-top: 0; }
+.steps-four .step-more.guided-later-row { display: flex; justify-content: flex-start; margin-top: 0; }

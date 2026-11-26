@@ -61,6 +61,8 @@ export default function App() {
   const [guided, setGuided] = useState(guidedFirstRun);
   const guidedLeft = useRef(false);
   const leaveGuided = useCallback(() => { guidedLeft.current = true; finishGuidedFirstRun(); setGuided(false); }, []);
+  // Set up later, offered only where setup has stopped, ends guidance on the same page; focus stays on its heading.
+  const setUpLater = useCallback(() => { leaveGuided(); requestAnimationFrame(() => document.getElementById('page-title')?.focus()); }, [leaveGuided]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   // Narrow windows always show the rail; there the toggle opens the full sidebar over the page until a page is chosen.
   const narrow = useNarrowWindow();
@@ -94,7 +96,7 @@ export default function App() {
   }, []);
   const [place, setPlace] = useState<SelectedPlace>({ kind: 'thisComputer' });
   const remote = place.kind === 'cluster';
-  // The guided first run ends once the person moves on: another page, or a cluster instead of this computer.
+  // The guided first run ends once the person moves on: another page, a cluster instead of this computer, or Set up later.
   // That includes Setup opening Designer when the automatic first test doesn't pass, so the person sees why.
   useEffect(() => { if (guided && (page !== 'Clusters' || remote)) leaveGuided(); }, [guided, page, remote, leaveGuided]);
   const content = useRef<HTMLElement>(null);
@@ -397,7 +399,6 @@ export default function App() {
         </div>
         <div className="title-bar-centre">{guided && <GuidedSteps current={guidedStep(view.step, view.done)} />}</div>
         <div className="title-bar-end">
-          {guided && !welcome && <Button type="button" kind="quiet" className="guided-exit" onClick={leaveGuided}>Show all of Bridge</Button>}
           <ThemeButton />
           <WindowControls />
         </div>
@@ -430,7 +431,7 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup ref={localCluster} place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onLaunch={observeLaunch} guided={guided}
+          <Setup ref={localCluster} place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onLaunch={observeLaunch} guided={guided} onSetUpLater={guided ? setUpLater : undefined}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
         {page === 'Home' && <Home active revision={agentsRevision} onOpenAgent={id => openDesigner(id)} onChooseWorkspace={() => setPage('Clusters')}

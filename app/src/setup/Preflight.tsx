@@ -5,8 +5,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { readPreflight, type HostPreflight } from './preflight-state';
 import { formatRequirementGB } from './requirements';
 import { StatusIcon } from '../components/DesignSystem';
+import SetUpLater from '../firstrun/SetUpLater';
 
-export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }: { requiredMemoryBytes: number; onBlocked: (blocked: boolean) => void; onCluster: () => void }) {
+export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster, onSetUpLater }: { requiredMemoryBytes: number; onBlocked: (blocked: boolean) => void; onCluster: () => void; onSetUpLater?: () => void }) {
   const [result, setResult] = useState<HostPreflight | null>();
   const [checking, setChecking] = useState(true);
   const [attempt, setAttempt] = useState(0);
@@ -66,6 +67,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }:
       <Button type="button" kind="secondary" onClick={onCluster}>Use a cluster instead</Button>
       {failedVirtualization && <><Button type="button" kind="secondary" onClick={() => { reason.current?.focus(); onBlocked(true); setChecking(true); setNotice(''); setAttempt(value => value + 1); }}>Check again</Button>
       <Button type="button" kind="quiet" onClick={() => { void copy(); }}>Copy details for help</Button></>}
+      {onSetUpLater && <SetUpLater onClick={onSetUpLater} />}
     </div>}
     {notice && <p role="status">{notice}</p>}
   </section>;
