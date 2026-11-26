@@ -48,6 +48,8 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   useEffect(() => {
     helpGeneration.current += 1;
     setHelpError(false); setNotice('');
+    // Each new failure starts from its own default: an earlier failure's folded or open details don't carry over.
+    setDetails(status.workspaceFailure?.operation !== 'stop');
   }, [status.localVm, status.preflightFailure, status.workspaceFailure?.cause, status.workspaceFailure?.operation]);
   async function help() {
     const generation = helpGeneration.current;

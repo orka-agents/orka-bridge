@@ -204,3 +204,18 @@ test('unreadable workspace status cannot authorize a restart', async () => {
   await screen.findByText('The setup choice could not be read or saved.');
   expect((screen.getByRole('button', { name: 'Restart workspace' }) as HTMLButtonElement).disabled).toBe(true);
 });
+
+test('each failure starts its details from its own default, not the last failure\'s', async () => {
+  status = { selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'first', workspaceFailure: { cause: 'services', operation: 'start', codes: [] } };
+  const user = await open();
+  const card = await screen.findByRole('region', { name: 'Workspace' });
+  // A failed start opens its details; fold them.
+  await user.click(await within(card).findByRole('button', { name: 'Hide details' }));
+  expect(within(card).getByRole('button', { name: 'Show details' })).toBeTruthy();
+  // The next failed start opens them again.
+  await observe({ selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'second', workspaceFailure: { cause: 'permission', operation: 'start', codes: [] } });
+  expect(await within(screen.getByRole('region', { name: 'Workspace' })).findByRole('button', { name: 'Hide details' })).toBeTruthy();
+  // A failed stop starts folded even though the last one was open.
+  await observe({ selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'third', workspaceFailure: { cause: 'stopUnconfirmed', operation: 'stop', codes: [] } });
+  expect(await within(screen.getByRole('region', { name: 'Workspace' })).findByRole('button', { name: 'Show details' })).toBeTruthy();
+});
