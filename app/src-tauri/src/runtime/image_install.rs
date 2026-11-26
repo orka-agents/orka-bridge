@@ -904,8 +904,14 @@ fn clone(context: &Context, stage: &Dir, name: &str, source: &File) -> Result<bo
     // A clone carries the cache file's mode and flags; give it what a fresh copy would have,
     // or remove it so a retry never trusts a clone by its bytes alone.
     let normalized = regular(stage, name, false, false).is_ok_and(|file| {
-        unsafe { libc::fchflags(file.as_raw_fd(), 0) } == 0
-            && unsafe { libc::fchmod(file.as_raw_fd(), 0o644) } == 0
+        // Both calls act on this open descriptor only.
+        let (flags, mode) = unsafe {
+            (
+                libc::fchflags(file.as_raw_fd(), 0),
+                libc::fchmod(file.as_raw_fd(), 0o644),
+            )
+        };
+        flags == 0 && mode == 0
     });
     if !normalized {
         stage.remove_file(name).map_err(storage)?;
