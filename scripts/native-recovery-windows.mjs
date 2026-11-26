@@ -1291,7 +1291,7 @@ try {
         await compareReference(image.data, theme, size, `ai-reset-${state}`, frame);
       };
       const mismatch = s => s.text.includes("Bridge's saved AI connection is from an earlier setup.") && s.primary.join() === 'Reset AI connection';
-      await expect('mismatch', row, s => mismatch(s) && s.heading === 'This computer' && s.page.includes("The AI couldn't connect") && s.page.includes('Your agents are safe.')
+      await expect('mismatch', row, s => mismatch(s) && s.heading === 'This computer' && s.text.startsWith('Connect the AI\nNeeds you') && !s.page.includes("The AI couldn't connect") && s.page.includes('Your agents are safe.')
         && ['Use another provider', 'Copy details for help'].every(b => s.buttons.includes(b)) && !['Remove sign-in', 'Check again', 'Connect the AI'].some(b => s.buttons.includes(b)));
       await shoot('mismatch', 'failed', row);
       await evaluate(`document.querySelector('button[aria-label="Clusters"]').click()`);
