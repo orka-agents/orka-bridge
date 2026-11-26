@@ -1,7 +1,7 @@
 import { Disclosure } from './Disclosure';
 import type { SourceId } from '../designer/agent-api';
 import type { RunSnapshot } from '../designer/run-api';
-import { Details, Elapsed, StatusIcon } from './DesignSystem';
+import { Details, Elapsed, StatusPill } from './DesignSystem';
 import './test-results.css';
 import { validTestTitle } from '../designer/test-definitions';
 
@@ -25,8 +25,9 @@ export function changedFiles(current: SourceId | undefined, captured: SourceId |
   }
   return unsaved ? 'Your agent has unsaved edits.' : 'The current file revision is not confirmed.';
 }
+/** Progress for work whose length Bridge cannot know: a moving bar, the stage, then the time observed so far. */
 export function TestProgress({ stage }: { stage: string }) {
-  return <div className="test-progress"><StatusIcon state="running" /><span role="status">{stage}</span><Elapsed /></div>;
+  return <div className="test-progress"><span className="test-progress-bar" aria-hidden="true"><span /></span><span role="status">{stage}</span><Elapsed /></div>;
 }
 export function testReason(c: Case, vendor?: 'openai' | 'anthropic' | null) {
   if (c.phase === 'NotRun') return 'This test was not submitted.';
@@ -44,12 +45,13 @@ export function testReason(c: Case, vendor?: 'openai' | 'anthropic' | null) {
   if (unknown) return unknown.kind === 'toolCalled' ? `A call to ${unknown.expected} was not observed; this result is unknown.` : 'No answer was available to evaluate this test.';
   return undefined;
 }
-export function TestResults({ report, stale, vendor }: { report: Report | null | undefined; stale: boolean; vendor?: 'openai' | 'anthropic' | null }) {
+/** collapsed starts every case closed, for a card whose headline already states the result. */
+export function TestResults({ report, stale, vendor, collapsed = false }: { report: Report | null | undefined; stale: boolean; vendor?: 'openai' | 'anthropic' | null; collapsed?: boolean }) {
   if (!report) return null;
   const order = { failed: 0, unknown: 1, passed: 2, cancelled: 3 };
   return <div className={stale ? 'test-results result-stale' : 'test-results'}>
     {stale && <p>Earlier result</p>}
-    {[...report.cases].sort((a, b) => order[a.verdict] - order[b.verdict]).map(c => <Disclosure className="test-result" data-result-id={c.id} key={`${c.id}:${c.verdict}:${stale}`} defaultOpen={c.verdict !== 'passed'} label={<><StatusIcon state={stale ? 'stale' : c.verdict === 'cancelled' ? 'not-started' : c.verdict === 'unknown' ? 'stale' : c.verdict} /><span className="test-name">{validTestTitle(c.title) && <span>{c.title}</span>}<code>{c.id}</code></span><span>{stale ? 'Earlier result' : c.phase === 'NotRun' ? 'Not run' : words[c.verdict]}</span></>}>
+    {[...report.cases].sort((a, b) => order[a.verdict] - order[b.verdict]).map(c => <Disclosure className="test-result" data-result-id={c.id} key={`${c.id}:${c.verdict}:${stale}`} defaultOpen={!collapsed && c.verdict !== 'passed'} label={<><span className="test-name"><code>{c.id}</code>{validTestTitle(c.title) && <span>{c.title}</span>}</span><StatusPill state={stale ? 'stale' : c.verdict === 'cancelled' ? 'not-started' : c.verdict === 'unknown' ? 'needs-you' : c.verdict}>{stale ? 'Earlier result' : c.phase === 'NotRun' ? 'Not run' : words[c.verdict]}</StatusPill></>}>
       <div className="test-answer">
         <h5 className="section-label">Question</h5><p className="reading">{c.question}</p>
         <h5 className="section-label">Answer</h5><p className="reading">{c.answer ?? 'No answer was observed.'}</p>

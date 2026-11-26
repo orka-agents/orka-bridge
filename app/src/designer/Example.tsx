@@ -18,7 +18,7 @@ import { listDocuments, selectDocument, type AgentEntry } from './documents-api'
 import { readAgentName, readForm } from './agent-form';
 import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
-import Send, { SendEntry, SendHistory } from '../clusters/Send';
+import Send, { SendHistory } from '../clusters/Send';
 import type { SendStart } from '../clusters/use-send-settlement';
 
 export type DocumentAction = { id: number; documentId: string; action: 'open' | 'chat' | 'run' | 'send' };
@@ -86,6 +86,8 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   const observePendingSoul = useCallback((pending: boolean) => { pendingSoulCurrent.current = pending; setPendingSoul(pending); if (pending) setStale(true); }, []);
   const editInstructions = () => { setView('Agent'); requestAnimationFrame(() => { const editor = document.querySelector<HTMLTextAreaElement>('.instructions-editor'); editor?.focus(); editor?.scrollIntoView?.({ block: 'center' }); }); };
   const [localRun, setLocalRun] = useState<RunSnapshot>();
+  // While a Send runs or has a result, the tests card folds to its summary so the Send card stays in view.
+  const [sendActive, setSendActive] = useState(false);
   const observeRun = useCallback((value: RunSnapshot | undefined) => { setLocalRun(value); onRun?.(value, boundDocument); }, [onRun, boundDocument]);
   const [sendRequest, setSendRequest] = useState(0);
   const openSend = () => { setView('Agent'); setSendRequest(value => value + 1); };
@@ -249,7 +251,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     }} onCancel={() => { setCreating(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.new-agent-entry')?.focus()); }} />}
     <section className="designer" hidden={creating} aria-labelledby={active && !creating ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
-      <div className="agent-heading-copy"><h1 className={info.name ? 'agent-name' : undefined} id={active && !creating ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{view === 'Try' ? <p className="muted">Try a task on this computer before you rely on it.</p> : info.description && <p className="muted">{info.description}</p>}</div>
+      <div className="agent-heading-copy"><h1 className={info.name ? 'agent-name' : undefined} id={active && !creating ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{view === 'Try' ? <p className="muted">Try a task on this computer before you rely on it.</p> : info.description ? <p className="muted">{info.description}</p> : pair && <p className="muted">No description in the agent file.</p>}</div>
       <div className="heading-actions">
         <div className="view-switch" role="group" aria-label="Designer view">
           <button type="button" aria-pressed={view === 'Agent'} onClick={() => setView('Agent')}>Agent</button>
@@ -262,15 +264,14 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
         </select></label>
         <Button type="button" kind="secondary" className="new-agent-entry" onClick={() => setWantsCreate(true)}>New agent</Button>
         {actions}
-        <SendEntry blocked={sendBlocked} onProceed={openSend} />
       </div>
     </div>
     {selectionError && <p role="alert">{selectionError}</p>}
     {!pair ? error ? <div className="designer-file card"><div className="alert alert-failed"><p role="alert" className="alert-title">{error}</p></div><div className="heading-actions"><Button type="button" kind="primary" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</Button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div className="designer-work">
       <div className="designer-editing">
-      <div className="file-toolbar"><h2 className={view === 'File' ? 'section-label file-name' : 'section-label'}>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2><span className="muted" role="status">{saveLabel}</span></div>
-      {error && <div className="save-error"><div className="alert alert-failed"><p role="alert" className="alert-title">{error}</p></div><Button kind="primary" className="action-spaced" type="button" onClick={() => { void flush(true); }}>Try saving again</Button></div>}
+      <div className="file-toolbar"><h2 className={view === 'File' ? 'section-label file-name' : 'section-label'}>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2>{!error && <span className="muted" role="status">{saveLabel}</span>}</div>
+      {error && <div className="save-error"><div className="alert alert-failed"><p role="alert" className="alert-title">{error}</p></div><div className="save-error-actions"><Button kind="primary" type="button" onClick={() => { void flush(true); }}>Try saving again</Button><span className="save-state" role="status">{saveLabel}</span></div></div>}
       <div className="designer-file card">
         {view === 'File' ? <>
           <FileLocation path={pair.path} documentId={boundDocument} />
@@ -291,14 +292,14 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
       <div className="designer-side" hidden={view === 'Try'}>
       <section className="designer-tests" aria-label="This computer"><h2 className="section-label">This computer</h2><div className="card">
         {instructionsMissing && !testDraft && <p>Write instructions in Agent view before running tests.</p>}
-        {testDraft ? <div><h3>Tests</h3><p>Your first test is incomplete. Write instructions in Agent view, then add a question and at least one assertion to the test file on disk before running tests or sending to a cluster.</p><div className="heading-actions"><Button type="button" kind="secondary" disabled title="Complete your instructions and test file first">Run tests</Button><Button type="button" kind="secondary" disabled={reloading || pendingSoul || saveState !== 'saved'} title={pendingSoul || saveState !== 'saved' ? 'Wait for your changes to save before reloading.' : undefined} onClick={() => { void reloadSource().catch(() => undefined); }}>{reloading ? 'Reloading…' : 'Reload saved files'}</Button></div>{sourceReloadError && <p role="alert">Your saved files could not be read. Your current instructions are kept. Try reloading again.</p>}<Details hint="Test file">{testSource}</Details></div>
+        {testDraft ? <div><h3>Tests</h3><p>Your first test is incomplete. Write instructions in Agent view, then add a question and at least one assertion to the test file on disk before running tests or sending to a cluster.</p><div className="heading-actions"><Button type="button" kind="primary" disabled title="Complete your instructions and test file first">Run tests</Button><Button type="button" kind="secondary" disabled={reloading || pendingSoul || saveState !== 'saved'} title={pendingSoul || saveState !== 'saved' ? 'Wait for your changes to save before reloading.' : undefined} onClick={() => { void reloadSource().catch(() => undefined); }}>{reloading ? 'Reloading…' : 'Reload saved files'}</Button></div><p className="muted">Complete your instructions and test file first</p>{sourceReloadError && <p role="alert">Your saved files could not be read. Your current instructions are kept. Try reloading again.</p>}{testSource}</div>
           : setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Waiting for the workspace to start." title="Waiting for the workspace to start."><Button type="button" kind="secondary" className="action-spaced" disabled title="Waiting for the workspace to start.">Run tests</Button><span className="control-tip" aria-hidden="true">Waiting for the workspace to start.</span></span><p className="muted">Waiting for the workspace to start.</p>{onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Go to Clusters</Button>}</div>
-          : <Run tests={pair.tests} workspaceReady={workspaceReady} onChooseCluster={onChooseCluster} onEditInstructions={editInstructions} documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={instructionsMissing || pendingSoul || saveState !== 'saved'} stale={stale} startRequest={actionReady && view === 'Agent' && actionRequest?.action === 'run' ? actionRequest.id : undefined} onStartRequestHandled={finishAction} onStart={() => { if (latest.current === draft) setStale(false); }} />}
+          : <Run tests={pair.tests} workspaceReady={workspaceReady} onChooseCluster={onChooseCluster} onEditInstructions={editInstructions} documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={instructionsMissing || pendingSoul || saveState !== 'saved'} stale={stale} collapsed={sendActive} startRequest={actionReady && view === 'Agent' && actionRequest?.action === 'run' ? actionRequest.id : undefined} onStartRequestHandled={finishAction} onStart={() => { if (latest.current === draft) setStale(false); }} />}
         {/* Run shows the test list and test file itself; this copy is only for the not-ready state. */}
         {setupPending && !testDraft && <><DesignerTests definitions={definitions} stale={false} /><Details hint="Test file">{testSource}</Details></>}
       </div></section>
       <section className="designer-checks" aria-label="Team cluster">
-        <Send expanded={sendRequest > 0} documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} agentName={savedName ?? pair.name} testCount={definitions?.length} onFixInDesigner={editInstructions} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} startSend={startSend} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
+        <Send documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} agentName={savedName ?? pair.name} testCount={definitions?.length} onFixInDesigner={editInstructions} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} startSend={startSend} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} onActivity={setSendActive} />
       </section>
       </div>
       </div>

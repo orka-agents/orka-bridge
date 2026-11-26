@@ -48,7 +48,13 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `sendBlocked` | Send blocked by destination checks | `team-dev` → Use this cluster → Open your agent |
 | `sendRunning` | Send running on the cluster (until cancelled) | As `sendBlocked`, then Send and run tests |
 | `sendFailed` | Send finished with a failing test | As `sendRunning` |
+| `sendPassed` | Send finished with every test passing | As `sendRunning` |
+| `sendLocalFailed` | Local test failed, cluster ready to send | As `sendBlocked`, then Run tests, then Send and run tests for the warning |
 | `testIncomplete` | First test is incomplete | Designer, or add `page=Designer` |
+| `runStale` | Local result from before your last edit | Designer, or add `page=Designer` |
+| `overviewEmpty` | No saved agents yet | Overview, or add `page=Overview` |
+
+In every scenario a local test run can be stopped while it runs, and a finished run is recorded for Overview with its time, as native local results are. A run keeps the files it started from, so editing the agent afterwards shows its result as not run since your edit.
 
 ## Run with a local VM
 

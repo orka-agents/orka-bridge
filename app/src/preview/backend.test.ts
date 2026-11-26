@@ -216,6 +216,52 @@ describe('preview backend replies', () => {
     expect((await readPlaces())?.places[0].agents).toHaveLength(1);
   });
 
+  it('records a finished local run for Overview and lets Stop cancel a running one', async () => {
+    await preview('scenario=connected&speed=1000');
+    await connectModel();
+    expect(await runCall('agent_run', SAMPLE_DOCUMENT_ID, true, crypto.randomUUID())).toMatchObject({ ok: true, snapshot: { state: 'running', canCancel: true, model: 'gpt-5.6-terra' } });
+    await vi.waitFor(async () => expect(await runCall('agent_run_status')).toMatchObject({ ok: true, snapshot: { state: 'complete', report: { verdict: 'passed' } } }), { timeout: 3000 });
+    const file = (await readFiles()).files.find(f => f.documentId === SAMPLE_DOCUMENT_ID);
+    expect(file?.localResult).toMatchObject({ state: 'complete', documentId: SAMPLE_DOCUMENT_ID, report: { verdict: 'passed', passed: 1, total: 1 } });
+    // Wall-clock milliseconds, as RelativeTime reads them.
+    expect(Math.abs(Date.now() - file!.localResult!.observedAt)).toBeLessThan(60_000);
+
+    await preview('scenario=connected');
+    await connectModel();
+    await runCall('agent_run', SAMPLE_DOCUMENT_ID, true, crypto.randomUUID());
+    expect(await runCall('agent_run_cancel')).toMatchObject({ ok: true, snapshot: { state: 'complete', cancellation: 'cancelled', report: { verdict: 'cancelled' } } });
+    expect((await readFiles()).files[0].localResult).toMatchObject({ report: { verdict: 'cancelled' } });
+  });
+
+  it('opens runStale with a result from files that changed since', async () => {
+    await preview('scenario=runStale');
+    const run = await runCall('agent_run_status');
+    const pair = await agentCall('agent_open', undefined, SAMPLE_DOCUMENT_ID);
+    expect(run).toMatchObject({ ok: true, snapshot: { state: 'complete', report: { verdict: 'passed' } } });
+    expect(run.ok && run.snapshot.source?.agent).not.toBe(pair.source?.agent);
+    expect(run.ok && run.snapshot.source?.tests).toBe(pair.source?.tests);
+  });
+
+  it('opens overviewEmpty with no saved agents', async () => {
+    await preview('scenario=overviewEmpty');
+    expect(await readFiles()).toMatchObject({ state: 'complete', files: [] });
+    expect((await readPlaces())?.places).toEqual([]);
+  });
+
+  it('finishes Send with every test passing, and fails the local test in sendLocalFailed', async () => {
+    await preview('scenario=sendPassed&speed=100');
+    const { targetId, providerId } = await connectedCluster();
+    const check = await sendPreflight(targetId, providerId);
+    await sendCall('send_start', { targetId, providerId, expectedSource: check.source });
+    await vi.waitFor(async () => expect(await sendCall('send_status')).toMatchObject({ view: { state: 'complete', agentAction: 'create', report: { verdict: 'passed', cases: [{ verdict: 'passed' }] } } }), { timeout: 3000 });
+
+    await preview('scenario=sendLocalFailed&speed=1000');
+    const local = await connectedCluster();
+    expect(await sendPreflight(local.targetId, local.providerId)).toMatchObject({ canSend: true });
+    await runCall('agent_run', SAMPLE_DOCUMENT_ID, true, crypto.randomUUID());
+    await vi.waitFor(async () => expect(await runCall('agent_run_status')).toMatchObject({ ok: true, snapshot: { report: { verdict: 'failed' } } }), { timeout: 3000 });
+  });
+
   it('opens a created agent whose tests are the draft skeleton', async () => {
     await preview('scenario=testIncomplete');
     const files = await readFiles();

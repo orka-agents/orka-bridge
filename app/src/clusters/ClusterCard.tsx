@@ -227,13 +227,13 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     </div>}
     {target && <>
       {connected ? <>
-        <div className="cluster-result"><p>Orka in <code>{target.service_namespace}/{target.service_name}</code></p></div>
+        <div className="cluster-result"><p>Orka in <code className="code-chip">{target.service_namespace}/{target.service_name}</code></p></div>
         <ul className="cluster-checks"><li><StatusIcon state="passed" /><b>Cluster found</b></li><li><StatusIcon state="passed" /><b role="status">Access confirmed</b></li></ul>
         <h3>AI connection</h3><label className="sr-only" htmlFor="send-provider">AI connection</label>
         <select className="field" ref={providerField} id="send-provider" disabled={removing} value={providerId} onChange={event => { const next = event.target.value; setProviderId(next); providerName.current = access.providers.find(p => p.id === next)?.name ?? ''; onPlace({ kind: 'cluster', target, providers: access.providers, providerId: next }); }}>
           <option value="">Choose an AI connection</option>{access.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.ready ? 'Ready' : 'Not ready'}</option>)}
         </select><p className="muted">Send checks whether this AI connection supports your agent's model.</p>
-        <p className="muted">{checkedAt != null ? <>Checked <RelativeTime value={checkedAt} /></> : 'Last check unavailable'}</p>
+        <p className="muted">{checkedAt != null ? <>Checked <RelativeTime value={checkedAt} inline /></> : 'Last check unavailable'}</p>
         <h3>Agents on this cluster</h3>
         {summary === undefined ? <p role="status">Reading agents…</p> : !summary || summary.stale ? <p>Agents could not be checked. Check access again to retry.</p> : summary.agents.length ? <ul>{summary.agents.map(agent => <li key={agent.uid}><code>{agent.name}</code>{agent.model && <> · <code>{agent.model}</code></>}</li>)}</ul> : <p>No agents on this cluster yet.</p>}
         {persistence === 'unavailable' && <p role="status">Remembered cluster information is unavailable. This connection is usable, but may not be remembered after Bridge closes.</p>}

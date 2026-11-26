@@ -78,15 +78,15 @@ test('Fix it first focuses the visible partial failed result while a local suite
   expect(document.activeElement?.tagName).toBe('SUMMARY');
   expect(screen.queryByRole('dialog')).toBeNull();
 });
-test('the page-head Send control only brings the Send card into view', async () => {
-  const ipc = native(); const user = userEvent.setup();
+test('the Send card stands in the right column under Team cluster, with no page-head Send control', async () => {
+  const ipc = native();
   render(<Example remote place={place} />);
-  const head = await screen.findByRole('button', { name: 'Send to a cluster' });
-  await waitFor(() => expect((head as HTMLButtonElement).disabled).toBe(false));
-  await user.click(head);
+  const panel = await screen.findByRole('region', { name: 'Send and cluster tests' });
+  expect(panel.closest('.designer-side')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Team cluster' })).toBeTruthy();
+  expect(document.querySelector('.designer-heading')?.textContent).not.toContain('Send to a cluster');
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'send_start')).toBe(false);
-  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Send and cluster tests' })));
 });
 test('a failed cluster Send offers Fix in Designer and focuses the instructions, not a local test result', async () => {
   native(localResult, { documentId: id, id: '00000000-0000-4000-8000-000000000004', targetId: target.id, providerId: provider.id, targetName: target.context_name, source, model: 'literal-model', agentName: 'generated-agent', agentAction: 'create', state: 'complete', stage: 'done', acknowledged: [{ kind: 'Agent', name: 'generated-agent', uid: 'uid' }], pending: null, report: { verdict: 'failed', cases: [failed] }, error: null, storageError: false, cancellation: null });
@@ -109,7 +109,7 @@ test.each([
 ])('Send identifies the saved front-matter name with a folder fallback: %s', async (name, agent) => {
   native(localResult, null, { ...pair, name: 'reader-folder', agent }); render(<Example remote place={place} />);
   const panel = await screen.findByRole('region', { name: 'Send and cluster tests' });
-  expect(within(panel).getByRole('region', { name: 'What you send' }).textContent).toContain(`${name} and test files`);
+  expect(panel.querySelector('.send-what')?.textContent).toContain(`${name} and test files`);
 });
 test('editing instructions does not reparse unchanged saved tests or the saved agent name', async () => {
   const parse = vi.spyOn(definitions, 'testDefinitions');

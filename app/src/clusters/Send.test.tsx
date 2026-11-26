@@ -40,7 +40,7 @@ test.each([
   { state: 'failed', stage: 'submit', error: 'connection' },
 ])('an existing Send remains visible without explicitly opening it: %j', async snapshot => {
   native(idle, { ...running, ...snapshot });
-  render(<Send expanded={false} place={{ kind: 'thisComputer' }} source={source} stale={false} />);
+  render(<Send place={{ kind: 'thisComputer' }} source={source} stale={false} />);
   expect(await screen.findByRole('region', { name: 'Send and cluster tests' })).toBeTruthy();
   if (snapshot.state === 'running') expect(screen.getByRole('button', { name: 'Cancel tests' })).toBeTruthy();
 });
@@ -218,7 +218,7 @@ test('changed disk files can be explicitly reloaded before preflight is retried'
   await user.click(await screen.findByRole('button', { name: 'Reload saved files' }));
   await waitFor(() => expect((screen.getByRole('button', { name: 'Send and run tests' }) as HTMLButtonElement).disabled).toBe(false));
   expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toBe('Changed on disk.\n');
-  expect(screen.getByRole('region', { name: 'What you send' }).textContent).toContain('file-model, checked when tests run');
+  expect(document.querySelector('.send-panel .send-what')?.textContent).toContain('file-model, checked when tests run');
 });
 test('a delayed reload never overwrites edits made while files are being read', async () => {
   vi.stubGlobal('isTauri', true); let opened = false; let finish!: (value: unknown) => void;
@@ -320,13 +320,12 @@ test('send_anyway_explicit and duplicate clicks submit only once', async () => {
   await screen.findByText('Waiting for answers and evaluating tests');
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'send_start')).toHaveLength(1);
 });
-test('Send entry returns keyboard focus to an already open panel without submitting', async () => {
-  const ipc = native(); const user = userEvent.setup(); render(<Example remote place={place} />);
-  const entry = await screen.findByRole('button', { name: 'Send to a cluster' });
-  const panel = screen.getByRole('region', { name: 'Send and cluster tests' });
-  await user.click(entry);
-  await waitFor(() => expect(document.activeElement).toBe(panel));
-  await user.click(entry);
+test('a Send request moves keyboard focus to the always-present Send card without submitting', async () => {
+  const ipc = native();
+  render(<Example remote place={place} actionRequest={{ id: 1, documentId: '9b2b93c4-375c-4815-9717-39852a96e411', action: 'send' }} />);
+  const panel = await screen.findByRole('region', { name: 'Send and cluster tests' });
+  // The card is there before any request; there is no separate page-head Send entry.
+  expect(screen.queryByRole('button', { name: 'Send to a cluster' })).toBeNull();
   await waitFor(() => expect(document.activeElement).toBe(panel));
   expect(ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
 });

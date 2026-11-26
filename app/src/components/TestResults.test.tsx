@@ -37,15 +37,19 @@ test.each([540, 1280])('captured title stays in the name column, separate from t
   const active = document.createElement('style');
   const rules = (list: CSSRuleList): string[] => Array.from(list).flatMap(rule => {
     if ('selectorText' in rule) return [rule.cssText];
-    if ('conditionText' in rule && 'cssRules' in rule && width >= 650) return rules((rule as CSSMediaRule).cssRules);
+    if ('conditionText' in rule && 'cssRules' in rule) {
+      const condition = (rule as CSSMediaRule).conditionText, max = /max-width:\s*(\d+)px/.exec(condition), min = /min-width:\s*(\d+)px/.exec(condition);
+      return (!max || width <= Number(max[1])) && (!min || width >= Number(min[1])) ? rules((rule as CSSMediaRule).cssRules) : [];
+    }
     return [];
   });
   active.textContent = rules(sheet.sheet!.cssRules).join('\n'); sheet.remove(); document.head.append(active);
   try {
     const name = container.querySelector('.test-name')!;
-    const verdict = container.querySelector('.test-result > summary > .disclosure-label > span:last-child')!;
-    expect(getComputedStyle(name).gridColumn).toBe('2');
-    expect(getComputedStyle(verdict).gridColumn).toBe(width >= 650 ? '3' : '2');
+    // One line: id and title on the left, the verdict pill on the right; a narrow card stacks the pill under them.
+    const verdict = container.querySelector('.test-result > summary > .disclosure-label > .pill')!;
+    expect(getComputedStyle(name).gridColumn).toBe('1');
+    expect(getComputedStyle(verdict).gridColumn).toBe(width >= 650 ? '2' : '1');
   } finally { active.remove(); }
 });
 test('test-row grid styles never apply to nested Details labels in either breakpoint', () => {
@@ -56,7 +60,7 @@ test('test-row grid styles never apply to nested Details labels in either breakp
   try {
     const rules = (list: CSSRuleList): CSSStyleRule[] => Array.from(list).flatMap(rule =>
       'selectorText' in rule ? [rule as CSSStyleRule] : 'cssRules' in rule ? rules((rule as CSSGroupingRule).cssRules) : []);
-    const grids = rules(style.sheet!.cssRules).filter(rule => rule.style.display === 'grid' || rule.style.getPropertyValue('grid-template-columns'));
+    const grids = rules(style.sheet!.cssRules).filter(rule => rule.selectorText.includes('.test-result') && (rule.style.display === 'grid' || rule.style.getPropertyValue('grid-template-columns')));
     expect(grids.length).toBeGreaterThan(0);
     const heading = container.querySelector('.test-result > summary > .disclosure-label')!;
     const nested = container.querySelector('.test-answer .card-details > summary > .disclosure-label')!;
@@ -94,7 +98,8 @@ test('stale rows have no passing icons or current verdict words', () => {
 test('unknown tool evidence is not a fabricated failure', () => {
   const unknown = { ...failed, verdict: 'unknown' as const, completedTools: [], answer: null, assertions: [{ id: 'fetch', kind: 'toolCalled' as const, expected: 'web_fetch', verdict: 'unknown' as const }] };
   const { container } = render(<TestResults report={{ verdict: 'unknown', cases: [unknown] }} stale={false} />);
-  expect(container.querySelector('.test-result summary .status-stale')).toBeTruthy();
+  // Unknown asks for attention, in amber, rather than reading as a grey stale result.
+  expect(container.querySelector('.test-result summary .status-needs-you')).toBeTruthy();
   expect(container.querySelector('.test-result summary .status-not-started')).toBeNull();
   expect(screen.getByText('No answer was observed.')).toBeTruthy();
   expect(screen.getByText('A call to web_fetch was not observed; this result is unknown.')).toBeTruthy();

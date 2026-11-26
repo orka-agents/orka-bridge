@@ -327,7 +327,8 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
   expect(screen.queryByRole('button', { name: /Search/ })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(screen.getByRole('button', { name: 'New agent' }).hasAttribute('disabled')).toBe(false);
-  expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/agent folder|Reopen your agent/);
+  // Sending lives in the agent's Send card, so nothing offers it before an agent opens.
+  expect(screen.queryByRole('button', { name: 'Send to a cluster' })).toBeNull();
   // Browser preview cannot read native selection, so the host is neither "This computer" nor "No cluster selected".
   expect(within(screen.getByRole('contentinfo')).getByText('Status unavailable')).toBeTruthy();
   // The Overview page also has a "This computer" heading, so assert on the host chip.
