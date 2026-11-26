@@ -54,15 +54,20 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   const elapsed = status.workspaceProgress?.elapsedMs;
   const seconds = elapsed === undefined ? undefined : Math.floor(elapsed / 1000);
   const clock = seconds === undefined ? undefined : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  const statusShown = !upgrade || error || stopFailed || ordinaryRecovery && (failed || stopped);
+  // A failure reads as a callout: what happened in the failed colour, then what to do.
+  const statusCallout = statusShown && failed && !error;
+  const statusLine = statusShown && <p role="status" className={statusCallout ? 'alert-title' : undefined}>{error ? 'Workspace status is unavailable. Check again before starting it.' : updating ? 'Updating the workspace. Your agent files are kept.' : stopFailed && !forcedStop ? "The workspace didn't stop." : failed ? recovery.summary : stopped ? 'The workspace stopped unexpectedly. Your agents and files are kept.' : view.detail}</p>;
+  const forcedLines = forcedStop && <><p>{recovery.preservation}</p><p>{recovery.action}</p></>;
+  const actionLine = failed && ordinaryRecovery && !stopFailed && recovery.action && <p>{recovery.action.replaceAll('Try again', 'Restart workspace').replaceAll('copy the details for help', 'open Show details for help')}</p>;
   return <section className="card returning-workspace" aria-label="Workspace">
     <div className="steps-head"><div className="workspace-title"><h2>Workspace</h2><StatusPill state={error ? 'needs-you' : updating ? 'running' : updateBlocked ? 'needs-you' : view.status}>{error ? 'Status unavailable' : updating ? 'Updating' : updateBlocked ? 'Needs you' : view.word}</StatusPill></div>
     </div>
-    {(!upgrade || error || stopFailed || ordinaryRecovery && (failed || stopped)) && <p role="status">{error ? 'Workspace status is unavailable. Check again before starting it.' : updating ? 'Updating the workspace. Your agent files are kept.' : stopFailed && !forcedStop ? "The workspace didn't stop." : failed ? recovery.summary : stopped ? 'The workspace stopped unexpectedly. Your agents and files are kept.' : view.detail}</p>}
-    {forcedStop && <><p>{recovery.preservation}</p><p>{recovery.action}</p></>}
+    {statusCallout ? <div className="alert alert-failed workspace-alert">{statusLine}{forcedLines}{actionLine}</div> : <>{statusLine}{forcedLines}</>}
     {view.word === 'Starting' && clock && <p className="muted">{clock} so far</p>}
     {upgrade}
     {(stopFailed || closed) && <Button type="button" kind="primary" disabled={quitting} onClick={() => { void quit(); }}>Quit Bridge</Button>}
-    {failed && ordinaryRecovery && !stopFailed && recovery.action && <p>{recovery.action.replaceAll('Try again', 'Restart workspace').replaceAll('copy the details for help', 'open Show details for help')}</p>}
+    {!statusCallout && actionLine}
     {ordinaryRecovery && (failed || stopped) && !stopFailed && <div className="workspace-step-actions"><Button type="button" kind="primary" disabled={busy || !!error || failed && recovery.retryBlocked} title={failed && recovery.retryBlocked ? recovery.action : undefined} onClick={onStart}>Restart workspace</Button>
       {failed && recovery.topic && <Button type="button" kind="secondary" onClick={() => { void help(); }}>Show me how</Button>}</div>}
     {failed && helpError && <p role="alert">Couldn't open help. Open Show details to read the error.</p>}

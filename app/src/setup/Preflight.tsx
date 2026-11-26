@@ -44,7 +44,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }:
     try { await navigator.clipboard.writeText(details); setNotice('Details copied.'); }
     catch { setNotice("Couldn't copy details. The check results are shown above."); }
   }
-  return <section aria-label="Computer requirements" aria-busy={checking} className={`workspace-preflight${!checking && (failedVirtualization || memory === 'insufficient') ? ' workspace-failure-explanation' : ''}`}>
+  return <section aria-label="Computer requirements" aria-busy={checking} className={`workspace-preflight${!checking && (failedVirtualization || memory === 'insufficient') ? ' alert alert-failed' : ''}`}>
     <div aria-live="polite">
       {!checking && failedVirtualization && <section aria-label="Virtualization">
         <p className="preflight-result" role="alert"><StatusIcon state="failed" /><span><b>Virtualization: </b><span>{virtualization === 'disabled' ? 'Turned off or unavailable on this PC' : virtualization === 'hypervisorUnavailable' ? 'Windows Hypervisor Platform is unavailable' : 'Not supported on this Mac'}</span></span></p>

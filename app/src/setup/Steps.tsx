@@ -82,7 +82,7 @@ export function SetupProgress(props: Props) {
         {status.localVmError && <pre tabIndex={0}>{ready ? modelDetails(status.localVmError) : status.localVmError}</pre>}
       </div>}</Disclosure>
   </>);
-  return <section className="card workspace-steps setup-progress" aria-label="Workspace setup">
+  return <section className="card card-strong workspace-steps setup-progress" aria-label="Workspace setup">
     <div className="steps-head"><h2>Workspace</h2><StatusPill state={workspaceReady ? 'passed' : pill}>{workspaceWord}</StatusPill></div>
     {view.done && <span className="status-description">{view.line !== 'Workspace ready' ? view.line : undefined}</span>}
     <p role="status" className={paused || error || status.localVm === 'notIntegrated' ? undefined : 'sr-only'}>{view.done || paused || error || ready || stopping || status.localVm === 'notIntegrated' ? stateLine : failed ? 'Setup needs attention' : view.line}</p>
