@@ -114,12 +114,15 @@ for (const [name, header] of [
   const probe = { ...sendProbe, header, title: name === 'send-passed' ? sendProbe.title : '', id: name === 'send-passed' ? sendProbe.id : '',
     heading: ['send-ready', 'send-blocked'].includes(name) ? 'Send your agent' : sendProbe.heading,
     checks: ['send-blocked', 'send-sending'].includes(name) ? '1 check passed Show checks' : sendProbe.checks,
-    inlineChecks: name === 'send-blocked' ? ['blocked'] : [], changeDisabled: name === 'send-sending' };
+    inlineChecks: name === 'send-blocked' ? ['blocked'] : [], changeDisabled: name === 'send-sending',
+    ...name === 'send-sending' ? { detailsOpen: true, text: 'Cancel tests requests cancellation of this Send\'s unfinished tests.' } : {} };
   checkSend(name, probe, false);
   assert.throws(() => checkSend(name, { ...probe, checksOpen: true }, false));
   if (name === 'send-sending') {
     assert.throws(() => checkSend(name, { ...probe, changeDisabled: false }, false));
     assert.throws(() => checkSend(name, { ...probe, checks: sendProbe.checks }, false), 'running Send must not advertise readiness');
+    assert.throws(() => checkSend(name, { ...probe, detailsOpen: false }, false), /what Cancel keeps/);
+    assert.throws(() => checkSend(name, { ...probe, extras: ['Send as a separate agent'] }, false), /no other actions/);
   }
   if (name === 'send-blocked') assert.throws(() => checkSend(name, { ...probe, inlineChecks: ['allowed', 'blocked'] }, false));
   if (name === 'send-blocked') assert.throws(() => checkSend(name, { ...probe, header: [{ ...header[0], disabled: false }, header[1]] }, false), /must stay disabled/);

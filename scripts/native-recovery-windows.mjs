@@ -583,7 +583,10 @@ try {
     if (name === 'send-unsupported' && probe.buttons.includes('Retry cancellation')) throw Error('Unsupported cancellation must not offer retry, including in Details');
     if (!['send-ready', 'send-blocked', 'send-sending'].includes(name) && (probe.title !== 'Captured checksum from the page' || probe.id !== 'page-checksum')) throw Error('Captured title and code ID must both survive');
     if (name === 'send-earlier-target' && (!probe.text.includes('Earlier result on fixture-captured') || !probe.text.includes('To fixture-selected'))) throw Error('Earlier result and selected destination must be distinct and labelled');
-    if (probe.detailsOpen !== details || details && !['Check again', 'Send as a separate agent'].every(label => probe.extras.includes(label))) throw Error('Resources Details did not expose the relocated controls');
+    // While tests run, the Send card opens its Details to explain what Cancel keeps; Cancel stays the only action there.
+    if (name === 'send-sending') {
+      if (!probe.detailsOpen || probe.extras.length || !probe.text.includes('Cancel tests requests cancellation')) throw Error('Running Send must open Details on what Cancel keeps, with no other actions: ' + JSON.stringify(probe));
+    } else if (probe.detailsOpen !== details || details && !['Check again', 'Send as a separate agent'].every(label => probe.extras.includes(label))) throw Error('Resources Details did not expose the relocated controls');
     if (probe.scrollWidth > probe.width + 2) throw Error('Send overflows the native client width');
   }
   async function captureSendScene(theme, size, name) {
