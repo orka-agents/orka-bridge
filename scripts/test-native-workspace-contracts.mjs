@@ -224,27 +224,28 @@ assert.ok(manualError, 'actual Setup manual owner-refresh error missing');
 const refreshedExpression = source.match(/const refreshedText = ([^;]+);/)?.[1];
 assert.ok(refreshedExpression, 'Windows manual-refresh capture expectation missing');
 const model = await read('./native-model-macos.swift');
-// Drive the actual early-message call's delta and seek loop bound from a bottom
-// viewport. A reversed wheel sign must fail rather than exhausting retries below.
+// Drive the actual earlier-tasks call's delta and seek loop bound from the top of
+// the page, where Try a task's composer is. A reversed wheel sign must fail rather
+// than exhausting retries above the folded list.
 function earlySeek(driver) {
   const helper = driver.match(/func seek\([\s\S]*?\n\}/)?.[0];
-  const call = driver.match(/seek\("Remember the checksum ALPHA\.", (-?\d+)([^\n]*)/);
-  assert.ok(helper && call, 'actual long-early seek and helper must exist');
+  const call = driver.match(/seek\("Earlier tasks: 1", (-?\d+)([^\n]*)/);
+  assert.ok(helper && call, 'actual earlier-tasks seek and helper must exist');
   const bound = Number(helper.match(/for (?:_|attempt) in 0\.\.<(\d+)/)?.[1]);
   assert.equal(bound, 6, 'recovery must retain the existing six attempts');
   assert.match(helper, /scroll\(pixels\)/, 'misses must use the caller delta');
-  let position = 1000;
+  let position = 0;
   const captures = [];
   for (let attempt = 0; attempt < bound; attempt++) {
     captures.push(position);
-    if (position === 0) return { captures, helper, call };
+    if (position === 1000) return { captures, helper, call };
     position = Math.max(0, Math.min(1000, position - Number(call[1])));
   }
-  assert.fail('long-early seek cannot recover from the bottom');
+  assert.fail('earlier-tasks seek cannot recover from the top');
 }
 const earlyRecovery = earlySeek(model);
-assert.deepEqual(earlyRecovery.captures, [1000, 0], 'large upward recovery must capture bottom then top');
-assert.throws(() => earlySeek(model.replace(/seek\("Remember the checksum ALPHA\.", \d+/, 'seek("Remember the checksum ALPHA.", -100')), /cannot recover/);
+assert.deepEqual(earlyRecovery.captures, [0, 1000], 'large downward recovery must capture top then bottom');
+assert.throws(() => earlySeek(model.replace(/seek\("Earlier tasks: 1", -?\d+/, 'seek("Earlier tasks: 1", 100')), /cannot recover/);
 assert.ok(earlyRecovery.call[2].includes(String.raw`diagnosticPrefix: "chat-long-early-\(size)-seek"`), 'only explicit early caller opts into per-size diagnostics');
 assert.match(earlyRecovery.helper, /diagnosticPrefix: String\? = nil/);
 assert.ok(earlyRecovery.helper.indexOf('if let prefix = diagnosticPrefix') > earlyRecovery.helper.indexOf('capture("local-probe", [])'));

@@ -320,7 +320,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     // Setup frames 1c, 1d (cropped) and 1e exist only in light; dark captures use them as layout references.
     // Frames 1g (AI connection failed) and 1h (AI reset) are approved in both themes.
     let frame: (file: String, label: String)? =
-        name.hasPrefix("chat-") ? ("designer-reference-\(theme)", "Designer design system (no dedicated Chat frame)")
+        name.hasPrefix("chat-") ? ("designer-reference-\(theme)", "Designer design system (Try a task boards are not reference frames)")
         : name.hasPrefix("cluster-") ? ("cluster-reference-light", "Approved cluster cards (wide reference)")
         : name.hasPrefix("local-workspace-") || name == "local-stopped" ? ("workspace-reference-\(theme)", "Approved workspace frame (wide reference)")
         : ["local-result", "local-answer", "local-story", "local-running", "local-stopping", "local-shell", "local-catalog-no-destination"].contains(where: { name.hasPrefix($0) }) ? ("designer-reference-\(theme)", "Approved Designer frame (wide reference)")
@@ -478,7 +478,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
             "Long Overview context filter must fit the native window")
     require(!anyButton("By cluster") && !anyButton("By agent") && !anyButton("Refresh"),
             "Overview list must not retain grouping or top-level Refresh controls")
-    require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer."),
+    require(nativeResultTextIsVisible("Connect the AI in Clusters to try a task or run tests on this computer."),
             "Disconnected Overview must explain the local AI gate")
     _ = try capture("local-overview-ai-disconnected-collapsed-\(size)", ["Your agents"])
     setOverviewExpanded("web-reader", true)
@@ -613,7 +613,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try capture("local-overview-ai-connected-collapsed-\(size)", ["Your agents", "web-reader"])
     setOverviewExpanded("web-reader", true)
-    require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to chat or run tests on this computer."),
+    require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to try a task or run tests on this computer."),
             "Connected AI must enable the failed agent's local Run action without the connection reason")
     _ = try capture("local-overview-ai-connected-expanded-\(size)", ["Your agents", "This computer", "Run tests"])
     setOverviewExpanded("web-reader", false)
@@ -951,7 +951,7 @@ try keyCapture("removed", ["API key", "Key removed."])
 chooseConnection("GitHub Copilot")
 _ = try seek("Connect the AI", -200)
 click("Connect the AI", [])
-// Restore Copilot before the original result, editor and Chat captures.
+// Restore Copilot before the original result, editor and Try a task captures.
 scroll(4000)
 rows = try seek("Read its instructions", -200)
 click("Read its instructions", rows)
@@ -987,17 +987,17 @@ _ = try seek("Use this cluster", -150)
 click("Use this cluster", [])
 _ = try seek("Open your agent", -150)
 click("Open your agent", [])
-// A remote place blocks Chat: no Ready claim and a disabled New conversation, at both sizes.
+// A remote place blocks Try a task: no Ready claim and a disabled Run task, at both sizes.
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    waitForButton("Chat"); click("Chat", [])
-    waitForChatText("Chat on this computer")
-    require(!nativeChatTextIsVisible("Ready for your message."), "Blocked Chat must not say Ready")
-    require(anyButton("New conversation") && enabledButton("New conversation") == nil, "Blocked Chat must disable New conversation")
-    _ = try capture("local-shell-chat-blocked-\(size)", ["Chat on this computer"])
-    _ = try seek("Chat is unavailable", -150)
-    scroll(-100) // Keep the status clear of the fixed footer.
-    _ = try capture("local-shell-chat-blocked-status-\(size)", ["Chat is unavailable."])
+    waitForButton("Try a task"); click("Try a task", [])
+    waitForChatText("Try a task on this computer before you rely on it.")
+    require(!nativeChatTextIsVisible("Ready for a task."), "Blocked Try a task must not say Ready")
+    require(anyButton("Run task") && enabledButton("Run task") == nil, "Blocked Try a task must disable Run task")
+    _ = try capture("local-shell-chat-blocked-\(size)", ["Try a task on this computer before you rely on it."])
+    _ = try seek("Try a task runs on the workspace", -150)
+    scroll(-100) // Keep the reason clear of the fixed footer.
+    _ = try capture("local-shell-chat-blocked-status-\(size)", ["Try a task runs on the workspace. Choose This computer in Clusters."])
     scroll(4000)
     click("Agent", [])
 }
@@ -1041,7 +1041,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
     _ = try capture("local-send-fix-result-\(size)", ["Which date is shown", "No date was given", "Edit instructions"])
 }
 // Return through the local row, without stopping either destination. The
-// remaining pre-existing editor/Chat walk continues on This computer.
+// remaining pre-existing editor/Try a task walk continues on This computer.
 click("Clusters", [])
 scroll(4000)
 click("Clusters", [])
@@ -1270,7 +1270,7 @@ func waitForChatText(_ text: String) {
     require(false, "Native Chat text did not appear: \(text)")
 }
 func fillMessage(_ text: String, secure: Bool = false, fieldLabel: String? = nil) {
-    let label = fieldLabel ?? (secure ? "API key" : "Message")
+    let label = fieldLabel ?? (secure ? "API key" : "Give web-reader one task")
     let fields = nativeElements().filter { element in
         (fieldLabel != nil ? ["AXTextField", "AXSearchField"] : secure ? ["AXTextField", "AXSecureTextField"] : ["AXTextArea"]).contains(attribute(element, "AXRole") as? String ?? "")
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
@@ -1288,7 +1288,7 @@ func fillMessage(_ text: String, secure: Bool = false, fieldLabel: String? = nil
     // per character that can flood the native event queue on a busy runner.
     for (lineIndex, line) in text.components(separatedBy: "\n").enumerated() {
         // A Unicode payload beginning with a newline can drop its following text.
-        // Use the real newline gesture, never an unmodified Enter that submits Chat.
+        // Use the real newline gesture, never an unmodified Enter that runs the task.
         if lineIndex > 0 {
             for down in [true, false] {
                 let event = CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: down)!
@@ -1311,10 +1311,10 @@ func fillMessage(_ text: String, secure: Bool = false, fieldLabel: String? = nil
     if !secure {
         let actual = attribute(field, "AXValue") as? String
         if actual != text { _ = try? capture("chat-input-failed", []) }
-        require(actual == text, "Native keystrokes did not fill Chat Message: expected \(text.debugDescription), got \(String(describing: actual))")
+        require(actual == text, "Native keystrokes did not fill the task field: expected \(text.debugDescription), got \(String(describing: actual))")
     }
 }
-let replyReason = "Conversation replies need an authenticated gateway conversation, which local tests and Chat do not have."
+let replyReason = "Conversation replies need an authenticated gateway conversation, which local tests and Try a task do not have."
 func typeUnicode(_ text: String) {
     let characters = Array(text.utf16)
     for start in stride(from: 0, to: characters.count, by: 16) {
@@ -1345,7 +1345,7 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     require(search.count == 1, "Expected the labeled picker search field")
     require(nativeBounds(search[0]).map { abs($0.height - 32) < 2 } == true, "Picker search must be 32px high")
     _ = try capture("local-controls-picker-\(size)", ["Find a tool", "Read a file"])
-    let approvalReason = "Approval tools need autonomous coordination, which Bridge does not support for local tests or Chat."
+    let approvalReason = "Approval tools need autonomous coordination, which Bridge does not support for local tests or Try a task."
     let approvalButtons = nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXButton"
             && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("request_approval") == true }
@@ -1505,7 +1505,7 @@ scroll(4000)
 _ = try seek("Not run since your edit", -250)
 _ = try capture("local-stale", ["Not run since your edit"])
 // Shell evidence beside the approved Designer frame: Agent, File, then Send and Past Sends opened on request.
-// Blocked Chat is captured in the remote section above. The first (wide) pass sees the unused Send hidden; opening it
+// Blocked Try a task is captured in the remote section above. The first (wide) pass sees the unused Send hidden; opening it
 // keeps it retained, so the minimum pass must see it already visible.
 }
 func exactTextIsVisible(_ expected: String) -> Bool {
@@ -1539,59 +1539,58 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     press("Past Sends")
 }
 localSize(1280, 800)
-// Chat runs before the final Run, which intentionally stays busy forever in
+// Try a task runs before the final Run, which intentionally stays busy forever in
 // this fixture. These actions change only the fixture's in-memory transcript.
 localSize(1280, 800)
 scroll(4000)
-click("Chat", [])
+click("Try a task", [])
 }
 func requireSingleChatCopy() {
     let strings = nativeElements().flatMap { element in
         ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
     }
-    require(strings.contains(where: { $0.contains("Chat on this computer. Chat doesn't change test results.") }), "Chat subtitle missing from the agent heading")
-    require(!strings.contains(where: { $0.contains("Conversation 1") }), "A single Chat version must not be numbered, including its accessible label")
+    require(strings.contains(where: { $0.contains("Try a task on this computer before you rely on it.") }), "Try a task subtitle missing from the agent heading")
+    require(!strings.contains(where: { $0.contains("Conversation 1") || $0.contains("Save as a test") }), "Try a task must not number conversations or offer Save as a test")
 }
 func requireChatComposerVisible() {
     let fields = nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXTextArea"
-            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Message" })
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Give web-reader one task" })
     }
     let sends = nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXButton"
-            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Send message" })
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Run task" })
     }
-    require(fields.count == 1 && sends.count == 1, "Chat must retain accessible Message and Send message controls")
+    require(fields.count == 1 && sends.count == 1, "Try a task must keep its accessible task field and Run task button")
     guard let field = fields.first.flatMap(nativeBounds), let send = sends.first.flatMap(nativeBounds) else {
-        require(false, "Chat composer bounds missing"); return
+        require(false, "Try a task composer bounds missing"); return
     }
-    require(reachable(field) && reachable(send) && abs(field.maxY - send.maxY) < 3 && field.maxX <= send.minX,
-            "Chat composer and visible Send must fit beside one another above the footer")
-    require(nativeChatTextIsVisible("Enter sends · Shift+Enter for a new line", aboveFooter: true), "Chat keyboard hint must remain visible")
+    require(reachable(field) && reachable(send) && send.minY >= field.maxY - 3,
+            "Try a task field and Run task must both be visible, Run task below the field")
+    require(nativeChatTextIsVisible("Runs once on this computer. It does not change test results.", aboveFooter: true), "Try a task hint must remain visible")
 }
 if scope.runsModel {
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     requireSingleChatCopy()
-    require(!anyButton("New conversation") && !nativeTextExists("About this conversation")
-            && !nativeTextExists("Ask your agent a question") && !nativeTextExists("Ready for your message."), "Healthy empty Chat must not show controls, invitation or routine Ready")
+    require(!anyButton("Run again") && !anyButton("Stop") && !nativeTextExists("Ready for a task."), "Healthy empty Try a task must not show task controls or routine Ready")
     requireChatComposerVisible()
-    _ = try capture("chat-empty-\(size)", ["Message your agent", "Enter sends · Shift+Enter for a new line"])
+    _ = try capture("chat-empty-\(size)", ["Describe the task", "No tasks run yet."])
 }
 fillMessage("Remember the checksum ALPHA.")
-waitForButton("Send message")
-click("Send message", [])
+waitForButton("Run task")
+click("Run task", [])
 localSize(1280, 800); scroll(4000)
 _ = try seek("Waiting for your agent to start…", -100)
 waitForChatText("Waiting for your agent to start…")
-for (phase, expected) in [("pending", "Waiting for your agent to start…"), ("running", "Waiting for your agent’s reply…"), ("session-null", "Waiting for the conversation to finish saving…"), ("session-answer", "The checksum is ALPHA.")] {
+for (phase, expected) in [("pending", "Waiting for your agent to start…"), ("running", "Waiting for your agent’s reply…"), ("session-null", "Waiting for the task to finish saving…"), ("session-answer", "The checksum is ALPHA.")] {
     try phase.write(to: chatPhase, atomically: true, encoding: .utf8)
     waitForChatText(expected)
     for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
         localSize(CGFloat(width), CGFloat(height)); scroll(4000)
         _ = try seek(expected, -100)
         _ = try capture("chat-\(phase)-\(size)", [expected])
-        require(!nativeTextExists("This turn is not confirmed in later context.") && !nativeTextExists("No answer was received."), "Waiting Chat must not show a premature missing-answer/context fault")
+        require(!nativeTextExists("No answer was received."), "A waiting task must not show a premature missing-answer fault")
         if phase == "session-answer" {
             require(nativeChatTextIsVisible("The checksum is ALPHA."), "Session wait must retain the known answer")
         }
@@ -1602,54 +1601,44 @@ waitForChatText("The checksum is ALPHA.")
 try FileManager.default.removeItem(at: chatPhase)
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("The checksum is ALPHA.", -100)
     requireSingleChatCopy()
     requireChatComposerVisible()
-    require(nativeChatTextIsVisible("web_fetch"), "Chat tool use must remain visible without opening a disclosure")
+    _ = try seek("The checksum is ALPHA.", -100)
+    require(nativeChatTextIsVisible("web_fetch"), "Tool use must remain visible on the result without opening a disclosure")
+    require(enabledButton("Run again") != nil, "A finished task must offer Run again")
     _ = try capture("chat-answer-\(size)", ["The checksum is ALPHA.", "<script>fixture</script>", "web_fetch"])
 }
-localSize(1280, 800)
-// Use the existing synthetic native turn, not injected DOM or a new fixture backend.
-fillMessage("What checksum did I ask you to remember?" + String(repeating: "\nEarlier message.", count: 40))
-waitForButton("Send message")
-click("Send message", [])
-waitForChatText("You asked me to remember ALPHA.")
-_ = try capture("chat-followup-wide", ["You asked me to remember ALPHA."])
-localSize(540, 900)
-_ = try capture("chat-followup-compact", ["You asked me to remember ALPHA."])
+localSize(1280, 800); scroll(4000)
+// A second task always starts a new conversation; the fixture holds it running until Stop.
+fillMessage("Read another page." + String(repeating: "\nA longer task description.", count: 12))
+waitForButton("Run task")
+click("Run task", [])
+waitForChatText("Earlier tasks: 1")
+require(enabledButton("Stop") != nil, "A running task must offer Stop")
+_ = try capture("chat-followup-wide", ["Earlier tasks: 1", "Read another page."])
+localSize(540, 900); scroll(4000)
+_ = try capture("chat-followup-compact", ["Earlier tasks: 1", "Read another page."])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("Remember the checksum ALPHA.", 4000, diagnosticPrefix: "chat-long-early-\(size)-seek")
-    require(nativeChatTextIsVisible("Remember the checksum ALPHA.") && !nativeChatTextIsVisible("You asked me to remember ALPHA."),
-            "Long transcript capture must read earlier messages, not the end")
-    requireChatComposerVisible()
-    _ = try capture("chat-long-early-\(size)", ["Remember the checksum ALPHA.", "Enter sends · Shift+Enter for a new line"])
-    scroll(-4000)
-    requireChatComposerVisible()
-    _ = try capture("chat-long-end-\(size)", ["You asked me to remember ALPHA.", "Enter sends · Shift+Enter for a new line"])
+    _ = try seek("Earlier tasks: 1", -4000, diagnosticPrefix: "chat-long-early-\(size)-seek")
+    require(!nativeChatTextIsVisible("The checksum is ALPHA."), "Earlier tasks must stay folded until opened")
+    _ = try capture("chat-long-early-\(size)", ["Earlier tasks: 1", "Read another page."])
+    press("Earlier tasks: 1")
+    waitForChatText("The checksum is ALPHA.")
+    _ = try capture("chat-long-end-\(size)", ["Earlier tasks: 1", "The checksum is ALPHA."])
+    press("Earlier tasks: 1")
 }
+localSize(540, 640); scroll(4000)
+_ = try seek("Read another page.", -100)
+_ = try capture("chat-new-version-minimum", ["Read another page.", "Running"])
 localSize(1280, 800); scroll(4000)
-click("New conversation", [])
-scroll(-4000)
-fillMessage("Read another page.")
-waitForButton("Send message")
-rows = try seek("Enter sends · Shift+Enter for a new line", -150)
-click("Send message", rows)
-waitForChatText("Read another page.")
-require(nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2"), "Two Chat versions must retain both numbered headings")
-localSize(540, 640)
-anchorChatHeading("Conversation 2")
-_ = try capture("chat-new-version-minimum", ["Conversation 2", "Read another page."])
-localSize(1280, 800)
-anchorChatHeading("Conversation 2")
-_ = try capture("chat-new-version-wide", ["Conversation 2", "Read another page."])
-require(enabledButton("Stop") != nil, "Working Chat must offer Stop")
+_ = try capture("chat-new-version-wide", ["Read another page.", "Running"])
 _ = try capture("chat-working-wide", ["Stop", "Read another page."])
 localSize(540, 900)
 _ = try capture("chat-working-compact", ["Stop", "Read another page."])
 click("Stop", [])
 waitForChatText("Execution termination is unconfirmed.")
-waitForButton("New conversation")
+waitForButton("Run again")
 _ = try capture("chat-stop-ready-compact", ["Execution termination is unconfirmed."])
 localSize(1280, 800)
 _ = try capture("chat-stop-ready-wide", ["Execution termination is unconfirmed."])
@@ -1941,11 +1930,11 @@ click("What's inside", [])
 try workspacePhase("workspace-scene-starting")
 try workspaceCapture("starting-after-quit-synthetic", ["This computer", "Starting", "0:18 so far"])
 click("Designer", [])
-for (view, label) in [("Agent", "tests"), ("Chat", "chat")] {
+for (view, label) in [("Agent", "tests"), ("Try a task", "chat")] {
     localSize(1280, 800); scroll(4000)
     click(view, [])
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
-        localSize(width, height); scroll(view == "Chat" ? -12000 : 4000)
+        localSize(width, height); scroll(4000)
         _ = try seek("Waiting for the workspace to start.", -100)
         _ = try capture("local-designer-waiting-\(label)-\(size)", ["Waiting for the workspace to start."])
     }
