@@ -708,6 +708,21 @@ assert.ok(smoke.includes('guard let row = guidedTitleRow() else { fail("Cannot l
 assert.ok(smoke.includes('nativeButtons("Show all of Bridge")') && smoke.includes('"Show all of Bridge did not end the guided first run and bring back the sidebar"')
   && (smoke.match(/leaveGuidedFirstRun\(\)\n\s*clickTab\(/g) ?? []).length >= 2, 'the walk must leave the guided first run before using the sidebar');
 assert.ok(!/topCandidates\(1\)\.first\?\.string == "Get started"/.test(smoke) && !smoke.includes('clickText("Get started"'), 'Get started carries a CSS arrow, so it is found as a native button, not an exact OCR line');
+// The walk reads visible text in its authored case: capitals drawn by CSS map back to the app's words, nothing else.
+{
+  const authored = source.match(/const authoredInnerText = `([\s\S]*?)`;/)?.[1];
+  assert.ok(authored && source.includes('for (const setup of [fixtureStorage, authoredInnerText])'), 'Windows walk must install authored-case innerText in every fixture world');
+  class HTMLElement { constructor(text, children = [], transform = 'none') { this.rendered = text; this.children = children; this.textContent = text; this.transform = transform; }
+    querySelectorAll() { return this.children.flatMap(child => [child, ...child.querySelectorAll()]); } }
+  Object.defineProperty(HTMLElement.prototype, 'innerText', { configurable: true, get() { return this.rendered; }, set() {} });
+  const world = { HTMLElement, getComputedStyle: node => ({ textTransform: node.transform }) };
+  vm.runInNewContext(authored, world);
+  const pill = new HTMLElement('Not started', [], 'uppercase');
+  const card = new HTMLElement('Tests on this computer\nNOT STARTED\nWaiting', [pill]);
+  assert.equal(card.innerText, 'Tests on this computer\nNot started\nWaiting');
+  const plain = new HTMLElement('READY TO SEND', [new HTMLElement('Ready to send')]);
+  assert.equal(plain.innerText, 'READY TO SEND', 'text the app wrote in capitals, or that CSS does not capitalise, is unchanged');
+}
 const fixtureStorage = source.match(/const fixtureStorage = `([\s\S]*?)`;/)?.[1];
 assert.ok(fixtureStorage, 'each renderer fixture world needs isolated presentation preferences');
 const nativePreferences = new Map([['native-sentinel', 'kept']]);

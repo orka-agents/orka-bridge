@@ -80,10 +80,27 @@ try {
       key: index => [...values.keys()][index] ?? null, get length() { return values.size; }
     } });
   })();`;
+  // innerText applies CSS text-transform, so pills and section labels read in capitals. In this walk's world only,
+  // innerText returns the same visible text with each capitalised element's authored copy put back, so checks
+  // compare against the words the app wrote; any other casing still fails. The app itself never reads innerText.
+  const authoredInnerText = `(() => {
+    const native = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText');
+    Object.defineProperty(HTMLElement.prototype, 'innerText', { configurable: true, set: native.set, get() {
+      let text = native.get.call(this);
+      for (const node of [this, ...this.querySelectorAll('*')]) {
+        if (!(node instanceof HTMLElement) || getComputedStyle(node).textTransform !== 'uppercase') continue;
+        const authored = node.textContent;
+        if (authored && authored !== authored.toUpperCase()) text = text.split(authored.toUpperCase()).join(authored);
+      }
+      return text;
+    } });
+  })();`;
   async function evaluate(expression) {
     if (contextId !== undefined && !preferenceContexts.has(contextId)) {
-      const initialized = await call('Runtime.evaluate', { expression: fixtureStorage, contextId, returnByValue: true });
-      if (initialized.exceptionDetails) throw Error(JSON.stringify(initialized.exceptionDetails));
+      for (const setup of [fixtureStorage, authoredInnerText]) {
+        const initialized = await call('Runtime.evaluate', { expression: setup, contextId, returnByValue: true });
+        if (initialized.exceptionDetails) throw Error(JSON.stringify(initialized.exceptionDetails));
+      }
       preferenceContexts.add(contextId);
     }
     const result = await call('Runtime.evaluate', { expression, contextId, awaitPromise: true, returnByValue: true });
