@@ -219,3 +219,16 @@ test('each failure starts its details from its own default, not the last failure
   await observe({ selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'third', workspaceFailure: { cause: 'stopUnconfirmed', operation: 'stop', codes: [] } });
   expect(await within(screen.getByRole('region', { name: 'Workspace' })).findByRole('button', { name: 'Show details' })).toBeTruthy();
 });
+
+test('a stop failure reached straight from a ready workspace never draws its details open', async () => {
+  const user = await open();
+  await screen.findByRole('region', { name: 'Workspace' });
+  const opened: boolean[] = [];
+  const watch = new MutationObserver(() => { const d = document.querySelector('.returning-workspace details'); if (d) opened.push((d as HTMLDetailsElement).open); });
+  watch.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open'] });
+  await observe({ selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'private stop diagnostic', workspaceFailure: { cause: 'stopUnconfirmed', operation: 'stop', codes: [] } });
+  expect(await within(screen.getByRole('region', { name: 'Workspace' })).findByRole('button', { name: 'Show details' })).toBeTruthy();
+  watch.disconnect();
+  expect(opened.includes(true)).toBe(false);
+  void user;
+});

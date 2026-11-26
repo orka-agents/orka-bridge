@@ -19,7 +19,11 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   const [path, setPath] = useState<string>();
   const [inside, setInside] = useState(false);
   // A failed start's details start open, as the board shows: the stage and what the workspace reported. A stop's stay closed.
-  const [details, setDetails] = useState(() => status.workspaceFailure?.operation !== 'stop');
+  // The choice is kept per failure and read during render, so a new failure never draws with the last one's state, even for one frame.
+  const failureKey = `${status.localVm}/${status.workspaceFailure?.operation ?? ''}/${status.workspaceFailure?.cause ?? ''}`;
+  const [detailsChoice, setDetailsChoice] = useState<{ key: string; open: boolean }>();
+  const details = detailsChoice?.key === failureKey ? detailsChoice.open : status.workspaceFailure?.operation !== 'stop';
+  const setDetails = (open: boolean) => setDetailsChoice({ key: failureKey, open });
   const [quitError, setQuitError] = useState(false);
   const [quitting, setQuitting] = useState(false);
   const [helpError, setHelpError] = useState(false);
@@ -48,8 +52,6 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   useEffect(() => {
     helpGeneration.current += 1;
     setHelpError(false); setNotice('');
-    // Each new failure starts from its own default: an earlier failure's folded or open details don't carry over.
-    setDetails(status.workspaceFailure?.operation !== 'stop');
   }, [status.localVm, status.preflightFailure, status.workspaceFailure?.cause, status.workspaceFailure?.operation]);
   async function help() {
     const generation = helpGeneration.current;
