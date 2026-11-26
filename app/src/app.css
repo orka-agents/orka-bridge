@@ -205,9 +205,10 @@ a { color: var(--color-text); text-underline-offset: 3px; }
 .agent-name { font-family: var(--font-mono); font-variant-ligatures: none; }
 .agent-heading-copy h1, .agent-heading-copy p { overflow-wrap: anywhere; }
 .agent-heading-copy p { margin-top: 8px; max-width: 65ch; }
-.view-switch { display: inline-flex; padding: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-chrome); }
-.view-switch button { min-height: 26px; border: 0; border-radius: var(--radius-control); background: transparent; padding: 4px 11px; color: var(--color-text-secondary); }
-.view-switch button[aria-pressed="true"] { background: var(--color-card); color: var(--color-text); box-shadow: inset 0 0 0 1px var(--color-border-strong); }
+.view-switch { display: inline-flex; gap: var(--space-0-5); padding: 3px; border-radius: var(--radius-control); background: var(--color-chrome); }
+.view-switch button { min-height: var(--height-control-small); border: 1px solid transparent; border-radius: var(--radius-small); background: transparent; padding: 0 var(--space-3); color: var(--color-text-secondary); font: var(--type-body); font-weight: 500; white-space: nowrap; }
+.view-switch button:not(:disabled, [aria-pressed="true"]):hover { color: var(--color-text); }
+.view-switch button[aria-pressed="true"] { background: var(--color-card); color: var(--color-text); font-weight: 600; box-shadow: inset 0 0 0 1px var(--color-border-strong); }
 .view-switch button:disabled { cursor: not-allowed; }
 .designer-file, .designer-checks, .designer-tests { margin-top: 16px; display: grid; gap: 12px; }
 .designer-work { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 16px; }
