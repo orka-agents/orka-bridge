@@ -78,6 +78,8 @@
 @media (max-width: 820px) {
   .app-shell { --sidebar-width: 76px; grid-template-areas: "title title" "nav main" "status status"; }
   .brand b, .nav-group-label, .tab-copy small { display: none; }
+  /* Designer's agent subtitle is a flex line on wide windows; it hides with the rest. */
+  .tab-copy small:has(.tab-agent-name) { display: none; }
   .page-nav { padding-inline: var(--space-1); }
   .page-tab { flex-direction: column; justify-content: center; gap: 2px; min-height: 52px; padding: var(--space-1) 2px; text-align: center; }
   .tab-copy { flex: none; width: 100%; }
