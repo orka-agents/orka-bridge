@@ -218,7 +218,7 @@ mod requirements_tests {
         )
     ))]
     #[test]
-    fn debug_supported_target_reports_pinned_bytes() {
+    fn debug_supported_target_reports_requirements_without_a_download() {
         assert!(setup_requirements().is_some());
         assert_eq!(setup_requirements().unwrap().download_bytes, None);
     }
