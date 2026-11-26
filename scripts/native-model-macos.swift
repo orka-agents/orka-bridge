@@ -375,8 +375,8 @@ func enabledButton(_ label: String) -> AXUIElement? {
 // accessibility values, is then the authored copy or exactly its capitals; any other casing is still a mismatch.
 func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }
 func isText(_ text: String, _ expected: String) -> Bool { text == expected || text == expected.uppercased() }
-// The page starts under the title bar, which ends just above the sidebar's first button (Home).
-func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 4 } ?? window()!.1.minY }
+// The page starts under the title bar, which ends 12pt above the sidebar's first button (Home).
+func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 12 } ?? window()!.1.minY }
 // A sidebar page button by name, enabled or not: an open picker makes the page behind it inert, not moved.
 func sidebarButton(_ label: String) -> CGRect? {
     nativeElements().filter { element in
@@ -384,9 +384,10 @@ func sidebarButton(_ label: String) -> CGRect? {
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
     }.compactMap(nativeBounds).min { $0.minX < $1.minX }
 }
-// A point in the page panel's bare left padding. The panel starts 8pt right of the sidebar's buttons and its
-// content 16-24pt further in, so no control, text or scrollbar is under it. Just under the title bar it is also
-// above every fixed picker (80pt down), so its colour is page paper, or paper under the picker's backdrop.
+// A point in the page's bare left padding. The page starts 8pt right of the sidebar's buttons and its content
+// 16-30pt further in, so no control, text or scrollbar is under it. Just under the title bar it is also above every
+// fixed picker (80pt down) and inside the solid paper corner art.css keeps clear of the chart, so its colour is page
+// paper, or paper under the picker's backdrop.
 func pageGutter(y: CGFloat? = nil) -> CGPoint {
     guard let nav = sidebarButton("Clusters"), let home = sidebarButton("Home") else { fail("Cannot locate the native sidebar beside the page") }
     return CGPoint(x: nav.maxX + 16, y: y ?? home.minY + 8)
@@ -1153,8 +1154,8 @@ func nativeControlShowsObservedOCRValue(_ label: String, _ expected: String, _ o
     return matches.count == 1
 }
 func nativeOverviewHeadingIsVisible(_ expected: String) -> Bool {
-    // The page starts under the title bar, which ends just above the sidebar's first button (Home).
-    guard let top = enabledButton("Home").flatMap(nativeBounds).map({ $0.minY - 4 }) else { return false }
+    // The page starts under the title bar, which ends 12pt above the sidebar's first button (Home).
+    guard let top = enabledButton("Home").flatMap(nativeBounds).map({ $0.minY - 12 }) else { return false }
     return nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXHeading",
             ["AXValue", "AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == expected }),

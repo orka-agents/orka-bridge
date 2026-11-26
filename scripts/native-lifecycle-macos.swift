@@ -165,7 +165,7 @@ func bounds(_ element: AXUIElement) -> CGRect? {
         && extent.width > 0 && extent.height > 0 else { return nil }
     return CGRect(origin: point, size: extent)
 }
-// A sidebar page button by name (the leftmost match), which places the page panel beside it.
+// A sidebar page button by name (the leftmost match), which places the page beside it.
 func sidebarButton(_ label: String) -> CGRect? {
     nodes(AXUIElementCreateApplication(app!.processIdentifier)).filter { element in
         attribute(element, "AXRole") as? String == "AXButton"
@@ -176,14 +176,14 @@ func sidebarButton(_ label: String) -> CGRect? {
 // WebKit's accessibility values, is then the authored copy or exactly its capitals; any other casing is a mismatch.
 func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }
 func capture(_ name: String, menu: Bool = false) throws {
-    // The page panel starts 8pt right of the sidebar's buttons and under the title bar, which ends 4pt above
-    // the sidebar's first button (Home). Its content starts 16-24pt in, so its left padding is bare page paper.
+    // The page starts 8pt right of the sidebar's buttons and under the title bar, which ends 12pt above the sidebar's
+    // first button (Home). Its content starts 16-30pt in, and art.css keeps its top-left corner solid paper.
     var gutter = CGPoint.zero, pageTop = CGFloat(0)
     if !menu, let rect = windowInfo()?.1 {
         guard let nav = sidebarButton("Clusters"), let home = sidebarButton("Home") else {
             check(false, "Cannot locate the native sidebar beside the page"); return
         }
-        gutter = CGPoint(x: nav.maxX + 16, y: home.minY + 8); pageTop = home.minY - 4
+        gutter = CGPoint(x: nav.maxX + 16, y: home.minY + 8); pageTop = home.minY - 12
         // File view now grows with its content. Restore the page heading after
         // end-of-file typing before testing its visible title in the capture.
         for attempt in 0..<10 {

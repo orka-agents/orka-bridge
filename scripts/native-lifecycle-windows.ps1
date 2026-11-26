@@ -164,9 +164,9 @@ function Capture([string]$Name, [bool]$Menu = $false) {
         $graphics.CopyFromScreen([int]$r.X, [int]$r.Y, 0, 0, $bitmap.Size)
         $bitmap.Save((Join-Path $script:themeOutput "$Name.png"), [Drawing.Imaging.ImageFormat]::Png)
         if (!$Menu) {
-            # Sample the page panel, not the sidebar, title bar or the chrome margin around the panel. It starts
-            # 8px right of the sidebar's buttons and under the title bar, which ends 4px above the sidebar's first
-            # button (Home); its content starts 16-24px in, so this pixel in its left padding is bare page colour.
+            # Sample the page, not the sidebar or title bar. It starts 8px right of the sidebar's buttons and under the
+            # title bar, which ends 12px above the sidebar's first button (Home); its content starts 16-30px in and
+            # art.css keeps its top-left corner solid paper, so this pixel is bare page colour.
             # It is near the top, clear of the taskbar where the maximized frame extends below the display.
             $nav = Find-Control $script:window 'Clusters' $button
             $homeButton = Find-Control $script:window 'Home' $button

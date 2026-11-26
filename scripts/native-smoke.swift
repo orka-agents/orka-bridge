@@ -215,10 +215,9 @@ func nativeButtons(_ label: String, root: AXUIElement? = nil) -> [AXUIElement] {
             }
     }
 }
-// Page content only: the sidebar holds the page buttons, so the page starts to the right of the actual
-// native Clusters button (the compact rail is narrower than the wide sidebar) and below the title bar,
-// which ends just above the sidebar's first button (Home). The status card sits in the sidebar when
-// wide; in a compact window it is a bar across the bottom, and the page ends above it.
+// Page content only, in the flat frame: the page starts at the sidebar's hairline, 8pt right of the actual native
+// Clusters button (the narrow icon rail is 60pt, the wide sidebar 232pt), and below the title bar, which ends 12pt
+// above the sidebar's first button (Home). The status card sits in the sidebar (a dot box in the narrow rail).
 func bodyBounds() -> CGRect {
     let rect = window()!.1
     guard let nav = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).first,
@@ -229,7 +228,7 @@ func bodyBounds() -> CGRect {
         return CGRect(x: rect.minX, y: row.maxY, width: rect.width, height: max(0, rect.maxY - row.maxY))
     }
     let left = nav.maxX + 8
-    let top = max(rect.minY, home - 4)
+    let top = max(rect.minY, home - 12)
     let statusBar = nativeElements()
         .filter { attribute($0, "AXSubrole") as? String == "AXLandmarkContentInfo" }
         .compactMap { nativeBounds($0) }
@@ -300,10 +299,10 @@ func leaveGuidedFirstRun() {
     requireNoLocalWorkspace()
     require(nativeButtons("Use this computer").isEmpty && guidedTitleRow() == nil, "This computer was not chosen again after leaving guidance")
 }
-// A point in the page panel's bare left padding: page content starts 16-24pt in from the panel's left edge, so
-// no control, text or scrollbar is under it. Just under the title bar it is also above every fixed picker (80pt
-// down), so its colour is page paper, or paper under the picker's backdrop. On guided screens it is inside the
-// solid paper corner (32pt radius) that art.css keeps clear of the chart.
+// A point in the page's bare left padding: page content starts 16-30pt in from the page's left edge, so no control,
+// text or scrollbar is under it. Just under the title bar it is also above every fixed picker (80pt down), and inside
+// the solid paper corner art.css keeps clear of the chart (40pt radius; 32pt on guided screens), so its colour is
+// page paper, or paper under the picker's backdrop.
 func pageGutter(y: CGFloat? = nil) -> CGPoint {
     let page = bodyBounds()
     return CGPoint(x: page.minX + 8, y: y ?? page.minY + 12)
@@ -479,7 +478,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         guard let tiff = comparison.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) else { fail("Cannot compose native comparison") }
         try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
     }
-    // The window edge is now the chrome around the page panel, so sample the panel itself.
+    // The window edge is the page's scrollbar or chrome, so sample the page's top-left corner instead.
     let frame = window()!.1, paper = pageGutter()
     // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
