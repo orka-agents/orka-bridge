@@ -198,6 +198,12 @@
 .first-pass > :not(.status-icon, h1, p.muted) { grid-column: 1 / -1; }
 .first-pass-stories { display: grid; gap: var(--space-4); margin-top: var(--space-5); }
 .first-pass-stories > .test-answer { padding: var(--space-5); border: 1px solid var(--color-border-strong); border-radius: var(--radius-card); background: var(--color-card); }
+/* With more than one test, the stories tighten so the page's action stays in view without scrolling. */
+.first-pass:has(.test-answer + .test-answer) > .first-pass-stories { gap: var(--space-2); margin-top: var(--space-3); }
+.first-pass:has(.test-answer + .test-answer) > .first-pass-stories > .test-answer { padding: var(--space-2) var(--space-4) var(--space-3); }
+.first-pass:has(.test-answer + .test-answer) .test-story { gap: 0; }
+.first-pass:has(.test-answer + .test-answer) .test-story > li { padding-block: var(--space-1-5); }
+.first-pass:has(.test-answer + .test-answer) > p:not(.muted), .first-pass:has(.test-answer + .test-answer) > .workspace-step-actions { margin-top: var(--space-3); }
 .first-pass .reading { overflow-wrap: anywhere; }
 .first-pass > p:not(.muted) { margin: var(--space-4) 0 0; font: var(--type-reading); max-width: 70ch; }
 .first-pass > .workspace-step-actions { margin-top: var(--space-4); }
