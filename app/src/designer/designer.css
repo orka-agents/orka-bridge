@@ -41,6 +41,8 @@
 .designer-editing { grid-column: 1; grid-row: 1; min-width: 0; display: grid; gap: var(--space-2); }
 .file-toolbar { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); min-height: 16px; }
 .file-toolbar h2 { overflow-wrap: anywhere; }
+/* A file name keeps its real case: it names a file on disk. */
+.section-label.file-name { text-transform: none; letter-spacing: normal; font-family: var(--font-mono); font-variant-ligatures: none; }
 .file-toolbar [role="status"] { font: var(--type-caption); }
 .designer-file p { max-width: 70ch; }
 .designer-file > .muted, .designer-file > div > .muted { font: var(--type-caption); }
