@@ -28,7 +28,27 @@ globally to install dependencies.
 
 ## Preview the UI in a browser
 
-For quick UI work without a VM, start the dev server from `app/` with `npm run dev` and open `http://127.0.0.1:1420/?scenario=fresh`. In development builds only, a `scenario` query loads a scripted stand-in for the native commands (`app/src/preview/backend.ts`), so screens can be walked and captured in any browser. Scenarios are `fresh`, `ready`, `connected`, `restart`, `ghMissing`, `ghSignedOut`, `runFails` and `vmFailed`. Add `speed=20` to shorten waits and `clean` to hide the scenario toolbar. The preview is not native verification: it never runs a VM, an agent or a model.
+For quick UI work without a VM, start the dev server from `app/` with `npm run dev` and open `http://127.0.0.1:1420/?scenario=fresh`. In development builds only, a `scenario` query loads a scripted stand-in for the native commands (`app/src/preview/backend.ts`), so screens can be walked and captured in any browser. Scenarios are `fresh`, `ready`, `connected`, `restart`, `ghMissing`, `ghSignedOut`, `runFails` and `vmFailed`. Add `speed=20` to shorten waits, `clean` to hide the scenario toolbar and `page=Home`, `Overview`, `Designer` or `Clusters` to open that page. The preview is not native verification: it never runs a VM, an agent or a model.
+
+These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer; the rest open on Clusters, and the steps say where the state appears.
+
+| Scenario | State | Where it appears |
+| --- | --- | --- |
+| `memoryLow` | Not enough installed memory | Get started → Set up |
+| `wsStopped` | Workspace stopped | Opens there |
+| `wsCouldntStart` | Workspace couldn't start | Opens there |
+| `wsForced` | Workspace forcibly stopped | Opens there |
+| `wsUpdate` | This version needs a new workspace | Opens there |
+| `wsRestore` | Interrupted update, restore offered | Opens there |
+| `wsRecovery` | Interrupted update, setup incomplete | Opens there |
+| `keyRejected` | API key not accepted | This computer → Manage → Your own API key, enter a key starting `sk-`, Connect the AI |
+| `aiMismatch` | Saved AI connection from an earlier setup | This computer → Manage → Connect the AI |
+| `clusterDenied` | Cluster access denied | `team-dev` → Use this cluster |
+| `clusterUnreachable` | Can't reach the cluster | `team-dev` |
+| `sendBlocked` | Send blocked by destination checks | `team-dev` → Use this cluster → Open your agent |
+| `sendRunning` | Send running on the cluster (until cancelled) | As `sendBlocked`, then Send and run tests |
+| `sendFailed` | Send finished with a failing test | As `sendRunning` |
+| `testIncomplete` | First test is incomplete | Designer, or add `page=Designer` |
 
 ## Run with a local VM
 
