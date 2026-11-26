@@ -117,6 +117,8 @@ export function SetupProgress(props: Props) {
         {onSetUpLater && <SetUpLater onClick={onSetUpLater} />}</div>
     </div>}
     {!failed && <div className="workspace-step-actions">
+      {/* Two cards leave no room for Meet; its introduction is one quiet click away, in Designer. */}
+      {cards && settingUp && !error && <Button type="button" kind="quiet" onClick={onOpenExample}>See your first agent</Button>}
       {settingUp && (!!props.upgrade || !!error) && <><Button type="button" kind="secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</Button><span className="muted">Cancel pauses setup. Your downloaded files are kept.</span></>}
       {status.localVm === 'notIntegrated' && onCluster && <Button type="button" kind="secondary" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</Button>}
       {paused && (!!error || !!props.upgrade) && (props.ordinaryRecovery ?? !props.upgrade) && <Button type="button" kind="primary" disabled={busy || !!error} onClick={onRestart}>Start again</Button>}
