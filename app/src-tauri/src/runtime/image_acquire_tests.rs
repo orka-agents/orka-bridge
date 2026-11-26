@@ -505,6 +505,13 @@ async fn the_disk_decodes_during_download_and_a_retry_replays_kept_chunks() {
     let (_sender, closed) = watch::channel(false);
     let result = acquire_image(&image, &cache, &client, closed.clone(), |_| {}).await;
     assert!(matches!(result, Err(ImageError::Network(_))));
+    // The first chunk was already decoding before the download stopped.
+    let pending = temp
+        .path()
+        .join("cache/images/v2")
+        .join(&image.identity().manifest_sha256)
+        .join("staging/disk.pending");
+    assert!(std::fs::metadata(pending).unwrap().len() > 0);
     assert!(undecoded(&cache, &image));
     server.routes.lock().unwrap().insert(leaf, second);
     let set = acquire_image(&image, &cache, &client, closed, |_| {})
@@ -561,4 +568,22 @@ async fn a_changed_download_is_refused_and_a_clean_retry_repairs_it() {
         .await
         .unwrap();
     assert!(cache.verified(&image).unwrap().is_some());
+}
+#[test]
+fn decoding_needs_no_thread_from_the_blocking_pool() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (mut image, files) = image_cache::tests::publication::two_chunk_image();
+        let (_server, client) = serve(&mut image, &files).await;
+        let temp = tempfile::tempdir().unwrap();
+        let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+        let (_sender, closed) = watch::channel(false);
+        let acquire = acquire_image(&image, &cache, &client, closed, |_| {});
+        let result = tokio::time::timeout(std::time::Duration::from_secs(20), acquire).await;
+        assert!(result.expect("acquisition stalled").is_ok());
+    });
 }
