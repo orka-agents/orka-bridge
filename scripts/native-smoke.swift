@@ -1665,6 +1665,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             && nativeButtons("has-a-date", root: root).compactMap { nativeBounds($0) }.contains { bodyBounds().contains($0) }
             && nativeTextBounds(failureReason, exact: true, root: root).contains { bodyBounds().contains($0) }
     }
+    // The Send card starts every test closed under its headline (TestResults collapsed); open the failed one.
+    try clickSendControl("has-a-date", scrolling: -250)
     try capturePreflight("send-failed-wide", "Finds the publication date", anchor: failureReason, requiring: visibleFailure)
     require(nativeStrings().contains { showsText($0, "has-a-date") }, "Captured test title must retain its code ID")
     try resultSize(540, 640)
@@ -1825,6 +1827,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try capturePreflight("send-cancel-completion-race", "Tests finished before cancellation.")
     try focusSend()
     try capturePreflight("send-cancel-race-result", "1 of 2 tests passed")
+    try clickSendControl("has-a-date", scrolling: -250) // a new result starts its tests closed again
     try capturePreflight("send-cancel-race-failure", "Finds the publication date", anchor: failureReason, requiring: visibleFailure)
     // Restore and actually Send the common file version on the primary cluster
     // before comparing it with the secondary. Merely restoring local bytes does
