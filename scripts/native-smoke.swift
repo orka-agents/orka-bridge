@@ -719,7 +719,11 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         let welcome = showsText(text, "Your agents. Your models.") && showsText(text, "Your keys. Your cluster.") || !nativeButtons("Get started").isEmpty
         let places = showsText(text, "Choose where agents run") || nativeTextIsVisible("Choose where agents run")
         let detail = showsText(text, "Back to clusters") || showsText(text, "Where should your agents run?") || !nativeButtons("Continue").isEmpty
-        require(welcome || places || detail, "Places heading or subview not visible; observed: \(text)")
+        // The open context picker covers the page head (it sits 80pt down over the page); it still belongs to the Add a
+        // cluster subview, whose Back to clusters stays in the native tree beneath it.
+        let picker = name.hasPrefix("cluster-picker-open") && visibleButtons("Close picker").count == 1
+            && showsText(text, "Find a context") && nativeButtons("Back to clusters").count == 1
+        require(welcome || places || detail || picker, "Places heading or subview not visible; observed: \(text)")
         require(!showsText(text, "Engine diagnostics"), "Removed engine diagnostics is still visible: \(text)")
         if places && !detail {
             // Places keeps direct row actions; the local subview owns the setup choices.
