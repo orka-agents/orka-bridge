@@ -9,7 +9,8 @@
 .agent-heading-copy h1.agent-name { font: var(--type-display-object); letter-spacing: var(--tracking-display-section); }
 .agent-heading-copy p { margin-top: var(--space-2); max-width: 65ch; }
 .agent-selector { width: 170px; max-width: 100%; }
-.agent-selector select { width: 100%; font-family: var(--font-mono); }
+/* Mono selects use the 500 13px mono of the boards' select, so a long model name still fits its 300px. */
+.agent-selector select { width: 100%; font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
 
 /* New agent: one 560px card under a page title. */
 .new-agent h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
@@ -27,6 +28,8 @@
 .new-agent-path ul { padding-left: var(--space-4); margin: var(--space-1) 0 0; list-style: none; }
 .new-agent-form .heading-actions { margin-top: var(--space-2); }
 
+/* Designer cards keep the boards' 16px inset, so a line of instructions wraps where the board does. */
+.designer-work .card { padding-inline: var(--space-4); }
 /* Two columns: the editor on the left, This computer above Team cluster on the right, each under its section label. */
 .designer-file, .designer-checks, .designer-tests { margin-top: var(--space-4); display: grid; gap: var(--space-3); }
 .designer > :is(.designer-file, .designer-checks) { max-width: 640px; }
@@ -82,17 +85,18 @@
 .description-line.field { width: 100%; height: var(--height-control); }
 .agent-part > .alert { max-width: none; }
 .agent-tool-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
-.agent-part .model-select { width: 300px; max-width: 100%; font-family: var(--font-mono); font-variant-ligatures: none; }
+.agent-part .model-select { width: 300px; max-width: 100%; font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
 /* Add a tool matches the 32px tool chips beside it. */
 .agent-tool-row > .button-small, .agent-tool-row > .coming-control > .button-small { min-height: 32px; height: 32px; }
 /* A tool is a well chip: its label, its id in mono and a remove button. */
-.tool-pill { overflow-wrap: anywhere; min-width: 0; min-height: 32px; padding: var(--space-0-5) var(--space-1-5) var(--space-0-5) 11px; gap: var(--space-2); border-radius: var(--radius-control); color: var(--color-text); font: var(--type-body); }
+.tool-pill.chip { overflow-wrap: anywhere; min-width: 0; min-height: 32px; padding: 0 var(--space-1-5) 0 11px; gap: var(--space-2); border-radius: var(--radius-control); color: var(--color-text); font: var(--type-body); }
 .tool-pill > span:first-child { font-weight: 500; color: var(--color-text); }
 .tool-pill > .muted { font: var(--type-caption); }
 .tool-pill > .button-icon { width: 22px; height: 22px; min-height: 22px; }
 .tool-pill > .button-icon .icon { width: 12px; height: 12px; }
-.tool-pill:not(:has(> .button-icon)) { padding-right: var(--space-2-5); }
-.tool-pill code, .tool-picker code { color: var(--color-text-secondary); font-family: var(--font-mono); font-size: .92em; overflow-wrap: anywhere; }
+.tool-pill.chip:not(:has(> .button-icon)) { padding-right: var(--space-2-5); }
+.tool-pill code { color: var(--color-text-secondary); font: 400 12px/16px var(--font-mono); font-variant-ligatures: none; overflow-wrap: anywhere; }
+.tool-picker code { color: var(--color-text-secondary); font-family: var(--font-mono); font-size: .92em; overflow-wrap: anywhere; }
 
 /* Tool picker: a card in the page under the tools, closed with its X, Escape, a choice or a press outside it. */
 .tool-picker { display: grid; gap: var(--space-1-5); max-height: 360px; overflow: auto; border: var(--border-editing) solid var(--color-text); border-radius: var(--radius-control); padding: var(--space-3); background: var(--color-card); color: var(--color-text); box-shadow: var(--shadow-popover); }
@@ -137,7 +141,9 @@
 .designer-tests .run-body .test-results { border-top: 1px solid var(--color-border-strong); }
 .designer-tests .run-body .card-details { margin-top: 0; padding-top: var(--space-2); }
 .designer-tests .example-run .test-result:first-child { border-top: 0; }
-.designer-tests .run-collapsed { margin-top: var(--space-2); }
+/* After an edit: what changed, then Run tests with the save state beside it. */
+.designer-tests .run-body > .workspace-step-actions { margin: 0; align-items: center; }
+.designer-tests .workspace-step-actions > .save-state { font: 500 12px/16px var(--font-mono); color: var(--color-text-secondary); }
 .designer-tests .long-card-action > .workspace-step-actions { margin-top: 0; }
 .designer-tests .example-run > p { margin-top: var(--space-2); max-width: 70ch; }
 .designer-tests .example-run .alert { margin-block: var(--space-2); }
