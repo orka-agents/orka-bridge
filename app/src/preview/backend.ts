@@ -6,6 +6,8 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import agentSource from '../../src-tauri/example-agent/web-reader.agent.md?raw';
 import testSource from '../../src-tauri/example-agent/web-reader.agent.test.md?raw';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
+import { sidebarPreference } from '../chrome/sidebar';
+import { themePreference } from '../chrome/theme';
 
 export const scenarios = {
   fresh: 'First run on a new computer',
@@ -270,8 +272,8 @@ function toolbar() {
 
 export function installPreview() {
   try {
-    // Each load starts from the scenario, not from the previous walk's browser storage.
-    for (const key of Object.keys(localStorage)) if (key.startsWith('bridge.')) localStorage.removeItem(key);
+    // Each load starts from the scenario, not from the previous walk's browser storage. Theme and sidebar choices are kept: they are presentation only.
+    for (const key of Object.keys(localStorage)) if (key.startsWith('bridge.') && key !== themePreference && key !== sidebarPreference) localStorage.removeItem(key);
     if (!fresh) localStorage.setItem('bridge.welcomeSeen.v1', '1');
     if (!fresh) localStorage.setItem('bridge.firstTest.v1', 'attempted');
   } catch { /* Storage is optional in the preview. */ }

@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const css = readFileSync('src/app.css', 'utf8');
-const palettes = [...css.matchAll(/:root\s*\{([^}]+)\}/g)].map(([, block]) =>
+// Light, then dark when the system asks for it (unless Light is chosen), then dark when chosen outright.
+const palettes = [...css.matchAll(/:root(?::not\(\[data-theme="light"\]\)|\[data-theme="dark"\])?\s*\{([^}]+)\}/g)].map(([, block]) =>
   Object.fromEntries([...block.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [name, value.trim()])),
 );
 
@@ -62,10 +63,33 @@ describe('Orka ink and paper theme contract', () => {
     expect(compact).not.toMatch(/\.tab-copy\s*\{[^}]*display:\s*none|\.tab-copy b[^{]*\{[^}]*display:\s*none|clip-path|\.status-lines[^{]*\{[^}]*(display:\s*none|position:\s*absolute)|\.host-label[^{]*\{[^}]*(display:\s*none|position:\s*absolute)/);
     expect(controls).toMatch(/\.button-quiet\s*\{[^}]*padding-inline:\s*0/);
   });
+  it('folds the wide sidebar to a 60px rail that keeps names and status for assistive technology', () => {
+    const shell = readFileSync('src/shell.css', 'utf8');
+    expect(shell).toMatch(/\.app-shell\s*\{[^}]*--sidebar-width:\s*248px;/);
+    expect(shell).toMatch(/\.title-bar\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\);[^}]*min-height:\s*44px/);
+    // The folded rail applies to wide windows only, so the narrow rules after it keep their visible names and status bar.
+    const folded = shell.slice(shell.indexOf('@media (min-width: 821px)'), shell.indexOf('@media (max-width: 820px)'));
+    expect(folded).toMatch(/\.app-shell\[data-sidebar="collapsed"\]\s*\{\s*--sidebar-width:\s*60px;\s*\}/);
+    expect(folded).toMatch(/\.app-shell\[data-sidebar="collapsed"\] :is\(\.nav-group-label, \.tab-copy, \.host-label, \.host-chip \.chip, \.status-lines, \.checks-status\)\s*\{[^}]*position: absolute;[^}]*clip-path: inset\(50%\)/);
+    expect(folded).toMatch(/\.page-tab::after\s*\{\s*content: attr\(aria-label\)/);
+    expect(folded).not.toMatch(/display:\s*none/);
+    const compact = shell.slice(shell.indexOf('@media (max-width: 820px)'));
+    expect(compact).toMatch(/\.sidebar-toggle-control\s*\{\s*display:\s*none/);
+  });
   it('uses the system dark preference and bundled reading and code families', () => {
     expect(css).toContain('@media (prefers-color-scheme: dark)');
+    expect(css).toMatch(/@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \{/);
     expect(palettes[0]['font-ui']).toContain('Geist Variable');
     expect(palettes[0]['font-mono']).toContain('Geist Mono Variable');
+  });
+  it('makes a chosen theme match the system one', () => {
+    expect(palettes).toHaveLength(3);
+    // Chosen Dark uses exactly the system dark values; chosen Light turns the system dark rule off, so it is the base palette.
+    expect(palettes[2]).toEqual(palettes[1]);
+    expect(css).toMatch(/:root\s*\{\s*color-scheme: light;/);
+    expect(css).toMatch(/:root:not\(\[data-theme="light"\]\) \{\s*color-scheme: dark;/);
+    expect(css).toMatch(/:root\[data-theme="dark"\] \{\s*color-scheme: dark;/);
+    expect(css).not.toMatch(/:root\[data-theme="light"\]/);
   });
   it('uses one six-pixel radius and reserves colour for state', () => {
     expect(palettes[0]).toMatchObject({

@@ -6,8 +6,10 @@ import './app.css';
 import './shell.css';
 import './components/controls.css';
 import App from './App';
+import { applyTheme, readTheme } from './chrome/theme';
 import { previewRequested } from './preview/gate';
 
+applyTheme(readTheme());
 const render = () => createRoot(document.getElementById('root')!).render(
   <StrictMode><App /></StrictMode>,
 );

@@ -52,8 +52,9 @@
   --radius-card: var(--radius);
   --ease-standard: cubic-bezier(.2, .7, .2, 1);
 }
+/* Dark follows the system unless Light is chosen; Dark can also be chosen outright. theme.test.ts keeps the two copies equal. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --color-text: #f4f4f5;
     --color-text-secondary: #a1a1a9;
@@ -85,6 +86,38 @@
     --shadow-overlay: 0 16px 48px rgb(0 0 0 / .48);
     --mark-filter: invert(1);
   }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-text: #f4f4f5;
+  --color-text-secondary: #a1a1a9;
+  --color-text-tertiary: #83838b;
+  --color-page: #09090a;
+  --color-card: #111113;
+  --color-chrome: #1b1b1e;
+  --color-hover: #1b1b1e;
+  --color-border: #222225;
+  --color-border-strong: #313136;
+  --color-action: #f4f4f5;
+  --color-action-hover: #cececf;
+  --color-action-text: #09090a;
+  --color-action-tint: #1b1b1e;
+  --color-icon-tile: #1b1b1e;
+  --color-status-pending: #f5b544;
+  --color-status-running: #4cb8f5;
+  --color-status-succeeded: #4ade80;
+  --color-status-failed: #f87171;
+  --color-status-cancelled: #83838b;
+  --color-tint-pending: #352812;
+  --color-tint-running: #143036;
+  --color-tint-succeeded: #173028;
+  --color-tint-failed: #362025;
+  --color-tint-stale: #1b1b1e;
+  --color-terminal: #131315;
+  --color-terminal-text: #ededef;
+  --color-backdrop: rgb(0 0 0 / .55);
+  --shadow-overlay: 0 16px 48px rgb(0 0 0 / .48);
+  --mark-filter: invert(1);
 }
 * { box-sizing: border-box; }
 html, body, #root { min-height: 100%; margin: 0; }
