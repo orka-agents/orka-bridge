@@ -60,7 +60,7 @@
 .overview-empty h2, .overview-empty p { margin: 0; }
 .overview-empty .overview-card-actions { margin-top: var(--space-2); }
 .overview-card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
-.overview-list .empty-state { margin: 0; max-width: 800px; padding: var(--space-5) var(--space-4); text-align: left; }
+.overview-list .empty-state { max-width: 800px; }
 
 @media (prefers-reduced-motion: reduce) { .overview-agent-identity > .icon { transition: none; } }
 @media (max-width: 820px) {

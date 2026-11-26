@@ -36,7 +36,6 @@
 .place-workspace-running { grid-column: 2 / -1; grid-row: 2; margin: 0; color: var(--color-status-running); font-size: var(--size-body); }
 .place-model-recovery { grid-column: 2 / -1; grid-row: 3; min-width: 0; }
 .place-model-recovery:empty { display: none; }
-.places-list > .empty-state { text-align: left; }
 .places-list > [role="status"] { color: var(--color-text-secondary); }
 .places-workspace .workspace-choice, .places-workspace .setup { max-width: none; width: 100%; }
 .places-workspace [hidden] { display: none; }
