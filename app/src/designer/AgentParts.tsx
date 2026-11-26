@@ -113,10 +113,10 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
             {!readOnly && form.toolsEditable && ['builtin', 'tool'].includes(tool.kind ?? '') && <Button kind="icon" aria-label={`Remove ${label}`} onClick={() => { change(removeTool(source, tool.index)); focusAdd(); }}><CloseIcon /></Button>}
           </span>;
         })}
-        {toolReason ? <Unavailable label="Add a tool" reason={toolReason} focusRef={addPlaceholder}><Button kind="secondary" type="button" disabled title={toolReason}>Add a tool</Button></Unavailable>
-          : <Button kind="secondary" type="button" ref={add} aria-expanded={picker} aria-controls={`${id}-picker`} onClick={() => { if (picker) close(); else setPicker(true); }}><span aria-hidden="true">+ </span>Add a tool</Button>}
+        {toolReason ? <Unavailable label="Add a tool" reason={toolReason} focusRef={addPlaceholder}><Button kind="secondary" size="small" type="button" disabled title={toolReason}>Add a tool</Button></Unavailable>
+          : <Button kind="secondary" size="small" type="button" ref={add} aria-expanded={picker} aria-controls={`${id}-picker`} onClick={() => { if (picker) close(); else setPicker(true); }}><span aria-hidden="true">+ </span>Add a tool</Button>}
       </div>
-      {!remote && form.tools.some(tool => tool.name && unsupportedLocalTool(tool.name)) && <p role="alert">{unsupportedToolWarning}</p>}
+      {!remote && form.tools.some(tool => tool.name && unsupportedLocalTool(tool.name)) && <div className="alert alert-needs-you"><p role="alert" className="alert-title">{unsupportedToolWarning}</p></div>}
       {toolReason && !catalogLoading && <p className="muted">{toolReason}</p>}
       {picker && !toolReason && <div role="dialog" aria-label="Choose a tool" ref={popover} popover="auto" id={`${id}-picker`} className="tool-picker" onToggle={event => { if (event.newState === 'closed') { setPicker(false); setQuery(''); } }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
         <Button kind="icon" className="picker-close" aria-label="Close picker" title="Close picker" onClick={close}><CloseIcon /></Button>

@@ -19,7 +19,7 @@ export default function FileLocation({ path, documentId }: { path?: string; docu
   }
   return <div className="file-location">{path ? <code className="agent-path">{path}</code> : <p className="muted">The file path is unavailable.</p>}<div className="agent-tool-row">
     {path && <Button type="button" kind="icon" aria-label="Copy file path" title="Copy file path" onClick={() => { void copy(); }}><CopyIcon /></Button>}
-    <Button type="button" kind="secondary" onClick={() => { void reveal(); }}>Show in folder</Button>
+    <Button type="button" kind="quiet" onClick={() => { void reveal(); }}>Show in folder</Button>
     <span className="muted" role="status">{feedback && feedback.path === path ? feedback.text : ''}</span>
   </div></div>;
 }

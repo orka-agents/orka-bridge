@@ -39,8 +39,8 @@ export default function NewAgent({ active, model, onRegistered, onCreated, onCan
       }).finally(() => { admitted.current = false; if (mounted.current) setBusy(false); });
     }}>
       <label htmlFor="new-agent-name">Name</label>
-      <input id="new-agent-name" className="field" ref={input} autoCapitalize="none" autoCorrect="off" spellCheck={false} required minLength={1} maxLength={63} pattern="[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?" aria-describedby="new-agent-name-hint" value={name} disabled={disabled} onChange={event => { setName(event.target.value); setError(undefined); }} />
       <p className="muted" id="new-agent-name-hint">Use lowercase letters, numbers and hyphens.</p>
+      <input id="new-agent-name" className="field" ref={input} autoCapitalize="none" autoCorrect="off" spellCheck={false} required minLength={1} maxLength={63} pattern="[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?" aria-describedby="new-agent-name-hint" value={name} disabled={disabled} onChange={event => { setName(event.target.value); setError(undefined); }} />
       <Disclosure label="Naming details"><p className="muted">Use 1–63 characters. Begin and end with a letter or number. Windows device names{storage === 'bridge' ? ' and web-reader are' : ' are'} reserved. This names your files, not the agent on a cluster.</p></Disclosure>
       <fieldset disabled={disabled}><legend>Keep it in</legend>
         <label><input type="radio" name="agent-storage" checked={storage === 'bridge'} onChange={() => { setStorage('bridge'); setError(undefined); }} /> Bridge's folder</label>
@@ -55,7 +55,7 @@ export default function NewAgent({ active, model, onRegistered, onCreated, onCan
       <p className="muted">{storageCopy[storage]}</p>
       <p>Starts blank, with one empty test. Write instructions in Designer, then complete the test file on disk before running tests or sending to a cluster.</p>
       {error && <p role="alert">{error}</p>}
-      <div className="heading-actions"><Button kind="primary" type="submit" disabled={disabled || storage === 'repo' && !repo}>{busy ? 'Creating…' : 'Create'}</Button><Button kind="secondary" type="button" disabled={disabled} onClick={onCancel}>Cancel</Button></div>
+      <div className="heading-actions"><Button kind="primary" size="large" type="submit" disabled={disabled || storage === 'repo' && !repo}>{busy ? 'Creating…' : 'Create'}</Button><Button kind="secondary" size="large" type="button" disabled={disabled} onClick={onCancel}>Cancel</Button></div>
     </form>
   </section>;
 }
