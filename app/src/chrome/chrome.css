@@ -11,7 +11,7 @@
 .file-menu { position: relative; display: flex; align-items: center; margin-left: var(--space-2); }
 .file-menu-button { min-height: 28px; padding: 0 var(--space-2); border: 0; border-radius: var(--radius-control); background: transparent; color: var(--color-text-secondary); font: var(--type-small); }
 .file-menu-button:hover, .file-menu-button[aria-expanded="true"] { background: var(--color-hover); color: var(--color-text); }
-.file-menu [role="menu"] { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; min-width: 160px; padding: var(--space-1); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-card); box-shadow: 0 4px 12px rgb(0 0 0 / .16); }
+.file-menu [role="menu"] { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; min-width: 160px; padding: var(--space-1); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-card); box-shadow: var(--shadow-overlay); }
 .file-menu [role="menuitem"] { display: block; width: 100%; padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-control); background: transparent; color: var(--color-text); text-align: left; font: var(--type-body); }
 .file-menu [role="menuitem"]:hover, .file-menu [role="menuitem"]:focus-visible { background: var(--color-hover); }
 .file-menu-error { margin-left: var(--space-2); color: var(--color-status-failed); font: var(--type-small); }
