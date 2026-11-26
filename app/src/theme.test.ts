@@ -38,6 +38,8 @@ describe('Orka ink and paper theme contract', () => {
     expect(contrast(palette['color-action-text'], palette['color-action'])).toBeGreaterThanOrEqual(4.5);
     expect(contrast(palette['color-action-text'], palette['color-action-hover'])).toBeGreaterThanOrEqual(4.5);
     expect(contrast(palette['color-terminal-text'], palette['color-terminal'])).toBeGreaterThanOrEqual(4.5);
+    // The focus ring is the running blue, so it shows against every surface a control sits on.
+    expect(palette['color-focus']).toBe(palette['color-status-running']);
   });
   it.each([0, 1])('keeps every status tint readable in palette %s', index => {
     const palette = palettes[index];
@@ -97,6 +99,10 @@ describe('Orka ink and paper theme contract', () => {
       'radius-control': 'var(--radius)',
       'radius-row': 'var(--radius)',
       'radius-card': 'var(--radius)',
+      'radius-small': '4px',
+      'height-control-small': '28px',
+      'height-control': '34px',
+      'height-control-large': '44px',
     });
     const designSystem = readFileSync('src/components/design-system.css', 'utf8');
     const shell = readFileSync('src/shell.css', 'utf8');

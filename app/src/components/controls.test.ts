@@ -8,7 +8,7 @@ describe('shared control styles', () => {
     expect(css).toMatch(/\.button\s*\{[^}]*min-height: 32px/s);
     expect(css).toMatch(/\.button-small\s*\{[^}]*min-height: 26px/s);
     expect(css).toMatch(/\.button-icon\s*\{[^}]*width: 26px/s);
-    expect(readFileSync('src/app.css', 'utf8')).toContain(':focus-visible { outline: 2px solid var(--color-text); outline-offset: 2px; }');
+    expect(readFileSync('src/app.css', 'utf8')).toContain(':focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }');
     expect(css).toMatch(/h1\[tabindex="-1"\]:focus\s*\{\s*outline: none;/);
   });
   it('shares theme-aware field chrome and draws a native select chevron', () => {
