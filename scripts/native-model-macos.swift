@@ -1505,6 +1505,12 @@ func visibleStaticTexts(_ matches: (String) -> Bool) -> Bool {
 func replyChipVisible() -> Bool { visibleStaticTexts { $0 == "reply_in_conversation" } }
 // The warning's wording is shared with other tools; require only that it names this tool beyond the chip itself.
 func replyWarningVisible() -> Bool { visibleStaticTexts { $0.contains("reply_in_conversation") && $0 != "reply_in_conversation" } }
+// At narrower widths the warning wraps below the tool chips; bring a rendered warning fully into view before checking it.
+func revealReplyWarning() {
+    for _ in 0..<6 where !replyWarningVisible() && visibleStaticTexts({ $0 == "reply_in_conversation" }) {
+        scroll(-60)
+    }
+}
 func requireSavedReply(_ present: Bool, _ label: String) {
     Thread.sleep(forTimeInterval: 0.5)
     require(replyChipVisible() == present, "\(label): reply chip should be \(present ? "present" : "absent")")
@@ -1519,6 +1525,7 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     localSize(CGFloat(width), CGFloat(height))
     setFileText(replyFile)
     _ = try seek("It can use", -150)
+    revealReplyWarning()
     requireSavedReply(true, "preserved \(size)")
     _ = try capture("local-saved-reply-tool-\(size)", ["It can use", "Reply in a conversation"])
     click("Remove Reply in a conversation", [])
@@ -1526,6 +1533,7 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     _ = try capture("local-saved-reply-tool-removed-\(size)", ["It can use"])
     setFileText(replyFile)
     _ = try seek("It can use", -150)
+    revealReplyWarning()
     requireSavedReply(true, "restored \(size)")
     _ = try capture("local-saved-reply-tool-restored-\(size)", ["It can use", "Reply in a conversation"])
     setFileText(originalFile)
