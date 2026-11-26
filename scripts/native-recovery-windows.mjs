@@ -233,7 +233,11 @@ try {
         setup: (() => { const root = shown('.workspace-setup-grid')[0]; if (!root) return null; const get = selector => rect(root.querySelector(selector)); return { progress: get('.setup-progress'), model: get('.setup-model-slot:not(:empty)'), meet: get('.workspace-meet') }; })(),
         designer: (() => { const root = shown('.designer-work')[0]; if (!root) return null; const get = selector => rect([...root.querySelectorAll(selector)].find(node => node.getClientRects().length)); return { tests: get('.designer-tests:not([hidden])'), editor: get('.designer-file'), send: get('.send-panel:not([hidden])'), history: get('.send-history') }; })(),
         fallback: { file: rect(shown('.designer > .designer-file')[0]), history: rect(shown('.designer > .designer-checks .send-history')[0]) },
-        guided: !!document.querySelector('.app-shell.guided'), hostShown: shown('.host-chip').length, exit: shown('.guided-exit:not(:disabled)').length,
+        guided: !!document.querySelector('.app-shell.guided'), hostShown: shown('.host-chip').length,
+        // Guidance has no title-bar way out; a screen where setup stopped (a failed check, start, AI connection or test) offers Set up later.
+        exit: shown('button').filter(node => node.textContent.trim() === 'Show all of Bridge').length,
+        stopped: shown('.workspace-failure, .workspace-preflight.alert-failed, .first-test-recovery').length,
+        later: shown('button').filter(node => node.textContent.trim() === 'Set up later' && !node.disabled).length,
         statusRegion: (() => { const footer = document.querySelector('footer.status-bar'), region = footer?.querySelector('[role="status"]'); return !!region && [footer, region].every(node => getComputedStyle(node).display !== 'none' && getComputedStyle(node).visibility !== 'hidden'); })(),
       };
     })()`);
@@ -243,11 +247,12 @@ try {
     if (size === 'setup-fit' && layout.scrollHeight > layout.clientHeight + 2) fail('page overflows vertically');
     if (layout.guided) {
       // The guided first run is the whole window under the title bar: no sidebar or status card on screen. The
-      // status card's live region stays in the accessibility tree, and every screen after Welcome offers the way out.
+      // status card's live region stays in the accessibility tree. The way out is offered only where setup stopped.
       if (layout.tabs.length || layout.names || layout.hostShown) fail('guided first run must not show the sidebar or status card');
       if (layout.page.x > 1 || layout.page.right < layout.width - 1) fail('guided page must span the window');
       if (!layout.statusRegion) fail('guided first run must keep the status live region in the accessibility tree');
-      if (name !== 'welcome' && !layout.exit) fail('guided screens after Welcome must offer Show all of Bridge');
+      if (layout.exit) fail('guided screens must not offer Show all of Bridge');
+      if (layout.stopped && !layout.later) fail('guided screens where setup stopped must offer Set up later');
     } else {
       if (layout.tabs.length !== 4 || layout.tabs.some(tab => Math.abs(tab.x - layout.tabs[0].x) > 1 || Math.abs(tab.width - layout.tabs[0].width) > 1 || tab.right > layout.page.x) || layout.tabs.some((tab, index) => index > 0 && tab.y < layout.tabs[index - 1].bottom)) fail('sidebar tabs must stack in one column left of the page');
       // Wide windows show the full sidebar with the status card below the tabs; narrow ones the 60px icon rail, whose
