@@ -901,14 +901,16 @@ fn clone(context: &Context, stage: &Dir, name: &str, source: &File) -> Result<bo
     if unsafe { libc::fclonefileat(source.as_raw_fd(), stage.as_raw_fd(), path.as_ptr(), 0) } != 0 {
         return Ok(false);
     }
-    // A clone carries the cache file's mode and flags; give it what a fresh copy would have.
-    let file = regular(stage, name, false, false)?;
-    if unsafe { libc::fchflags(file.as_raw_fd(), 0) } != 0
-        || unsafe { libc::fchmod(file.as_raw_fd(), 0o644) } != 0
-    {
-        return Err(storage(std::io::Error::last_os_error()));
+    // A clone carries the cache file's mode and flags; give it what a fresh copy would have,
+    // or remove it so a retry never trusts a clone by its bytes alone.
+    let normalized = regular(stage, name, false, false).is_ok_and(|file| {
+        unsafe { libc::fchflags(file.as_raw_fd(), 0) } == 0
+            && unsafe { libc::fchmod(file.as_raw_fd(), 0o644) } == 0
+    });
+    if !normalized {
+        stage.remove_file(name).map_err(storage)?;
     }
-    Ok(true)
+    Ok(normalized)
 }
 #[cfg(not(target_os = "macos"))]
 fn clone(_: &Context, _: &Dir, _: &str, _: &File) -> Result<bool, ImageError> {
