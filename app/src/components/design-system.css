@@ -3,11 +3,16 @@
 .status-running { --status: var(--color-status-running); --status-tint: var(--color-tint-running); }
 .status-stale { --status: var(--color-text-secondary); --status-tint: var(--color-tint-stale); }
 .status-needs-you { --status: var(--color-status-pending); --status-tint: var(--color-tint-pending); }
-.status-not-started { --status: var(--color-text-tertiary); --status-tint: transparent; }
-.status-icon { color: var(--status); flex: none; width: 16px; height: 16px; }
-.pill { display: inline-flex; align-items: center; gap: var(--space-1); padding: 2px var(--space-2); border-radius: var(--radius-control); font: var(--type-small); font-weight: 500; color: var(--status, var(--color-text-secondary)); background: var(--status-tint, var(--color-tint-stale)); max-width: 100%; }
-.chip { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-radius: var(--radius-control); background: var(--color-tint-stale); color: var(--color-text-secondary); }
-.section-label { font: var(--type-small); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--color-text-tertiary); margin: 0; }
+.status-not-started { --status: var(--color-text-secondary); --status-tint: transparent; }
+.status-icon { color: var(--status); flex: none; width: 18px; height: 18px; stroke-width: 1.6; }
+/* A pill is one outlined state word. Uppercase comes from CSS; the word in the markup stays as written. */
+.pill { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 22px; padding: 0 var(--space-2); border: var(--border-control) solid var(--status, var(--color-text-secondary)); border-radius: var(--radius-control); background: transparent; color: var(--status, var(--color-text-secondary)); font: var(--type-label); letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; max-width: 100%; }
+.pill > .status-icon { display: none; }
+.chip { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-0-5) var(--space-1-5); border-radius: var(--radius-small); background: var(--color-chrome); color: var(--color-text-secondary); }
+.section-label { font: var(--type-label); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--color-text-secondary); margin: 0; }
+/* The one card on a screen that holds the next action. Plain .card stays a 1px line. */
+.card-strong { border: var(--border-control) solid var(--color-text); }
+.card-editing { border: var(--border-editing) solid var(--color-text); }
 .long-card { min-width: 0; }
 .long-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
 .long-card-head h3 { font: var(--type-card); margin: 0; }
@@ -23,8 +28,19 @@
 .generated-value code { overflow-wrap: anywhere; }
 .generated-value [role="status"] { font: var(--type-small); }
 .result-stale { color: var(--color-text-secondary); }
-.result-row { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: baseline; gap: var(--space-2); padding-block: var(--space-2); }
+.result-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: baseline; gap: var(--space-2); padding-block: var(--space-2); }
 .result-row > :not(.status-icon) { grid-column: 2; }
 .result-row h4 { font: var(--type-body); font-weight: 500; margin: 0; }
 .result-row p, .result-row ul { margin-block: var(--space-2); }
 .result-row .reading { color: inherit; }
+/* Callouts: what happened in the status colour, then what is safe in ink. */
+.alert { display: grid; gap: var(--space-1); padding: var(--space-2-5) var(--space-3); border-radius: var(--radius-control); background: var(--color-tint-stale); color: var(--color-text); max-width: 70ch; }
+.alert > * { margin: 0; }
+.alert-title { font-weight: 600; }
+.alert-failed { background: var(--color-tint-failed); }
+.alert-failed .alert-title { color: var(--color-status-failed); }
+.alert-needs-you { background: var(--color-tint-pending); }
+.alert-needs-you .alert-title { color: var(--color-status-pending); }
+.empty-state { padding: var(--space-5) var(--space-4); border: var(--border-control) dashed var(--color-border-strong); border-radius: var(--radius-control); color: var(--color-text-secondary); text-align: center; }
+.code-chip { font: 500 var(--size-body)/18px var(--font-mono); font-variant-ligatures: none; padding: 1px var(--space-1-5); border-radius: var(--radius-small); background: var(--color-chrome); overflow-wrap: anywhere; }
+.key { display: inline-block; font: var(--type-label); padding: 0 5px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-small); background: var(--color-card); color: var(--color-text-secondary); }

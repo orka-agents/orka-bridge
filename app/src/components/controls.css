@@ -1,21 +1,30 @@
-.button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); min-height: 32px; max-width: 100%; padding: 4px 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-card); color: var(--color-text); font: var(--type-body); font-weight: 500; letter-spacing: -.005em; text-align: center; transition: background-color 160ms var(--ease-standard), border-color 160ms var(--ease-standard), color 160ms var(--ease-standard), transform 160ms var(--ease-standard); }
+/* Buttons: 34 default, 28 small, 44 large. Labels stay on one line. */
+.button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1-5); min-height: var(--height-control); max-width: 100%; padding: 0 var(--space-3); border: var(--border-control) solid var(--color-text); border-radius: var(--radius-control); background: var(--color-card); color: var(--color-text); font: var(--type-control); letter-spacing: -.005em; text-align: center; white-space: nowrap; transition: background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, transform 120ms ease-out; }
 .button:not(:disabled):active { transform: translateY(1px); }
 .button-primary { background: var(--color-action); color: var(--color-action-text); border-color: var(--color-action); }
-.button-secondary:not(:disabled):hover { background: var(--color-hover); border-color: var(--color-text); }
 .button-primary:not(:disabled):hover { background: var(--color-action-hover); border-color: var(--color-action-hover); }
-.button-quiet { background: transparent; border-color: transparent; border-inline-width: 0; padding-inline: 0; color: var(--color-text-secondary); }
-.button-quiet:not(:disabled):hover { color: var(--color-text); text-decoration: underline; text-underline-offset: 3px; }
-.button-small { min-height: 26px; padding: 2px 10px; }
+.button-secondary:not(:disabled):hover { background: var(--color-chrome); }
+.button-quiet { background: transparent; border-color: transparent; border-inline-width: 0; padding-inline: 0; color: var(--color-text); text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
+.button-quiet:not(:disabled):hover { text-decoration-thickness: 2px; }
+.button-small { min-height: var(--height-control-small); padding: 0 var(--space-2-5); }
 .button-small.button-quiet { padding-inline: 0; }
-.button-icon { min-height: 26px; width: 26px; height: 26px; padding: 0; flex: none; background: transparent; border-color: transparent; color: var(--color-text-secondary); }
+.button-large { min-height: var(--height-control-large); padding: 0 18px; font: var(--type-control-large); }
+.button-icon { min-height: var(--height-control-small); width: 28px; height: 28px; padding: 0; flex: none; background: transparent; border-color: transparent; color: var(--color-text-secondary); }
 .button-icon:not(:disabled):hover { background: var(--color-hover); color: var(--color-text); }
-.button:disabled { background: var(--color-hover); border-color: transparent; color: var(--color-text-tertiary); cursor: not-allowed; }
-.button-danger { color: var(--color-text); }
+.button[aria-busy="true"] { opacity: .7; cursor: progress; }
+.button:disabled { background: var(--color-chrome); border-color: var(--color-border-strong); color: var(--color-text-secondary); cursor: not-allowed; }
+.button-quiet:disabled, .button-icon:disabled { background: transparent; border-color: transparent; color: var(--color-text-tertiary); }
+.button-danger { color: var(--color-status-failed); }
 .action-spaced { margin-top: var(--space-3); }
-.field { min-width: 0; max-width: 100%; min-height: 32px; padding: 4px 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-card); color: var(--color-text); font: inherit; }
+/* Fields: 34 high with a 1.5px ink ring. Help and errors sit under the field. */
+.field { min-width: 0; max-width: 100%; min-height: var(--height-control); padding: var(--space-1) 11px; border: var(--border-control) solid var(--color-text); border-radius: var(--radius-control); background: var(--color-card); color: var(--color-text); font: inherit; }
 .field::placeholder { color: var(--color-text-secondary); opacity: 1; }
-input.field, select.field { height: 32px; }
-.field:disabled { background-color: var(--color-hover); border-color: transparent; color: var(--color-text-tertiary); cursor: not-allowed; }
-select.field { appearance: none; padding-right: 32px; background-image: linear-gradient(45deg, transparent 50%, var(--color-text-secondary) 50%), linear-gradient(135deg, var(--color-text-secondary) 50%, transparent 50%); background-repeat: no-repeat; background-size: 5px 5px; background-position: right 17px center, right 12px center; }
+input.field, select.field { height: var(--height-control); }
+.field[aria-invalid="true"] { border-color: var(--color-status-failed); }
+.field:disabled { background-color: var(--color-chrome); border-color: var(--color-border-strong); color: var(--color-text-secondary); cursor: not-allowed; }
+select.field { appearance: none; padding-right: 32px; --chevron: var(--color-text); background-image: linear-gradient(45deg, transparent 38%, var(--chevron) 38% 62%, transparent 62%), linear-gradient(-45deg, transparent 38%, var(--chevron) 38% 62%, transparent 62%); background-repeat: no-repeat; background-size: 5px 5px; background-position: right 17px center, right 12px center; }
+select.field:disabled { --chevron: var(--color-text-secondary); }
 @media (forced-colors: active) { select.field { appearance: auto; background-image: none; padding-right: 12px; } }
+.field-hint { margin: var(--space-1) 0 0; font: var(--type-caption); color: var(--color-text-secondary); }
+.field-error { margin: var(--space-1) 0 0; font: var(--type-caption); color: var(--color-status-failed); }
 h1[tabindex="-1"]:focus { outline: none; }

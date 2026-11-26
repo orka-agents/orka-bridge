@@ -38,6 +38,8 @@ describe('Orka ink and paper theme contract', () => {
     expect(contrast(palette['color-action-text'], palette['color-action'])).toBeGreaterThanOrEqual(4.5);
     expect(contrast(palette['color-action-text'], palette['color-action-hover'])).toBeGreaterThanOrEqual(4.5);
     expect(contrast(palette['color-terminal-text'], palette['color-terminal'])).toBeGreaterThanOrEqual(4.5);
+    // The focus ring is the running blue, so it shows against every surface a control sits on.
+    expect(palette['color-focus']).toBe(palette['color-status-running']);
   });
   it.each([0, 1])('keeps every status tint readable in palette %s', index => {
     const palette = palettes[index];
@@ -97,13 +99,17 @@ describe('Orka ink and paper theme contract', () => {
       'radius-control': 'var(--radius)',
       'radius-row': 'var(--radius)',
       'radius-card': 'var(--radius)',
+      'radius-small': '4px',
+      'height-control-small': '28px',
+      'height-control': '34px',
+      'height-control-large': '44px',
     });
     const designSystem = readFileSync('src/components/design-system.css', 'utf8');
     const shell = readFileSync('src/shell.css', 'utf8');
     const controls = readFileSync('src/components/controls.css', 'utf8');
     expect(designSystem).not.toContain('border-radius: 999px');
     expect(shell).toMatch(/\.tile-overview, \.tile-designer, \.tile-clusters\s*\{[^}]*color: var\(--color-text\);[^}]*background: var\(--color-icon-tile\)/s);
-    expect(controls).toMatch(/\.button-danger\s*\{\s*color: var\(--color-text\);/);
+    expect(controls).toMatch(/\.button-danger\s*\{\s*color: var\(--color-status-failed\);/);
     expect(css).toMatch(/\.view-switch button\[aria-pressed="true"\]\s*\{[^}]*box-shadow: inset 0 0 0 1px var\(--color-border-strong\);/);
     expect(css).not.toMatch(/\.view-switch button\[aria-pressed="true"\]\s*\{[^}]*outline:/);
     expect(css).toMatch(/input:is\(\[type='radio'\], \[type='checkbox'\]\)\s*\{\s*accent-color: var\(--color-text\);/);

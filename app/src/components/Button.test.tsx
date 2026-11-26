@@ -28,6 +28,10 @@ describe('Button', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Action' }));
     expect(click).toHaveBeenCalledTimes(1);
   });
+  it.each(['small', 'large'] as const)('adds the %s size class', size => {
+    render(<Button size={size}>Action</Button>);
+    expect(screen.getByRole('button', { name: 'Action' }).classList.contains(`button-${size}`)).toBe(true);
+  });
   it('preserves explicit form submit', async () => {
     const submit = vi.fn(event => event.preventDefault());
     render(<form onSubmit={submit}><Button type="submit">Send</Button></form>);
