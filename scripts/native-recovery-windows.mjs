@@ -1283,7 +1283,7 @@ try {
         const start = [...root.querySelectorAll('button')].find(button => button.textContent === 'Get started');
         return { text: root.innerText, primary: start?.classList.contains('button-primary'), expert: [...root.querySelectorAll('button')].some(button => button.textContent.includes('I already run Orka on a cluster')) };
       })()`);
-      if (!welcome.primary || !welcome.expert || !welcome.text.includes("Send it to your team's cluster (preview).")) throw Error('Welcome lost its primary, expert route or preview caveat: ' + JSON.stringify(welcome));
+      if (!welcome.primary || welcome.expert || !welcome.text.includes("Send it to your team's cluster (preview).")) throw Error('Welcome lost its primary or preview caveat, or kept the cluster route that moved to the next screen: ' + JSON.stringify(welcome));
     }
     if (preflight) {
       if (name !== 'local-preflight-missing') await until(() => evaluate(`document.querySelector('[aria-label="Computer requirements"]')?.getAttribute('aria-busy') === 'false'`), 'settled computer checks');
@@ -1415,7 +1415,8 @@ try {
       await writeFile(join(output, `${theme}-${size}-${name}-end.png`), Buffer.from(end.data, 'base64'));
       if (name === 'welcome') {
         await clickAction('Get started');
-        await until(() => evaluate(`document.body.innerText.includes('Choose where agents run') && !document.querySelector('.welcome-screen')`), 'Get started retains Places navigation');
+        // Someone who already runs Orka picks their cluster here: Add a cluster, or the cluster choice beside this computer.
+        await until(() => evaluate(`document.body.innerText.includes('Choose where agents run') && !document.querySelector('.welcome-screen') && [...document.querySelectorAll('button, #workspace-cluster')].some(node => (node.id === 'workspace-cluster' || node.textContent === 'Add a cluster') && node.getClientRects().length)`), 'Get started retains Places navigation and the cluster route');
       } else if (name === 'local-preflight-cluster') {
         await clickAction('Continue');
         await until(() => evaluate(`!!document.querySelector('.cluster-card')?.getClientRects().length`), 'existing cluster chooser');

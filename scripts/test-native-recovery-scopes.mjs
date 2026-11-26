@@ -179,9 +179,10 @@ assert.throws(() => checkQueued({ ...queuedState, cancel: true }, 'setup-transfe
 const welcomeGuard = source.split('\n').find(line => line.includes('if (!welcome.primary'));
 assert.ok(welcomeGuard);
 const checkWelcome = Function('welcome', welcomeGuard);
-const welcomeState = { primary: true, expert: true, text: "Send it to your team's cluster (preview)." };
+const welcomeState = { primary: true, expert: false, text: "Send it to your team's cluster (preview)." };
 assert.doesNotThrow(() => checkWelcome(welcomeState));
 assert.throws(() => checkWelcome({ ...welcomeState, primary: false }));
+assert.throws(() => checkWelcome({ ...welcomeState, expert: true }), 'the cluster route lives on the screen after Welcome');
 // Exercise the real layout gate with measurements, without pretending to render a native window.
 const layoutGate = source.slice(source.indexOf('  async function checkLayout('), source.indexOf('  // Setup-progress states:'));
 assert.ok(layoutGate.includes('sidebar tabs must stack in one column left of the page'));

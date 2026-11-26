@@ -29,7 +29,8 @@ function native(failure?: { check: string; result: string }, stage = 'discover',
 }
 async function added(useReply?: () => unknown) {
   native(undefined, 'discover', useReply); const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'I already run Orka on a cluster' }));
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
   await chooseContext(user, context.name);
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   await screen.findByRole('button', { name: 'Done' });
@@ -160,7 +161,8 @@ test.each([
   [{ check: 'clusterApi', result: 'permissionDenied' }, "Couldn't reach this cluster. Access was denied."],
 ])('discovery names network failures without replacing other recovery: %j', async (failure, copy) => {
   native(failure); const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'I already run Orka on a cluster' }));
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
   expect(screen.queryByText('Choose the context for the cluster you want to use.')).toBeNull();
   await chooseContext(user, context.name);
   expect(await within(await screen.findByRole('alert')).findByText(copy)).toBeTruthy();
@@ -171,7 +173,8 @@ test.each(['use', 'reconnect'])('network failure resolves the display context fo
   if (stage === 'reconnect') localStorage.setItem('bridge.welcomeSeen.v1', '1');
   const user = userEvent.setup(); render(<App />);
   if (stage === 'use') {
-    await user.click(await screen.findByRole('button', { name: 'I already run Orka on a cluster' }));
+    await user.click(await screen.findByRole('button', { name: 'Get started' }));
+    await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
     await chooseContext(user, context.name);
     await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   } else {
