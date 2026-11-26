@@ -422,8 +422,9 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
 // Keep journey bodies unchanged; only execution is partitioned.
 var rows: [VNRecognizedTextObservation] = []
 if scope.runsModel {
-// Exercise the four-step list with only synthetic IPC, at the actual minimum and wide sizes.
-waitForButton("Change")
+// Exercise the two-card first setup with only synthetic IPC, at the actual minimum and wide sizes. The fixture opens
+// installing, so the Workspace card's Cancel is the first control to settle.
+waitForButton("Cancel")
 for (phase, expected) in [("installing", "Downloading, 1.1 of 2.1 GB"), ("starting", "45 seconds elapsed")] {
     try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
     Thread.sleep(forTimeInterval: 0.6)
@@ -441,22 +442,24 @@ for (phase, expected) in [("installing", "Downloading, 1.1 of 2.1 GB"), ("starti
 }
 localSize(1280, 800)
 scroll(4000)
-// Default shows one Cancel (pauses setup); queueing the AI goes through its own inline Change first.
-click("Change", [])
+// The AI card is its own card beside the Workspace card, with its choices shown: Connect the AI queues Copilot
+// until the workspace is ready, and the queued card names its choice and offers its own Cancel.
 click("Connect the AI", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("connects when", -200)
-    _ = try capture("local-setup-queued-\(size)", ["Queued", "Change"])
-    require(enabledButton("Cancel queued connection") == nil, "A queued connection must not offer its own Cancel")
+    _ = try seek("Connects when the workspace is ready.", -200)
+    _ = try capture("local-setup-queued-\(size)", ["Queued", "GitHub Copilot", "Connects when the workspace is ready."])
+    require(enabledButton("Cancel queued connection") != nil && enabledButton("Connect the AI") == nil,
+            "A queued connection must offer its own Cancel instead of Connect the AI")
 }
 localSize(1280, 800); scroll(4000)
-// Changing the provider choice while queued clears the queue; restore Copilot before continuing.
-click("Change", [])
+// Cancelling the queue brings the choices back; a key can't be queued, so restore Copilot unqueued before continuing.
+click("Cancel queued connection", [])
+waitForButton("Connect the AI")
+require(enabledButton("Cancel queued connection") == nil, "Cancelling must clear the queue")
 chooseConnection("Your own API key")
-require(!nativeTextExists("Queued"), "Changing the radio choice must clear the queue")
+waitForNativeText(["Bridge can't queue a key. Enter it once the workspace is ready."])
 chooseConnection("GitHub Copilot")
-click("Change", [])
 click("Show details", [])
 _ = try capture("local-setup-starting-details", ["45 seconds elapsed", "Starting the workspace"])
 try FileManager.default.removeItem(at: setupProgress)
