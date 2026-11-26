@@ -10,6 +10,8 @@ import Example, { type DocumentAction } from './designer/Example';
 import { type RunSnapshot, runCall } from './designer/run-api';
 import FileMenu from './chrome/FileMenu';
 import ThemeButton from './chrome/ThemeButton';
+import SidebarToggle from './chrome/SidebarToggle';
+import { readSidebarCollapsed, writeSidebarCollapsed } from './chrome/sidebar';
 import WindowControls, { customTitleBar } from './chrome/WindowControls';
 import { finishGuidedFirstRun, guidedFirstRun, guidedStep } from './firstrun/guided';
 import GuidedSteps from './firstrun/GuidedSteps';
@@ -56,6 +58,8 @@ export default function App() {
   const [page, setPageState] = useState<Page>('Clusters');
   const [guided, setGuided] = useState(guidedFirstRun);
   const leaveGuided = useCallback(() => { finishGuidedFirstRun(); setGuided(false); }, []);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const toggleSidebar = useCallback(() => setSidebarCollapsed(value => { writeSidebarCollapsed(!value); return !value; }), []);
   const overviewOpenRequest = useRef(0);
   const [overviewNotice, setOverviewNotice] = useState<string>();
   const setPage = useCallback((next: Page) => { overviewOpenRequest.current++; setOverviewNotice(undefined); setPageState(next); }, []);
@@ -349,9 +353,11 @@ export default function App() {
     if (sampleSource === null) openDesigner(SAMPLE_DOCUMENT_ID);
   };
   return (
-    <div className={guided ? 'app-shell guided' : 'app-shell'}>
+    // The guided first run has no sidebar toggle, so it always shows the full sidebar.
+    <div className={guided ? 'app-shell guided' : 'app-shell'} data-sidebar={!guided && sidebarCollapsed ? 'collapsed' : undefined}>
       <header className="title-bar" data-tauri-drag-region={customTitleBar() ? 'deep' : undefined}>
         <div className="title-bar-start">
+          {!guided && <SidebarToggle collapsed={sidebarCollapsed} onToggle={toggleSidebar} />}
           <span className="brand"><img src={mark} width="22" height="22" alt="Orka" /><b>Bridge</b></span>
           <FileMenu />
         </div>
@@ -362,7 +368,7 @@ export default function App() {
           <WindowControls />
         </div>
       </header>
-      <nav className="page-nav" aria-label="Main">
+      <nav id="page-nav" className="page-nav" aria-label="Main">
         {navGroups.map(group => <div key={group.pages[0]} className="nav-group" role={group.label ? 'group' : undefined} aria-labelledby={group.label ? `nav-group-${group.label}` : undefined}>
           {group.label && <p className="nav-group-label" id={`nav-group-${group.label}`}>{group.label}</p>}
           {group.pages.map(name => (

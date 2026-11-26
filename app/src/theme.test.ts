@@ -63,6 +63,19 @@ describe('Orka ink and paper theme contract', () => {
     expect(compact).not.toMatch(/\.tab-copy\s*\{[^}]*display:\s*none|\.tab-copy b[^{]*\{[^}]*display:\s*none|clip-path|\.status-lines[^{]*\{[^}]*(display:\s*none|position:\s*absolute)|\.host-label[^{]*\{[^}]*(display:\s*none|position:\s*absolute)/);
     expect(controls).toMatch(/\.button-quiet\s*\{[^}]*padding-inline:\s*0/);
   });
+  it('folds the wide sidebar to a 60px rail that keeps names and status for assistive technology', () => {
+    const shell = readFileSync('src/shell.css', 'utf8');
+    expect(shell).toMatch(/\.app-shell\s*\{[^}]*--sidebar-width:\s*248px;/);
+    expect(shell).toMatch(/\.title-bar\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\);[^}]*min-height:\s*44px/);
+    // The folded rail applies to wide windows only, so the narrow rules after it keep their visible names and status bar.
+    const folded = shell.slice(shell.indexOf('@media (min-width: 821px)'), shell.indexOf('@media (max-width: 820px)'));
+    expect(folded).toMatch(/\.app-shell\[data-sidebar="collapsed"\]\s*\{\s*--sidebar-width:\s*60px;\s*\}/);
+    expect(folded).toMatch(/\.app-shell\[data-sidebar="collapsed"\] :is\(\.nav-group-label, \.tab-copy, \.host-label, \.host-chip \.chip, \.status-lines, \.checks-status\)\s*\{[^}]*position: absolute;[^}]*clip-path: inset\(50%\)/);
+    expect(folded).toMatch(/\.page-tab::after\s*\{\s*content: attr\(aria-label\)/);
+    expect(folded).not.toMatch(/display:\s*none/);
+    const compact = shell.slice(shell.indexOf('@media (max-width: 820px)'));
+    expect(compact).toMatch(/\.sidebar-toggle-control\s*\{\s*display:\s*none/);
+  });
   it('uses the system dark preference and bundled reading and code families', () => {
     expect(css).toContain('@media (prefers-color-scheme: dark)');
     expect(css).toMatch(/@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \{/);
