@@ -267,6 +267,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI")
             .replacingOccurrences(of: "APl key", with: "API key")
             .replacingOccurrences(of: "Reset Al connection", with: "Reset AI connection").contains(value)
+            || visible.contains(value.uppercased())
         // Recovery copy has apostrophes and "AI" that Vision misreads; require visible native text instead.
         let lenient = ["local-key-", "local-reset-", "local-remove-"].contains { name.hasPrefix($0) }
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || lenient && nativeChatTextIsVisible(value))
@@ -306,9 +307,12 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     }
     require(sampled, "Cannot sample native theme in sRGB")
     let pickerOpen = enabledButton("Close picker") != nil
+    // The cluster context and account pickers are popovers with a transparent backdrop (.context-picker::backdrop in
+    // clusters.css), so the page beside them stays plain paper; the tool picker still dims the page.
+    let dimmingPicker = pickerOpen && !name.hasPrefix("cluster-")
     let page: [CGFloat] = theme == "dark" ? [9, 9, 10] : [255, 255, 255]
     let actual = rgba.prefix(3).map { CGFloat($0) }
-    if pickerOpen {
+    if dimmingPicker {
         let backdrop: [CGFloat] = theme == "dark" ? [0, 0, 0] : [11, 11, 12]
         let opacity: CGFloat = theme == "dark" ? 0.55 : 0.18
         let expected = zip(page, backdrop).map { $0 * (1 - opacity) + $1 * opacity }
@@ -367,6 +371,10 @@ func enabledButton(_ label: String) -> AXUIElement? {
     }
     return buttons.count == 1 ? buttons[0] : nil
 }
+// CSS can draw authored copy in capitals (pills, section labels). Text read back from the screen, or from WebKit's
+// accessibility values, is then the authored copy or exactly its capitals; any other casing is still a mismatch.
+func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }
+func isText(_ text: String, _ expected: String) -> Bool { text == expected || text == expected.uppercased() }
 // The page starts under the title bar, which ends just above the sidebar's first button (Home).
 func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 4 } ?? window()!.1.minY }
 // A sidebar page button by name, enabled or not: an open picker makes the page behind it inert, not moved.
@@ -641,7 +649,7 @@ for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
             let strings = nativeElements().flatMap { element in
                 ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
             }
-            if strings.contains(where: { $0.contains("These checks do not change") || $0.contains("This computer has") || $0.contains("Virtualization:") || $0.contains("Bridge couldn't check") }) { checksSettled = true; break }
+            if strings.contains(where: { showsText($0, "These checks do not change") || showsText($0, "This computer has") || showsText($0, "Virtualization:") || showsText($0, "Bridge couldn't check") }) { checksSettled = true; break }
             Thread.sleep(forTimeInterval: 0.1)
         }
         require(checksSettled, "Computer requirements did not settle")
@@ -661,21 +669,21 @@ for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
         let strings = nativeElements().flatMap { element in
             ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
         }
-        require(strings.contains { $0.contains("4.3 GB") } && strings.contains { $0.contains("Step 1 of 4") },
+        require(strings.contains { showsText($0, "4.3 GB") } && strings.contains { showsText($0, "Step 1 of 4") },
                 "Local choice lost native-derived decimal GB or its step counter")
         require(enabledButton("Back to clusters") == nil && enabledButton("Choose where agents run") == nil, "Local setup must not have a header Back link")
         if ["ready", "unknown"].contains(state) {
-            require(!strings.contains { $0.hasPrefix("Virtualization:") || $0.hasPrefix("Installed memory:") || $0 == "Not checked" },
+            require(!strings.contains { $0.hasPrefix("Virtualization:") || $0.hasPrefix("Installed memory:") || isText($0, "Not checked") },
                     "Only checks that ran and failed get rows")
             require(enabledButton("Check again") == nil && enabledButton("Copy details for help") == nil, "Nonfailed checks need no recovery controls")
         }
         if ["unknown", "mixed"].contains(state) {
             let unchecked = state == "mixed" ? "virtualization" : "virtualization or memory"
-            require(strings.contains { $0.contains("Bridge couldn't check \(unchecked) yet. It checks again when the workspace starts.") },
+            require(strings.contains { showsText($0, "Bridge couldn't check \(unchecked) yet. It checks again when the workspace starts.") },
                     "Unknown checks need one quiet startup explanation")
         }
         if ["memory", "mixed"].contains(state) {
-            require(strings.contains { $0.contains("This computer has 2.1 GB of memory; Bridge needs 4.3 GB.") }, "Insufficient RAM must show its native amounts")
+            require(strings.contains { showsText($0, "This computer has 2.1 GB of memory; Bridge needs 4.3 GB.") }, "Insufficient RAM must show its native amounts")
             require(enabledButton("Check again") == nil && enabledButton("Copy details for help") == nil, "RAM failure needs only the cluster alternative")
         }
         if state == "cluster" {
@@ -1101,7 +1109,7 @@ func nativeResultTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
-            (text == expected || (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected))),
+            (isText(text, expected) || (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected))),
             let bounds = nativeBounds(element) else { return false }
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
     }
@@ -1169,7 +1177,7 @@ func nativeChatTextIsVisible(_ expected: String, aboveFooter: Bool = false) -> B
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
-            text.contains(expected), let bounds = nativeBounds(element) else { return false }
+            showsText(text, expected), let bounds = nativeBounds(element) else { return false }
         // WebKit exposes clipped or screen-reader-only text with zero/one-pixel bounds.
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
             && (!aboveFooter || bounds.maxY <= window()!.1.maxY - 32)
@@ -1192,7 +1200,7 @@ func anyButton(_ label: String) -> Bool {
 func nativeHeadings(_ expected: String) -> [AXUIElement] {
     nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXHeading"
-            && ["AXValue", "AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == expected }
+            && ["AXValue", "AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String).map { isText($0, expected) } == true }
     }
 }
 func nativeHeadingExists(_ expected: String) -> Bool { !nativeHeadings(expected).isEmpty }
@@ -1216,7 +1224,7 @@ func anchorChatHeading(_ expected: String) {
 }
 func nativeTextExists(_ expected: String) -> Bool {
     nativeElements().contains { element in
-        attribute(element, "AXRole") as? String == "AXStaticText" && (attribute(element, "AXValue") as? String)?.contains(expected) == true
+        attribute(element, "AXRole") as? String == "AXStaticText" && (attribute(element, "AXValue") as? String).map { showsText($0, expected) } == true
     }
 }
 func waitForNativeText(_ any: [String]) {
@@ -1252,7 +1260,7 @@ func resetCapture(_ state: String, _ expected: [String], anchor: String) throws 
                 let probe = try capture("local-probe", [])
                 let text = probe.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
                 // Copy notices and disclosure text can also wrap below the last action.
-                if expected.allSatisfy({ text.contains($0) || nativeChatTextIsVisible($0, aboveFooter: true) }) { contentVisible = true; break }
+                if expected.allSatisfy({ showsText(text, $0) || nativeChatTextIsVisible($0, aboveFooter: true) }) { contentVisible = true; break }
             }
             scroll(-200)
         }
@@ -1549,8 +1557,8 @@ func requireSingleChatCopy() {
     let strings = nativeElements().flatMap { element in
         ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
     }
-    require(strings.contains(where: { $0.contains("Chat on this computer. Chat doesn't change test results.") }), "Chat subtitle missing from the agent heading")
-    require(!strings.contains(where: { $0.contains("Conversation 1") }), "A single Chat version must not be numbered, including its accessible label")
+    require(strings.contains(where: { showsText($0, "Chat on this computer. Chat doesn't change test results.") }), "Chat subtitle missing from the agent heading")
+    require(!strings.contains(where: { showsText($0, "Conversation 1") }), "A single Chat version must not be numbered, including its accessible label")
 }
 func requireChatComposerVisible() {
     let fields = nativeElements().filter { element in

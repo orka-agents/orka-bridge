@@ -240,9 +240,28 @@ func pageGutter(y: CGFloat? = nil) -> CGPoint {
     let page = bodyBounds()
     return CGPoint(x: page.minX + 8, y: y ?? page.minY + 12)
 }
+// CSS can draw authored copy in capitals (pills, section labels). Text read back from the screen, or from WebKit's
+// accessibility values, is then the authored copy or exactly its capitals; any other casing is still a mismatch.
+func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }
+func isText(_ text: String, _ expected: String) -> Bool { text == expected || text == expected.uppercased() }
+// An open popover (role=dialog in the top layer) is drawn over the sidebar and the page alike, so a control inside
+// one is visible anywhere within that dialog's own bounds in the window, not only inside the page panel.
+func popoverBounds(_ element: AXUIElement) -> CGRect? {
+    var node = element
+    for _ in 0..<16 {
+        guard let parent = attribute(node, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { return nil }
+        node = parent as! AXUIElement
+        if ["AXApplicationDialog", "AXDialog"].contains(attribute(node, "AXSubrole") as? String ?? "") {
+            return nativeBounds(node).map { $0.intersection(window()!.1) }
+        }
+    }
+    return nil
+}
 func visibleButtons(_ label: String) -> [CGRect] {
-    nativeButtons(label).filter { attribute($0, "AXEnabled") as? Bool == true }
-        .compactMap { nativeBounds($0) }.filter { bodyBounds().contains($0) }
+    nativeButtons(label).filter { attribute($0, "AXEnabled") as? Bool == true }.compactMap { element -> CGRect? in
+        guard let bounds = nativeBounds(element) else { return nil }
+        return (popoverBounds(element) ?? bodyBounds()).contains(bounds) ? bounds : nil
+    }
 }
 func setOverviewExpanded(_ title: String, _ expanded: Bool) {
     let label = "Show places for \(title)"
@@ -286,7 +305,7 @@ func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bo
                 values += nativeElements(element).dropFirst().filter { attribute($0, "AXRole") as? String == "AXStaticText" }
                     .compactMap { attribute($0, "AXValue") as? String }
             }
-            if values.contains(where: { (heading || exact) ? $0 == expected : $0.contains(expected) }),
+            if values.contains(where: { (heading || exact) ? isText($0, expected) : showsText($0, expected) }),
                 let bounds = nativeBounds(element), (!visibleOnly || body.contains(bounds)) { matches.append(bounds) }
         }
         guard !heading, role == "AXGroup",
@@ -296,7 +315,7 @@ func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bo
         var text = ""
         var line: CGRect?
         func finishLine() {
-            if let bounds = line, (exact ? text == expected : text.contains(expected)) { matches.append(bounds) }
+            if let bounds = line, (exact ? isText(text, expected) : showsText(text, expected)) { matches.append(bounds) }
             text = ""; line = nil
         }
         for child in children {
@@ -410,12 +429,11 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         return true
     }
     require(sampled, "Cannot sample screenshot in sRGB")
-    var expected: [CGFloat] = theme == "dark" ? [9, 9, 10] : [255, 255, 255]
+    let expected: [CGFloat] = theme == "dark" ? [9, 9, 10] : [255, 255, 255]
     if name.hasPrefix("cluster-picker-open") || name == "cluster-reload-options" {
+        // The context picker is a popover with a transparent backdrop (.context-picker::backdrop in clusters.css):
+        // it no longer dims the page, so the page beside it is plain paper in both themes.
         require(visibleButtons("Close picker").count == 1, "Context picker must be visibly open")
-        // The themed backdrop composites over paper; the theme check still applies.
-        expected = theme == "dark" ? expected.map { $0 * 0.45 }
-            : zip(expected, [CGFloat](repeating: 11, count: 3)).map { $0 * 0.82 + $1 * 0.18 }
     }
     let actual = rgba.prefix(3).map { CGFloat($0) }
     require(zip(actual, expected).allSatisfy { abs($0 - $1) < 8 },
@@ -454,7 +472,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name == "before-settings" || name == "designer-settings" {
         // These captures intentionally scroll the page heading out of view.
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(name == "before-settings" ? text.contains("More settings") : text.contains("Personality") && text.contains("Description"),
+        require(name == "before-settings" ? showsText(text, "More settings") : showsText(text, "Personality") && showsText(text, "Description"),
                 "Designer settings section is not visible: \(text)")
         print("PASS \(name): native Designer settings section observed")
         return observations
@@ -462,11 +480,11 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name.hasPrefix("cluster-reload") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         if name == "cluster-reload-failed" {
-            require(text.contains("kubeconfig could not be read") && text.contains("Copy details"), "Reload failure recovery missing: \(text)")
+            require(showsText(text, "kubeconfig could not be read") && showsText(text, "Copy details"), "Reload failure recovery missing: \(text)")
         } else if name == "cluster-reload-options" {
-            require(text.contains("fixture-reloaded"), "Corrected kubeconfig context not reread: \(text)")
+            require(showsText(text, "fixture-reloaded"), "Corrected kubeconfig context not reread: \(text)")
         } else {
-            require(!text.contains("Access confirmed") && !text.contains("Cluster found"), "Reload retained stale selection: \(text)")
+            require(!showsText(text, "Access confirmed") && !showsText(text, "Cluster found"), "Reload retained stale selection: \(text)")
         }
         print("PASS \(name): offline native reload, no real credentials")
         return observations
@@ -474,11 +492,11 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name == "cluster-conditional" || name == "cluster-denied" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can split the camel-case label even though the native field is present.
-        let accountName = text.contains("ServiceAccount name") || text.contains("Service Account name")
+        let accountName = showsText(text, "ServiceAccount name") || showsText(text, "Service Account name")
         if name == "cluster-conditional" {
-            require(accountName && text.contains("cannot list ServiceAccounts in agents") && text.contains("cluster administrator"), "Forbidden-list name fallback missing: \(text)")
+            require(accountName && showsText(text, "cannot list ServiceAccounts in agents") && showsText(text, "cluster administrator"), "Forbidden-list name fallback missing: \(text)")
         } else {
-            require(text.contains("account and namespace") && text.contains("Access was denied") && !accountName, "Denial incorrectly offered identity substitution: \(text)")
+            require(showsText(text, "account and namespace") && showsText(text, "Access was denied") && !accountName, "Denial incorrectly offered identity substitution: \(text)")
             guard let explanation = nativeTextBounds("Access was denied").first,
                 let retry = nativeButtons("Check again").compactMap({ nativeBounds($0) }).first else {
                 fail("Access error or its retry action is missing")
@@ -497,21 +515,21 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name == "send-history-restarted" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can misread small dark badges; exact visible AX text proves the same property.
-        let savedPass = text.contains("Saved tests: pass") || nativeTextIsVisible("Saved tests: pass")
-        let savedUnknown = text.contains("Saved tests: unknown") || nativeTextIsVisible("Saved tests: unknown")
-        require(text.contains("Past Sends") && savedPass && savedUnknown, "Newest saved results missing after restart: \(text)")
-        require(text.contains("bridge-run-") && text.contains("fixture-secondary"), "Saved destination or planned Agent missing: \(text)")
+        let savedPass = showsText(text, "Saved tests: pass") || nativeTextIsVisible("Saved tests: pass")
+        let savedUnknown = showsText(text, "Saved tests: unknown") || nativeTextIsVisible("Saved tests: unknown")
+        require(showsText(text, "Past Sends") && savedPass && savedUnknown, "Newest saved results missing after restart: \(text)")
+        require(showsText(text, "bridge-run-") && showsText(text, "fixture-secondary"), "Saved destination or planned Agent missing: \(text)")
         print("PASS send-history-restarted: saved summaries after app restart; no new Send")
         return observations
     }
     if name == "send-history-passed" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Saved tests: pass"), "Earlier saved pass missing: \(text)")
+        require(showsText(text, "Saved tests: pass"), "Earlier saved pass missing: \(text)")
         return observations
     }
     if name == "send-history-answer" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Saved on this computer") && text.contains("Fixture answer:"), "Offline saved answer missing after restart: \(text)")
+        require(showsText(text, "Saved on this computer") && showsText(text, "Fixture answer:"), "Offline saved answer missing after restart: \(text)")
         print("PASS send-history-answer: durable answer opened offline after restart, no cluster access restored")
         return observations
     }
@@ -540,7 +558,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     }
     if name.hasPrefix("cluster-access") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Access confirmed") && text.contains("Open your agent") && !nativeButtons("Done").isEmpty,
+        require(showsText(text, "Access confirmed") && showsText(text, "Open your agent") && !nativeButtons("Done").isEmpty,
                 "Fixture access must finish with Done and an optional agent handoff: \(text)")
         return observations
     }
@@ -548,9 +566,9 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // The image is folded into Details until the user opens it.
         if name == "cluster-card-details" {
-            require(text.contains("orka:fixture"), "Fixture Orka image is not visible in Details: \(text)")
+            require(showsText(text, "orka:fixture"), "Fixture Orka image is not visible in Details: \(text)")
         } else {
-            require(text.contains("Cluster found") && !text.contains("Access confirmed"), "Fixture Orka not visible: \(text)")
+            require(showsText(text, "Cluster found") && !showsText(text, "Access confirmed"), "Fixture Orka not visible: \(text)")
         }
         print("PASS \(name): native discovery card; no Use or Send")
         return observations
@@ -558,7 +576,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name.hasPrefix("cluster-connect-known") {
         require(nativeTextIsVisible("Cluster found") && !nativeButtons("Use this cluster").isEmpty,
                 "Remembered Connect did not discover its known context without choosing again")
-        require(!nativeStrings().contains { $0.contains("choose its context to check it again") },
+        require(!nativeStrings().contains { showsText($0, "choose its context to check it again") },
                 "Remembered Connect still asks for its context")
         return observations
     }
@@ -582,7 +600,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         let blank = pickers.count == 1 && observations.contains {
             $0.topCandidates(1).first?.string.contains("Choose a context") == true && pickers[0].contains(centre($0))
         }
-        let checks = ["back": text.contains("Back to clusters"), "no discovery": !text.contains("Cluster found"),
+        let checks = ["back": showsText(text, "Back to clusters"), "no discovery": !showsText(text, "Cluster found"),
             "no body confirmation": !bodyConfirmed, "no open": nativeButtons("Open your agent").isEmpty,
             "no recheck": nativeButtons("Check access again").isEmpty, "blank picker": blank]
         require(checks.values.allSatisfy { $0 }, "Add a cluster did not open a blank Places subview: \(checks): \(text)")
@@ -592,16 +610,16 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name.hasPrefix("cluster-manage") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         let backMiss = ["Pack to clusters", "back to clusters"].contains(where: text.contains)
-        require(text.contains("Back to clusters") || backMiss && visibleButtons("Back to clusters").count == 1,
+        require(showsText(text, "Back to clusters") || backMiss && visibleButtons("Back to clusters").count == 1,
                 "Manage is not a Places subview: \(text)")
         if name == "cluster-manage-change" { // Change context only reveals the select.
-            require(text.contains("kubectl context") || nativeTextIsVisible("kubectl context"), "Change context did not reveal the context choice: \(text)")
+            require(showsText(text, "kubectl context") || nativeTextIsVisible("kubectl context"), "Change context did not reveal the context choice: \(text)")
         } else {
             require(!nativeButtons("Open your agent").isEmpty && !nativeButtons("Done").isEmpty
-                && !nativeButtons("Show details").isEmpty && nativeStrings().contains { $0 == "AI connection" }
-                && nativeStrings().contains { $0.contains("Agents on this cluster") }
-                && nativeStrings().contains { $0.contains("runtime-reader") }
-                && nativeStrings().contains { $0.contains("Checked") }
+                && !nativeButtons("Show details").isEmpty && nativeStrings().contains { isText($0, "AI connection") }
+                && nativeStrings().contains { showsText($0, "Agents on this cluster") }
+                && nativeStrings().contains { showsText($0, "runtime-reader") }
+                && nativeStrings().contains { showsText($0, "Checked") }
                 && ["Change context", "Check access again", "Reload kubeconfig", "Remove"].allSatisfy { nativeButtons($0).isEmpty },
                 "Manage lost its summary or exposed maintenance outside Show details")
         }
@@ -616,14 +634,14 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if page == "Clusters" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can read the capital I in AI as lowercase l. Match the rest of the heading.
-        let welcome = text.contains("Build an") && text.contains("does a real job") || !nativeButtons("Get started").isEmpty
-        let places = text.contains("Choose where agents run") || nativeTextIsVisible("Choose where agents run")
-        let detail = text.contains("Back to clusters") || text.contains("Where should your agents run?") || !nativeButtons("Continue").isEmpty
+        let welcome = showsText(text, "Build an") && showsText(text, "does a real job") || !nativeButtons("Get started").isEmpty
+        let places = showsText(text, "Choose where agents run") || nativeTextIsVisible("Choose where agents run")
+        let detail = showsText(text, "Back to clusters") || showsText(text, "Where should your agents run?") || !nativeButtons("Continue").isEmpty
         require(welcome || places || detail, "Places heading or subview not visible; observed: \(text)")
-        require(!text.contains("Engine diagnostics"), "Removed engine diagnostics is still visible: \(text)")
+        require(!showsText(text, "Engine diagnostics"), "Removed engine diagnostics is still visible: \(text)")
         if places && !detail {
             // Places keeps direct row actions; the local subview owns the setup choices.
-            require(!text.contains("Where should your agents run") && !text.contains("On a cluster you already have"),
+            require(!showsText(text, "Where should your agents run") && !showsText(text, "On a cluster you already have"),
                     "Setup chooser leaked onto Places: \(text)")
         }
         if name.hasPrefix("local-preflight") {
@@ -633,7 +651,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
                     ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.hasPrefix(choice) == true }
                 }, "Missing local setup choice: \(choice)")
             }
-            require(nativeStrings().contains { $0.contains("Step 1 of 4") } && nativeButtons("Continue").count == 1,
+            require(nativeStrings().contains { showsText($0, "Step 1 of 4") } && nativeButtons("Continue").count == 1,
                     "Local setup choice lost its step counter or Continue")
         }
         if !welcome {
@@ -786,7 +804,7 @@ func requirePlaceCards() {
     for expected in ["fixture-cluster", "fixture-secondary", "Checked", "In use", "Orka in"] {
         require(strings.contains { $0.contains(expected) }, "Places is missing \(expected)")
     }
-    require(!strings.contains { $0.contains("No other clusters added yet") } && nativeButtons("Use").count == 1
+    require(!strings.contains { showsText($0, "No other clusters added yet") } && nativeButtons("Use").count == 1
         && nativeButtons("Manage").count == 1 && nativeButtons("Set up").count == 1 && nativeButtons("Add a cluster").count == 1,
         "expected one Use, Manage, Set up and Add a cluster")
     print("PASS: Places shows last-check times and current selection with one action per card")
@@ -822,7 +840,7 @@ for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum",
     try capture("welcome-\(size)-end", "Clusters")
     require(visibleButtons("Get started").count == 1 && nativeTextIsVisible("About 5 minutes, mostly a download"),
             "Welcome next action and time cue must remain reachable at \(size)")
-    require(nativeStrings().contains { $0.contains("Send it to your team's cluster (preview).") }, "Welcome lost the team-cluster preview caveat")
+    require(nativeStrings().contains { showsText($0, "Send it to your team's cluster (preview).") }, "Welcome lost the team-cluster preview caveat")
     requireNoLocalWorkspace()
 }
 setContent(1280, 800)
@@ -1420,7 +1438,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         // A partial result can reflow while scrolling. Re-anchor before qualifying the frozen answer frame.
         let answer = try capturePreflight(name, "What SHA-256 checksum does")
         let text = answer.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("What SHA-256 checksum does") && text.contains("Fixture answer:"), "Question and answer are not visible together")
+        require(showsText(text, "What SHA-256 checksum does") && showsText(text, "Fixture answer:"), "Question and answer are not visible together")
     }
     func captureSendPresentation(_ name: String, actions: [String], earlier: String? = nil, destination: String? = nil) throws {
         for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
@@ -1560,7 +1578,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             && nativeTextBounds(failureReason, exact: true, root: root).contains { bodyBounds().contains($0) }
     }
     try capturePreflight("send-failed-wide", "Finds the publication date", anchor: failureReason, requiring: visibleFailure)
-    require(nativeStrings().contains { $0.contains("has-a-date") }, "Captured test title must retain its code ID")
+    require(nativeStrings().contains { showsText($0, "has-a-date") }, "Captured test title must retain its code ID")
     try resultSize(540, 640)
     try capturePreflight("send-failed-minimum", "Finds the publication date", anchor: "has-a-date", requiring: visibleFailure)
     try captureSendPresentation("send-failed", actions: ["Fix in Designer", "Run cluster tests again"])
@@ -1753,7 +1771,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(12000)
         try capture("cluster-success-\(size)", "Clusters")
         require(nativeTextBounds("fixture-secondary", heading: true).count == 1
-            && nativeTextIsVisible("Orka in") && nativeStrings().contains { $0.contains("In use") },
+            && nativeTextIsVisible("Orka in") && nativeStrings().contains { showsText($0, "In use") },
             "Connected cluster must show its named heading, Orka location and header selection")
         require(["Change context", "Check access again", "Reload kubeconfig", "Remove"].allSatisfy { nativeButtons($0).isEmpty },
             "Connected maintenance must start behind Show details")
@@ -1913,9 +1931,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Remembered metadata survives, but neither selection nor live access does.
     let remembered = nativeButtons("Use").count
     require(remembered == 4 && nativeButtons("Manage").isEmpty
-        && nativeStrings().contains { $0.contains("fixture-cluster") }
-        && nativeStrings().contains { $0.contains("fixture-secondary") }
-        && nativeStrings().contains { $0.contains("Checked") }
+        && nativeStrings().contains { showsText($0, "fixture-cluster") }
+        && nativeStrings().contains { showsText($0, "fixture-secondary") }
+        && nativeStrings().contains { showsText($0, "Checked") }
         && !nativeTextIsVisible("No other clusters added yet"),
         "Restart must retain four checked cluster identities, disconnected")
     // Focus and pointer-click the first retained row. Fresh native discovery, not

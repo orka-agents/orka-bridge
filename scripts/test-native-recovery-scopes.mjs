@@ -418,8 +418,18 @@ assert.ok(nativeControlValue.includes('["AXButton", "AXPopUpButton"].contains') 
 const nativeOverviewHeading = model.slice(model.indexOf('func nativeOverviewHeadingIsVisible('), model.indexOf('func nativeChatTextIsVisible('));
 assert.ok(nativeOverviewHeading.includes('guard let top = enabledButton("Home").flatMap(nativeBounds).map({ $0.minY - 4 }) else { return false }') && nativeOverviewHeading.includes('bounds.minY >= top + 8') && nativeOverviewHeading.includes('bounds.maxY <= window()!.1.maxY - 32'), 'Overview heading fallback must stay inside the active page viewport and clear of fixed chrome');
 assert.ok(smoke.includes('let backMiss = ["Pack to clusters", "back to clusters"].contains(where: text.contains)') && smoke.includes('backMiss && visibleButtons("Back to clusters").count == 1'), 'Manage captures must pair observed Geist Back OCR misses with the exact visible native button');
+// CSS capitals (pills, section labels) are the only accepted variant of authored copy, in OCR and AX text alike.
+for (const [name, text] of [['native-model-macos.swift', model], ['native-smoke.swift', smoke]]) {
+  assert.ok(text.includes('func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }')
+    && text.includes('func isText(_ text: String, _ expected: String) -> Bool { text == expected || text == expected.uppercased() }'), `${name}: rendered text may differ from authored copy only by CSS capitals`);
+}
+assert.ok(!/(?<![\w.])text\.contains\("/.test(smoke), 'native smoke OCR checks must go through showsText');
+// The cluster context and account pickers draw no backdrop; the tool picker still dims the page.
+assert.ok(model.includes('let dimmingPicker = pickerOpen && !name.hasPrefix("cluster-")') && model.includes('if dimmingPicker {'), 'model walk must expect the backdrop only for the dimming tool picker');
+assert.ok(smoke.includes('require(visibleButtons("Close picker").count == 1, "Context picker must be visibly open")') && !smoke.includes('expected.map { $0 * 0.45 }'), 'smoke walk must see the open context picker over plain paper');
+assert.ok(smoke.includes('return (popoverBounds(element) ?? bodyBounds()).contains(bounds) ? bounds : nil') && smoke.includes('["AXApplicationDialog", "AXDialog"]'), 'controls in an open popover are visible within the popover, other controls only within the page');
 const nativeUpgradeVisibility = model.slice(model.indexOf('func nativeChatTextIsVisible('), model.indexOf('func waitForButton('));
-assert.ok(nativeUpgradeVisibility.includes('text.contains(expected)') && nativeUpgradeVisibility.includes('"AXStaticText"'), 'upgrade fallback must use actual expected native text, not OCR spelling aliases');
+assert.ok(nativeUpgradeVisibility.includes('showsText(text, expected)') && nativeUpgradeVisibility.includes('"AXStaticText"'), 'upgrade fallback must use actual expected native text, not OCR spelling aliases');
 assert.ok(nativeUpgradeVisibility.includes('bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)') && nativeUpgradeVisibility.includes('bounds.maxY <= window()!.1.maxY - 32'), 'hidden, clipped, off-window and footer text cannot satisfy upgrade fallback');
 assert.equal(captureManifest.model.length, 208);
 assert.equal(captureManifest['destinations-workspace'].length, 121);
