@@ -1668,7 +1668,9 @@ _ = try seek("Waiting for your agent to start…", -100)
 waitForChatText("Waiting for your agent to start…")
 for (phase, expected) in [("pending", "Waiting for your agent to start…"), ("running", "Waiting for your agent’s reply…"), ("session-null", "Waiting for the task to finish saving…"), ("session-answer", "The checksum is ALPHA.")] {
     try phase.write(to: chatPhase, atomically: true, encoding: .utf8)
-    waitForChatText(expected)
+    // The previous phase's frame can leave the window small and scrolled; the next state may render outside it.
+    // Wait for it to exist here; each size below seeks it into view and requires it visible before capturing.
+    waitForNativeText([expected])
     for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
         localSize(CGFloat(width), CGFloat(height)); scroll(4000)
         _ = try seek(expected, -100)
@@ -1680,7 +1682,8 @@ for (phase, expected) in [("pending", "Waiting for your agent to start…"), ("r
     }
 }
 try "answer".write(to: chatPhase, atomically: true, encoding: .utf8)
-waitForChatText("The checksum is ALPHA.")
+waitForNativeText(["The checksum is ALPHA."])
+waitForButton("Run again") // The finished task, not the session wait that already showed this answer.
 try FileManager.default.removeItem(at: chatPhase)
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
@@ -1707,7 +1710,9 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     require(!nativeChatTextIsVisible("The checksum is ALPHA."), "Earlier tasks must stay folded until opened")
     _ = try capture("chat-long-early-\(size)", ["Earlier tasks: 1", "Read another page."])
     press("Earlier tasks: 1")
-    waitForChatText("The checksum is ALPHA.")
+    // The opened earlier task can extend below a small window; find it, then require it on screen in the frame.
+    waitForNativeText(["The checksum is ALPHA."])
+    _ = try seek("The checksum is ALPHA.", -100)
     _ = try capture("chat-long-end-\(size)", ["Earlier tasks: 1", "The checksum is ALPHA."])
     press("Earlier tasks: 1")
 }
