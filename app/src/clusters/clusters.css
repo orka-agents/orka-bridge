@@ -8,7 +8,7 @@
 .places-workspace:has(> .places-list) > .places-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-1) var(--space-4); }
 .places-workspace:has(> .places-list) > .places-heading > h1 { grid-column: 1; font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
 .places-workspace:has(> .places-list) > .places-heading > p { grid-column: 1; }
-.places-workspace:has(> .places-list) > .places-heading > button { grid-column: 2; grid-row: 1; }
+.places-workspace:has(> .places-list) > .places-heading > button { grid-column: 2; grid-row: 1; min-height: 38px; padding-inline: 14px; }
 /* A cluster's own page and Add a cluster: the title on the left, Back to clusters at the right. */
 .places-workspace:has(> .places-back) { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-4); align-items: start; }
 .places-workspace:has(> .places-back) > * { grid-column: 1 / -1; }
@@ -18,13 +18,14 @@
 .places-workspace:has(> .places-back) > .places-heading > h1 > code { font: var(--type-display-object); letter-spacing: var(--tracking-display-section); }
 
 /* The list: one row card per place on shared columns, so names, pills and actions line up. */
-/* A subgrid row's padding sits inside the parent's edge tracks, so the icon track adds the row's 16px padding. */
-.places-list { display: grid; grid-template-columns: calc(36px + var(--space-4)) minmax(0, 1fr) auto auto; gap: var(--space-3); }
+/* A subgrid row's padding sits inside the parent's edge tracks, so the icon track adds the row's 18px padding. */
+.places-list { display: grid; grid-template-columns: calc(34px + 18px) minmax(0, 1fr) auto auto; gap: var(--space-3); max-width: 760px; }
 .places-list > * { grid-column: 1 / -1; }
-.place-row { display: grid; grid-template-columns: subgrid; align-items: center; column-gap: var(--space-4); row-gap: var(--space-2); padding: var(--space-4); }
+.place-row { display: grid; grid-template-columns: subgrid; align-items: center; column-gap: var(--space-3); row-gap: var(--space-2); padding: var(--space-4) 18px; }
+.place-row > .icon-tile-row { width: 34px; height: 34px; }
 .place-summary { grid-column: 2; min-width: 0; overflow-wrap: anywhere; }
-.place-summary h2 { margin: 0; font: var(--type-card); }
-.place-summary h2 > code { font-size: inherit; font-weight: 600; }
+.place-summary h2 { margin: 0; font: 700 17px/22px var(--font-ui); letter-spacing: -.01em; }
+.place-summary h2 > code { font: 700 16px/22px var(--font-mono); letter-spacing: -.01em; }
 .place-summary p { margin: var(--space-0-5) 0 0; }
 .place-meta { font: var(--type-body); color: var(--color-text-secondary); }
 .place-meta > span + span::before { content: ' · '; color: var(--color-text-secondary); }
@@ -45,7 +46,7 @@
 .workspace-sizes dd { margin: 0; overflow-wrap: anywhere; }
 
 /* The connection card: the strong card holding the page's next action, one 520px form column inside. */
-.cluster-card { position: relative; display: grid; gap: var(--space-3); min-width: 0; width: 100%; max-width: 660px; padding: var(--space-5); border: var(--border-control) solid var(--color-text); border-radius: var(--radius-card); background: var(--color-card); }
+.cluster-card { position: relative; display: grid; gap: var(--space-3); min-width: 0; width: 100%; max-width: 660px; padding: 18px 20px; border: var(--border-control) solid var(--color-text); border-radius: var(--radius-card); background: var(--color-card); }
 .cluster-card[hidden], .workspace-option[hidden] { display: none; }
 .cluster-card > :is(label, select, p, .account-choice) { max-width: 520px; }
 .cluster-card > label { font-weight: 600; }
@@ -57,8 +58,19 @@
 .cluster-card > ul:not([class]) { margin: 0; padding-left: var(--space-5); }
 .cluster-checking { display: flex; align-items: center; gap: 8px; }
 .cluster-actions { margin-top: 0; gap: var(--space-3); }
-.context-trigger { width: 100%; justify-content: space-between; text-align: left; overflow-wrap: anywhere; font-weight: 500; }
-.context-trigger code { font-size: inherit; }
+/* The context and ServiceAccount triggers read as selects: a field edge, the value in mono and a small chevron. */
+.context-trigger { width: 100%; justify-content: space-between; padding-inline: 11px; text-align: left; overflow-wrap: anywhere; font-weight: 500; }
+.context-trigger code { font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
+.context-trigger > .context-chevron { width: 12px; height: 12px; stroke-width: 2; flex: none; }
+.context-trigger-empty:not(:disabled) { border-color: var(--color-border-strong); color: var(--color-text-secondary); }
+.context-trigger-empty:not(:disabled):hover { background: var(--color-card); }
+select.cluster-mono-field { font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
+#cluster-installation { width: min(100%, 392px); }
+#cluster-installation option { font-family: var(--font-mono); }
+.cluster-card-title { margin: 0; font: 700 17px/22px var(--font-ui); letter-spacing: -.01em; }
+.cluster-card > .cluster-notice { max-width: none; }
+.cluster-notice { display: flex; align-items: flex-start; gap: var(--space-2); }
+.cluster-notice > .status-icon { flex: none; margin-top: 1px; }
 /* "Orka in <namespace>/<service>" reads as the page's subtitle, under the cluster's name and above this card. */
 .cluster-card:has(> .cluster-result) { margin-top: calc(var(--space-2) + 18px); }
 .cluster-result { position: absolute; bottom: calc(100% + var(--space-4)); left: calc(-1 * var(--border-control)); right: 0; min-width: 0; overflow-wrap: anywhere; color: var(--color-text-secondary); }
@@ -74,12 +86,17 @@
 .cluster-card > .context-trigger ~ [role="status"]:not(.cluster-checking) { padding-top: var(--space-3); border-top: 1px solid var(--color-border); }
 /* Failures: what happened in the callout, then the next step and what is safe. */
 .cluster-failure { max-width: none; }
+.cluster-failure .alert-title { font-weight: 700; }
+.cluster-failure-only { padding: 14px var(--space-4); }
+.cluster-failure-only .alert-title { font-size: 16px; line-height: 22px; }
 .cluster-failure .failure-summary { overflow-wrap: anywhere; }
 .cluster-error-details { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
 .cluster-error-details > p { flex-basis: 100%; }
 .cluster-error-details > p.muted { margin-top: var(--space-1); }
 .cluster-remove { color: var(--color-text); }
-.cluster-card > [role="group"] { display: grid; gap: var(--space-3); padding: var(--space-3); border: var(--border-control) solid var(--color-text); border-radius: var(--radius-control); }
+.cluster-card:has(> .cluster-checks) { max-width: 640px; }
+.cluster-card > [role="group"] { display: grid; gap: var(--space-3); padding: var(--space-3); border: var(--border-editing) solid var(--color-text); border-radius: var(--radius-control); }
+.cluster-card .button-secondary.button-danger:not(:disabled) { border-color: var(--color-status-failed); }
 .cluster-card .workspace-step-actions { margin-top: 0; }
 .cluster-card > .disclosure > summary + * { margin-top: var(--space-2); }
 .cluster-card #cluster-details { display: grid; gap: var(--space-3); }
@@ -167,7 +184,8 @@
 .send-history li details { margin-top: var(--space-2); }
 .send-history .send-history-remove:not(:disabled) { color: var(--color-text); }
 @media (max-width: 820px) {
-  .places-list { grid-template-columns: calc(36px + var(--space-4)) minmax(0, 1fr) auto; }
+  .places-list { grid-template-columns: calc(34px + var(--space-4)) minmax(0, 1fr) auto; }
+  .place-row { padding: var(--space-4); }
   .place-row { align-items: start; column-gap: var(--space-3); }
   .place-summary { grid-column: 2 / -1; }
   .place-row > .pill { grid-column: 2; grid-row: 2; justify-self: start; align-self: center; }

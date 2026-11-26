@@ -77,12 +77,15 @@ assert.ok(start >= 0, 'workspace presentation acceptance gate missing');
 const gate = Function(`${source.slice(start, source.indexOf('  async function captureWorkspace(', start))}; return assertWorkspacePresentation;`)();
 const probe = { heading: 'This computer', pill: 'Ready', text: 'Agents Files', buttons: [], primary: [], firstTest: 'attempted', bar: false, choices: false, runs: 0, grid: true, detailsOpen: false, width: 540, height: 640 };
 gate('ready', probe, 'compact');
-gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting', text: 'Agents Files 0:18 so far' }, 'compact');
+gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting', text: 'Agents Files 18 seconds elapsed', bar: true, buttons: ['Cancel'] }, 'compact');
 gate('stop-failed', { ...probe, pill: "Couldn't stop", text: "Agents Files The workspace didn't stop.", buttons: ['Quit Bridge'], primary: ['Quit Bridge'] }, 'compact');
 for (const mutation of [{ buttons: ['Stop'] }, { buttons: ['Start'] }, { grid: false }, { firstTest: undefined }, { text: 'Files only' }, { detailsOpen: true }]) {
   assert.throws(() => gate('ready', { ...probe, ...mutation }, 'compact'));
 }
 assert.throws(() => gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting' }, 'compact'));
+assert.throws(() => gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting', text: 'Agents Files 18 seconds elapsed', bar: true }, 'compact'));
+assert.throws(() => gate('ready', { ...probe, bar: true }, 'compact'));
+assert.throws(() => gate('ready', { ...probe, buttons: ['Cancel'] }, 'compact'));
 assert.throws(() => gate('stop-failed', { ...probe, text: "The workspace didn't stop.", buttons: ['Restart workspace'], primary: ['Restart workspace'] }, 'compact'));
 for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps1']) {
   const driver = await read(`./${name}`);

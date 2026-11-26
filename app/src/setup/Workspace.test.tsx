@@ -42,7 +42,7 @@ test('a returning ready workspace has no lifecycle action and keeps its files be
   expect(await within(card).findByText('my-agent')).toBeTruthy();
   expect(within(card).getByText('/agents')).toBeTruthy();
   expect(card.closest('.workspace-setup-grid')).toBeTruthy();
-  expect(screen.getByRole('heading', { name: 'AI', level: 2 })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Connect the AI', level: 2 })).toBeTruthy();
   await user.click(within(card).getByRole('button', { name: "What's inside" }));
   expect(within(card).getByText(/Uses about 4 GB of memory while Bridge is open. Quit Bridge to free it./)).toBeTruthy();
   expect(screen.queryByRole('radio', { name: 'On this computer' })).toBeNull();
@@ -53,7 +53,9 @@ test('reopening shows observed Starting and elapsed time without another Start c
   await open();
   const card = await screen.findByRole('region', { name: 'Workspace' });
   expect(within(card).getByText('Starting', { selector: '.pill' })).toBeTruthy();
-  expect(within(card).getByText('0:18 so far')).toBeTruthy();
+  expect(within(card).getByText('18 seconds elapsed')).toBeTruthy();
+  expect(within(card).getByRole('progressbar', { name: 'Workspace setup progress' })).toBeTruthy();
+  expect(within(card).getByRole('button', { name: 'Cancel' })).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'AI', level: 2 }).closest('.card')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^Start$/ })).toBeNull();
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
@@ -81,7 +83,7 @@ test.each(['failed', 'cancelled'] as const)('%s workspace restarts on This compu
   status = { selected: 'localVm', localVm, model: 'locked', ...(localVm === 'failed' ? { localVmError: 'retained diagnostic', workspaceFailure: { cause: 'services' as const, operation: 'start' as const, codes: [] } } : {}) };
   const user = await open();
   await user.click(await screen.findByRole('button', { name: 'Restart workspace' }));
-  expect(await screen.findByText('0:18 so far')).toBeTruthy();
+  expect(await screen.findByText('18 seconds elapsed')).toBeTruthy();
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('This computer');
   expect(localStorage.getItem('bridge.firstTest.v1')).not.toBe('pending');
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toHaveLength(1);
@@ -93,7 +95,8 @@ test('stop failure offers Quit Bridge through native cleanup and keeps a rejecte
   const user = await open();
   const card = await screen.findByRole('region', { name: 'Workspace' });
   expect(within(card).getByText("The workspace didn't stop.")).toBeTruthy();
-  expect(within(card).queryByRole('button', { name: /Restart|Try again|Start/ })).toBeNull();
+  expect(within(card).queryByRole('button', { name: /Try again|Start/ })).toBeNull();
+  expect((within(card).getByRole('button', { name: 'Restart workspace' }) as HTMLButtonElement).disabled).toBe(true);
   const quit = within(card).getByRole('button', { name: 'Quit Bridge' });
   expect(quit.classList.contains('button-primary')).toBe(true);
   await user.click(quit);
@@ -114,7 +117,10 @@ test('a returning forced stop warns about data loss and offers only Quit Bridge 
   expect(within(card).getByText('Changes that had not reached disk may be lost.')).toBeTruthy();
   expect(within(card).getByText('Quit Bridge and reopen it before trying again.')).toBeTruthy();
   expect(within(card).queryByText(/didn't stop|may still be stopping|agents and files are kept/i)).toBeNull();
-  expect(within(card).queryByRole('button', { name: /Restart|Try again|Start/ })).toBeNull();
+  expect(within(card).getByRole('heading', { name: 'The workspace was forcibly stopped' })).toBeTruthy();
+  expect(within(card).queryByRole('button', { name: /Try again|Start/ })).toBeNull();
+  expect((within(card).getByRole('button', { name: 'Restart workspace' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(within(card).getByRole('button', { name: 'Copy details for help' }).classList.contains('button-quiet')).toBe(true);
   expect(within(card).queryByText('private forced stop diagnostic')).toBeNull();
   const quit = within(card).getByRole('button', { name: 'Quit Bridge' });
   expect(quit.classList.contains('button-primary')).toBe(true);
