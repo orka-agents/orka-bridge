@@ -1767,8 +1767,13 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 
             && pixels.contains("lot & passed, derore your edle")
             && showsText(pixels, "Failed") && pixels.contains("Run tests")
             && nativeOverviewResultIsVisible("pr-summary", before: "release-notes", "1 of 2 passed, before your edit")
+        // Vision can skip a small mono pill (the draft's DRAFT was drawn but not read); accept the pill word, the first
+        // expectation, only as exact native text inside this agent's own expanded places, with every other line read.
+        let next = ["release-notes": "draft-helper", "pr-summary": "release-notes", "draft-helper": "review-helper"][agent]!
+        let pillMiss = !showsText(pixels, expected[0]) && expected.dropFirst().allSatisfy { showsText(pixels, $0) }
+            && nativeOverviewResultIsVisible(agent, before: next, expected[0])
         // Pills are drawn in CSS capitals, so the pill words may read in capitals; nothing else may differ.
-        require(expected.allSatisfy { showsText(pixels, $0) } || failedCountMiss,
+        require(expected.allSatisfy { showsText(pixels, $0) } || failedCountMiss || pillMiss,
             "Expanded Overview result must have exact OCR or paired native evidence")
         scroll(4000)
         setOverviewExpanded(agent, false)
