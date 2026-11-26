@@ -169,6 +169,9 @@ func sidebarButton(_ label: String) -> CGRect? {
             && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == label }
     }.compactMap(bounds).min { $0.minX < $1.minX }
 }
+// CSS can draw authored copy in capitals (Designer's file-name section label). Text read back from the screen, or from
+// WebKit's accessibility values, is then the authored copy or exactly its capitals; any other casing is a mismatch.
+func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }
 func capture(_ name: String, menu: Bool = false) throws {
     // The page panel starts 8pt right of the sidebar's buttons and under the title bar, which ends 4pt above
     // the sidebar's first button (Home). Its content starts 16-24pt in, so its left padding is bare page paper.
@@ -182,7 +185,7 @@ func capture(_ name: String, menu: Bool = false) throws {
         // end-of-file typing before testing its visible title in the capture.
         for attempt in 0..<10 {
             let heading = nodes(AXUIElementCreateApplication(app!.processIdentifier)).first {
-                attribute($0, "AXRole") as? String == "AXHeading" && attribute($0, "AXTitle") as? String == "web-reader.agent.md"
+                attribute($0, "AXRole") as? String == "AXHeading" && (attribute($0, "AXTitle") as? String).map { showsText($0, "web-reader.agent.md") } == true
             }.flatMap(bounds)
             if attempt > 0, let heading, heading.minY >= pageTop { break }
             let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
@@ -204,7 +207,7 @@ func capture(_ name: String, menu: Bool = false) throws {
     if menu {
         check(seen.contains("Open Bridge") && seen.contains("Quit Bridge"), "Native menu not drawn in screenshot: \(seen)")
     } else {
-        check(seen.contains("web-reader.agent.md"), "Reopened window lost File editor view: \(seen)")
+        check(showsText(seen, "web-reader.agent.md"), "Reopened window lost File editor view: \(seen)")
         // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
         guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
