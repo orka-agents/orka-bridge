@@ -96,8 +96,8 @@ assert.match(source, /if \(runCore\) for \(const name of \['designer-connected'/
 const sendGate = source.slice(source.indexOf('  function assertSendPresentation('), source.indexOf('  async function captureSendScene('));
 assert.ok(sendGate.includes('Unsupported cancellation'), 'Send capture acceptance gate is missing');
 const checkSend = Function(`${sendGate}; return assertSendPresentation;`)();
-const sendProbe = { header: [{ label: 'Run cluster tests again', primary: false }, { label: 'Fix in Designer', primary: true }],
-  buttons: ['Run cluster tests again', 'Fix in Designer'], title: 'Captured checksum from the page', id: 'page-checksum',
+const sendProbe = { header: [{ label: 'Run cluster tests again', primary: false }, { label: 'Fix in Designer', primary: true }, { label: 'See in Overview', primary: false }],
+  buttons: ['Run cluster tests again', 'Fix in Designer', 'See in Overview'], title: 'Captured checksum from the page', id: 'page-checksum',
   heading: 'To fixture-selected', summary: 'web-reader with 1 test', checks: 'Ready to send: 1 check passed Show checks', checksOpen: false,
   inlineChecks: [], changeDisabled: false, text: 'fixture-captured', detailsOpen: false, extras: [], width: 540, scrollWidth: 540 };
 checkSend('send-failed', sendProbe, false);

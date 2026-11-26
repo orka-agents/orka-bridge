@@ -555,9 +555,10 @@ try {
   }
   function assertSendPresentation(name, probe, details) {
     const labels = { 'send-ready': ['Send and run tests'], 'send-blocked': ['Check again'], 'send-sending': ['Cancel tests'],
-      'send-passed': ['Run cluster tests again', 'See in Overview'], 'send-failed': ['Run cluster tests again', 'Fix in Designer'],
+      'send-passed': ['Run cluster tests again', 'See in Overview'], 'send-failed': ['Run cluster tests again', 'Fix in Designer', 'See in Overview'],
       'send-unsupported': ['Check cluster status'], 'send-earlier-target': ['Send and run tests', 'See in Overview'] }[name];
-    // Rerunning leads every result; a passed result has no primary, and a failed one makes Fix in Designer primary.
+    // Rerunning leads every result; a passed result has no primary, and a failed one makes Fix in Designer primary,
+    // followed by See in Overview.
     const primaryAt = { 'send-sending': -1, 'send-passed': -1, 'send-failed': 1 }[name] ?? 0;
     if (probe.header.map(button => button.label).join('|') !== labels.join('|')
         || probe.header.some((button, index) => button.primary !== (index === primaryAt))) throw Error('Wrong Send header actions: ' + JSON.stringify(probe));
