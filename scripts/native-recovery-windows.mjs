@@ -234,7 +234,7 @@ try {
         theme: { page: getComputedStyle(document.body).backgroundColor, ink: getComputedStyle(document.body).color },
         hostTone: document.querySelector('.host-chip .live-dot')?.className,
         overview: document.querySelector('#tab-status-Overview')?.textContent,
-        forms: shown('.cluster-card > :not(.cluster-actions):not([role="group"]):not(.cluster-card-title):not(.cluster-notice), .local-preflight > .card').map(node => ({ ...rect(node), limit: node.matches('.local-preflight > .card') ? 554 : 520 })),
+        forms: shown('.cluster-card > :is(label, select, p, .account-choice):not(.cluster-notice), .local-preflight > .card').map(node => ({ ...rect(node), limit: node.matches('.local-preflight > .card') ? 554 : 520 })),
         rows: shown('.place-row').map(row => ({ name: rect(row.querySelector('.place-summary')), pill: rect(row.querySelector(':scope > .pill')), action: rect(row.querySelector(':scope > button')), row: rect(row) })),
         checks: shown('.cluster-checks li').map(row => ({ row: rect(row), card: rect(row.closest('.cluster-card')) })),
         setup: (() => { const root = shown('.workspace-setup-grid')[0]; if (!root) return null; const get = selector => rect(root.querySelector(selector)); return { progress: get('.setup-progress'), model: get('.setup-model-slot:not(:empty)'), meet: get('.workspace-meet') }; })(),
@@ -286,8 +286,9 @@ try {
     if (['ai-reset-mismatch', 'ai-removal-retry'].includes(name) && !layout.hostTone?.split(' ').includes('ready')) fail('AI failure changed the ready workspace host tone');
     if (name === 'setup-failed' && !layout.hostTone?.split(' ').includes('bad')) fail('workspace failure lost its failed host tone');
     // Preflight card includes its 16px padding and 1px border on both sides.
-    // The card's title and its notices span the card by design (clusters.css: .cluster-notice { max-width: none }); only
-    // its labels, fields and messages keep the 520px form measure.
+    // The card's labels, fields, messages and account choice keep the 520px form measure (clusters.css:
+    // .cluster-card > :is(label, select, p, .account-choice)); its title, headings, check lists, Details rows, notices
+    // (.cluster-notice { max-width: none }) and failure alert span the card by design.
     if (layout.forms.some(rect => rect.width > rect.limit + 2)) fail('form exceeds its content width');
     for (const { row, card } of layout.checks) {
       if (row.x < card.x + 16 || row.right > card.right - 16) fail('check border escapes card padding');
