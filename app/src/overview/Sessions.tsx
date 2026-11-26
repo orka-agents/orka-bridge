@@ -3,7 +3,7 @@ import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
 import { RelativeTime } from '../components/RelativeTime';
 import type { Places } from './api';
-import { placeLabels, withAccess } from './model';
+import { placeLabels, settle, withAccess } from './model';
 import { merge, type PlaceSessions, readSessions, readTranscript, roleLabel, type Row, type Sessions, type Transcript } from './sessions-api';
 
 /** An expanded conversation, read again whenever its place is read again. A new connection remounts it (see the row key). */
@@ -93,6 +93,10 @@ export function SessionList({ active, places, revision, onCheck }: { active: boo
     if (!active) queued.current = false;
   }, [active, places, revision, start]);
   useEffect(() => () => { request.current++; queued.current = false; readFor.current = undefined; }, []);
+  // A refusal, revocation or new connection from any places read stands until this section's own read succeeds.
+  useEffect(() => {
+    if (places) setSessions(previous => { if (!previous) return previous; const next = settle(previous.places, places.places, { unsupported: 0 }); return next === previous.places ? previous : { ...previous, places: next }; });
+  }, [places]);
   const labels = placeLabels(places?.places ?? []);
   const read = withAccess(sessions?.places ?? [], places?.places ?? [], { unsupported: 0 }).filter(p => labels.has(p.key));
   // A place counts once it has been connected: a failed read keeps its connection and isn't asked to connect.

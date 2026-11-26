@@ -162,6 +162,36 @@ test('a places poll that reports lost access or a new connection drops cached co
   expect(calls.filter(c => c[0] === 'overview_sessions')).toHaveLength(1);
 });
 
+test('an unreachable place on the same connection keeps its conversations but says so and offers Check conversations again', async () => {
+  ipc({ places: [read('one', [entry('kept')])] });
+  const at = (over: object) => ({ ...places, places: [{ ...places.places[0], ...over }] });
+  const view = render(<SessionList onCheck={noop} active places={at({ access: 'connected', connection: 1 })} revision={rev} />);
+  expect(await screen.findAllByRole('listitem')).toHaveLength(1);
+  expect(screen.queryByRole('button', { name: 'Check conversations again' })).toBeNull();
+  view.rerender(<SessionList onCheck={noop} active places={at({ stale: true, access: 'disconnected', connection: 1 })} revision={rev} />);
+  expect(screen.getAllByRole('listitem')).toHaveLength(1);
+  expect(screen.getByText("team-one isn't connected now. Showing what Bridge last saw.")).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Check conversations again' })).toBeTruthy();
+});
+
+test('a refusal from a places poll stands through a later inventory read until conversations are read again', async () => {
+  let sessions: unknown = { places: [read('one', [entry('kept')])] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_sessions' ? sessions : null);
+  const at = (over: object) => ({ ...places, places: [{ ...places.places[0], ...over }] });
+  const view = render(<SessionList onCheck={noop} active places={at({ access: 'connected', connection: 1 })} revision={rev} />);
+  expect(await screen.findAllByRole('listitem')).toHaveLength(1);
+  view.rerender(<SessionList onCheck={noop} active places={at({ stale: true, access: 'denied', connection: 1 })} revision={rev} />);
+  expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+  view.rerender(<SessionList onCheck={noop} active places={at({ access: 'connected', connection: 1 })} revision={rev} />);
+  expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+  expect(screen.getByText(/Can't list conversations on team-one/)).toBeTruthy();
+  sessions = { places: [read('one', [entry('fresh')])] };
+  view.rerender(<SessionList onCheck={noop} active places={at({ access: 'connected', connection: 1 })} revision={next()} />);
+  expect(await screen.findAllByRole('listitem')).toHaveLength(1);
+  expect(screen.queryByText(/Can't list conversations on team-one/)).toBeNull();
+});
+
 test('under StrictMode the first read still lands', async () => {
   ipc({ places: [read('one', [entry('a')])] });
   render(<StrictMode><SessionList revision={rev} onCheck={noop} active places={places} /></StrictMode>);

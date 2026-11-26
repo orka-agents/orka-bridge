@@ -327,6 +327,39 @@ test('a new connection drops the old connection\'s runs even when its first read
   expect(screen.queryAllByRole('listitem')).toHaveLength(0);
 });
 
+test('an unreachable place on the same connection keeps its runs but says so and offers Check runs again', async () => {
+  ipc({ places: [read('one', [entry('kept')])] });
+  const at = (over: object) => ({ ...places, places: [{ ...places.places[0], ...over }] });
+  const view = render(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ access: 'connected', connection: 1 })} revision={rev} />);
+  expect(await items()).toHaveLength(1);
+  expect(screen.queryByRole('button', { name: 'Check runs again' })).toBeNull();
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ stale: true, access: 'disconnected', connection: 1 })} revision={rev} />);
+  expect(screen.getAllByRole('listitem')).toHaveLength(1);
+  expect(screen.getByText("team-one isn't connected now. Showing what Bridge last saw.")).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Check runs again' })).toBeTruthy();
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ access: 'connected', connection: 1 })} revision={rev} />);
+  expect(screen.queryByText(/isn't connected now/)).toBeNull();
+});
+
+test('a refusal from a places poll stands through a later inventory read until runs are read again', async () => {
+  let activity: unknown = { places: [read('one', [entry('kept')])] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_activity' ? activity : null);
+  const at = (over: object) => ({ ...places, places: [{ ...places.places[0], ...over }] });
+  const view = render(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ access: 'connected', connection: 1 })} revision={rev} />);
+  expect(await items()).toHaveLength(1);
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ stale: true, access: 'denied', connection: 1 })} revision={rev} />);
+  expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+  // The inventory recovers on the same connection, but Tasks have not been read since the refusal.
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ access: 'connected', connection: 1 })} revision={rev} />);
+  expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+  expect(screen.getByText(/Can't list runs on team-one/)).toBeTruthy();
+  activity = { places: [read('one', [entry('fresh')])] };
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ access: 'connected', connection: 1 })} revision={next()} />);
+  expect(await items()).toHaveLength(1);
+  expect(screen.queryByText(/Can't list runs on team-one/)).toBeNull();
+});
+
 test('an expanded run rereads its tool calls when its place is read again, and a partial empty read says so', async () => {
   let activity: unknown = { places: [read('one', [entry('run-1', { phase: 'running' })])] };
   let tools: unknown = { state: 'complete', calls: [] };

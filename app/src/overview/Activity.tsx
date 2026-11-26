@@ -5,7 +5,7 @@ import { Disclosure } from '../components/Disclosure';
 import { RelativeTime } from '../components/RelativeTime';
 import { type Activity, type Filter, latest, merge, phaseView, type PlaceActivity, readActivity, readToolCalls, type Row, type ToolCalls } from './activity-api';
 import type { Places } from './api';
-import { placeLabels, withAccess } from './model';
+import { placeLabels, settle, withAccess } from './model';
 
 const filters: { id: Filter; label: string }[] = [{ id: 'all', label: 'All' }, { id: 'failed', label: 'Failed' }, { id: 'active', label: 'In progress' }];
 const emptyFilter: Record<Filter, string> = { all: 'No runs yet on connected clusters.', failed: 'No failed runs among the latest runs.', active: 'Nothing is running or waiting.' };
@@ -94,6 +94,10 @@ export function RecentActivity({ active, places, revision, onShowAgent, onCheck 
     if (!active) queued.current = false;
   }, [active, places, revision, start]);
   useEffect(() => () => { request.current++; queued.current = false; readFor.current = undefined; }, []);
+  // A refusal, revocation or new connection from any places read stands until this section's own read succeeds.
+  useEffect(() => {
+    if (places) setActivity(previous => { if (!previous) return previous; const next = settle(previous.places, places.places); return next === previous.places ? previous : { ...previous, places: next }; });
+  }, [places]);
   const labels = placeLabels(places?.places ?? []);
   const known = new Set(places?.places.flatMap(p => p.agents.map(a => `${p.key}/${a.uid}`)) ?? []);
   const read = withAccess(activity?.places ?? [], places?.places ?? []).filter(p => labels.has(p.key));
