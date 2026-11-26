@@ -67,6 +67,11 @@ test('places require coherent scoped identity and complete summary schema', asyn
   expect(isPlaces({ ...valid, places: [{ ...place, agents: [{ ...agent, namespace: 'elsewhere' }] }] })).toBe(false);
   expect(isPlaces({ ...valid, places: [{ ...place, agents: [{ ...agent, tools: [1] }] }] })).toBe(false);
   expect(isPlaces({ ...valid, places: [place, place] })).toBe(false);
+  expect(isPlaces({ ...valid, places: [{ ...place, access: 'denied', connection: 3 }] })).toBe(true);
+  expect(isPlaces({ ...valid, places: [{ ...place, access: 'connected', connection: null }] })).toBe(true);
+  expect(isPlaces({ ...valid, places: [{ ...place, access: 'paused' }] })).toBe(false);
+  expect(isPlaces({ ...valid, places: [{ ...place, connection: -1 }] })).toBe(false);
+  expect(isPlaces({ ...valid, places: [{ ...place, connection: '3' }] })).toBe(false);
   expect(isPlaces({ ...valid, unobserved: [{ agentUid: null, verdict: 'passed' }] })).toBe(false);
   vi.stubGlobal('isTauri', true); mockIPC((command, args) => { expect(command).toBe('overview_places'); expect(args).toEqual({}); return valid; });
   expect(await readPlaces()).toEqual(valid);
