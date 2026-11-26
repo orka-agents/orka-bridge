@@ -5,7 +5,7 @@ import { Disclosure } from '../components/Disclosure';
 import { RelativeTime } from '../components/RelativeTime';
 import { type Activity, type Filter, latest, merge, phaseView, type PlaceActivity, readActivity, readToolCalls, type Row, type ToolCalls } from './activity-api';
 import type { Places } from './api';
-import { placeLabels } from './model';
+import { placeLabels, withAccess } from './model';
 
 const filters: { id: Filter; label: string }[] = [{ id: 'all', label: 'All' }, { id: 'failed', label: 'Failed' }, { id: 'active', label: 'In progress' }];
 const emptyFilter: Record<Filter, string> = { all: 'No runs yet on connected clusters.', failed: 'No failed runs among the latest runs.', active: 'Nothing is running or waiting.' };
@@ -96,12 +96,14 @@ export function RecentActivity({ active, places, revision, onShowAgent, onCheck 
   useEffect(() => () => { request.current++; queued.current = false; readFor.current = undefined; }, []);
   const labels = placeLabels(places?.places ?? []);
   const known = new Set(places?.places.flatMap(p => p.agents.map(a => `${p.key}/${a.uid}`)) ?? []);
-  const read = (activity?.places ?? []).filter(p => labels.has(p.key));
+  const read = withAccess(activity?.places ?? [], places?.places ?? []).filter(p => labels.has(p.key));
   const connected = read.filter(p => p.state !== 'disconnected' || p.entries.length);
   const rows = merge(connected, filter).slice(0, 50);
-  // "No runs" needs a read that succeeded or runs Bridge already holds; the connect prompt needs no connection at all.
-  // Otherwise the place notes say what failed and the section offers Check runs again.
-  const answered = read.some(p => p.entries.length > 0 || p.state === 'complete' || p.state === 'partial');
+  // A connected place whose last read failed reports `disconnected` with its connection kept, and can be read again.
+  const unsettled = failed || read.some(p => p.state === 'unavailable' || p.state === 'denied' || p.state === 'revoked' || p.state === 'disconnected' && p.connection !== null);
+  // "No runs" needs every connected place read, and a read that succeeded or runs Bridge already holds; the connect
+  // prompt needs no connection at all. Otherwise the place notes say what failed and the section offers Check runs again.
+  const answered = !unsettled && read.some(p => p.entries.length > 0 || p.state === 'complete' || p.state === 'partial');
   const linked = read.some(p => p.connection !== null);
   const note = (p: PlaceActivity) => {
     const name = labels.get(p.key);
@@ -112,7 +114,6 @@ export function RecentActivity({ active, places, revision, onShowAgent, onCheck 
     if (p.state === 'disconnected' && p.entries.length) return `${name} isn't connected now. Showing what Bridge last saw.`;
   };
   const notes = read.map(p => [p.key, note(p)] as const).filter((n): n is readonly [string, string] => !!n[1]);
-  // A disconnected place with a connection is a connected cluster whose last read failed, so it can be retried.
   const retry = failed || read.some(p => p.state === 'unavailable' || p.state === 'denied' || p.state === 'disconnected' && p.connection !== null);
   return <section className="overview-activity" aria-label="Recent activity">
     <header className="overview-activity-head">

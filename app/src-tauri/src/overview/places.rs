@@ -57,6 +57,10 @@ pub struct Place {
     pub observed_at: Option<u64>,
     pub checked_at: Option<u64>,
     pub agents: Vec<RemoteAgent>,
+    /// `connected`, `denied`, `revoked` or `disconnected`, as Activity and Sessions would see it.
+    pub access: &'static str,
+    /// The place's connection revision, as Activity and Sessions report it.
+    pub connection: Option<u64>,
     #[serde(skip)]
     identity: Identity,
 }
@@ -74,6 +78,8 @@ impl Place {
             observed_at: None,
             checked_at,
             agents: Vec::new(),
+            access: "disconnected",
+            connection: None,
             identity,
         }
     }
@@ -121,6 +127,29 @@ struct Entry {
     revoked: bool,
     /// Which confirmed connection `access` came from; a re-Use gets a new one.
     connection: Option<u64>,
+}
+impl Entry {
+    fn lost(&self) -> Option<Lost> {
+        match &self.access {
+            None if self.revoked => Some(Lost::Revoked),
+            None => Some(Lost::Disconnected),
+            Some(_) if self.view.stale && self.denied => Some(Lost::Denied),
+            Some(_) if self.view.stale => Some(Lost::Disconnected),
+            Some(_) => None,
+        }
+    }
+    /// The view with its access state, so a Send poll also reports lost access and new connections.
+    fn place(&self) -> Place {
+        let mut view = self.view.clone();
+        view.access = match self.lost() {
+            None => "connected",
+            Some(Lost::Denied) => "denied",
+            Some(Lost::Revoked) => "revoked",
+            Some(Lost::Disconnected) => "disconnected",
+        };
+        view.connection = self.connection;
+        view
+    }
 }
 /// Why Activity has no live access to a place.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,7 +239,7 @@ impl Inventory {
             .unwrap()
             .entries
             .get(key)
-            .map(|e| e.view.clone())
+            .map(Entry::place)
     }
     /// Retained access is selectable only after a successful current-session observation.
     pub(crate) fn connected_access(&self, key: &str) -> Option<Arc<RemoteAccess>> {
@@ -230,12 +259,9 @@ impl Inventory {
         let Some(entry) = state.entries.get(key) else {
             return (None, Err(Lost::Disconnected));
         };
-        let access = match &entry.access {
-            None if entry.revoked => Err(Lost::Revoked),
-            None => Err(Lost::Disconnected),
-            Some(_) if entry.view.stale && entry.denied => Err(Lost::Denied),
-            Some(_) if entry.view.stale => Err(Lost::Disconnected),
-            Some(access) => Ok(access.clone()),
+        let access = match (entry.lost(), &entry.access) {
+            (None, Some(access)) => Ok(access.clone()),
+            (lost, _) => Err(lost.unwrap_or(Lost::Disconnected)),
         };
         (entry.connection, access)
     }
@@ -290,7 +316,7 @@ impl Inventory {
             .unwrap()
             .entries
             .values()
-            .map(|e| e.view.clone())
+            .map(Entry::place)
             .collect()
     }
     pub(crate) async fn refresh(&self) -> Vec<Place> {

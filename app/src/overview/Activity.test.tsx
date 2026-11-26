@@ -213,7 +213,49 @@ test('without a successful read the section says neither "no runs" nor "connect 
   expect(screen.queryByText('Connect a cluster to see its runs here.')).toBeNull();
   activity = { places: [read('one', []), read('two', [], { state: 'unavailable', observedAt: null })] };
   view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={places} revision={next()} />);
+  expect(await screen.findByText("Couldn't read runs on team-two just now.")).toBeTruthy();
+  expect(screen.queryByText('No runs yet on connected clusters.')).toBeNull();
+  activity = { places: [read('one', []), read('two', [])] };
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={places} revision={next()} />);
   expect(await screen.findByText('No runs yet on connected clusters.')).toBeTruthy();
+});
+
+test('a refused place, or a failed reread of an empty list, never says there are no runs', async () => {
+  let activity: unknown = { places: [read('one', []), read('two', [], { state: 'denied', observedAt: null })] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_activity' ? activity : null);
+  const view = render(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={places} revision={rev} />);
+  expect(await screen.findByText(/Can't list runs on team-two/)).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'In progress' }));
+  expect(screen.queryByText('Nothing is running or waiting.')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'All' }));
+  expect(screen.queryByText('No runs yet on connected clusters.')).toBeNull();
+  activity = { places: [read('one', []), read('two', [])] };
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={places} revision={next()} />);
+  expect(await screen.findByText('No runs yet on connected clusters.')).toBeTruthy();
+  activity = null;
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={places} revision={next()} />);
+  expect(await screen.findByText(/Couldn't read recent activity just now/)).toBeTruthy();
+  expect(screen.queryByText('No runs yet on connected clusters.')).toBeNull();
+});
+
+test('a places poll that reports lost access or a new connection drops cached runs without rescanning', async () => {
+  const calls = ipc({ places: [read('one', [entry('kept')]), read('two', [entry('other')])] });
+  const at = (over: object) => ({ ...places, places: [{ ...places.places[0], ...over }, { ...places.places[1], access: 'connected' as const, connection: 1 }] });
+  const view = render(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ access: 'connected', connection: 1 })} revision={rev} />);
+  expect(await items()).toHaveLength(2);
+  // Unreachable on the same connection keeps what Bridge last read.
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ stale: true, access: 'disconnected', connection: 1 })} revision={rev} />);
+  expect(screen.getAllByRole('listitem')).toHaveLength(2);
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ stale: true, access: 'denied', connection: 1 })} revision={rev} />);
+  expect(screen.getAllByRole('listitem').map(i => i.getAttribute('aria-label'))).toEqual(['reader on team-two, Succeeded']);
+  expect(screen.getByText(/Can't list runs on team-one/)).toBeTruthy();
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ stale: true, access: 'revoked', connection: 1 })} revision={rev} />);
+  expect(screen.getByText('Connect to team-one again to see its runs.')).toBeTruthy();
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={at({ access: 'connected', connection: 2 })} revision={rev} />);
+  expect(screen.getAllByRole('listitem')).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Check runs again' })).toBeTruthy();
+  expect(calls.filter(c => c[0] === 'overview_activity')).toHaveLength(1);
 });
 
 test('leaving the tab drops a queued read', async () => {

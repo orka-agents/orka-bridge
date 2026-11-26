@@ -25,6 +25,20 @@ const absolute = (ms: number) => new Date(ms).toLocaleString();
 const sourceKey = (s: { agent: string; tests: string }) => `${s.agent}/${s.tests}`;
 const fileTitle = (f: SavedFile) => f.summary?.name || f.name;
 // Context name alone when unique, then with namespace, then with the service, so two installations never look alike.
+type CachedPlace = { key: string; state: string; observedAt: number | null; entries: unknown[]; connection: number | null };
+/** Cached Activity or Sessions rows as the latest places read allows them: a refusal, a revocation or a new
+ * connection drops a place's rows at once, even from a Send poll that doesn't rescan. Only a cluster that is
+ * unreachable on the same connection keeps what Bridge last read. `cleared` resets other per-read fields. */
+export function withAccess<T extends CachedPlace>(cached: T[], places: Place[], cleared: Partial<T> = {}): T[] {
+  return cached.map(p => {
+    const q = places.find(place => place.key === p.key);
+    if (!q) return p;
+    const lost = q.access === 'denied' || q.access === 'revoked' ? q.access : undefined;
+    const moved = q.connection !== undefined && q.connection !== p.connection;
+    if (!lost && !moved) return p;
+    return { ...p, ...cleared, state: lost ?? 'disconnected', entries: [], observedAt: null, connection: q.connection ?? p.connection };
+  });
+}
 export function placeLabels(places: Place[]) {
   const labels = new Map<string, string>();
   const clash = (key: (p: Place) => string, p: Place) => places.filter(q => key(q) === key(p)).length > 1;

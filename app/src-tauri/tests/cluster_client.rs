@@ -199,7 +199,17 @@ async fn places_snapshot_is_passive_and_selection_is_exact_and_revocable() {
     assert_eq!(reply(session.places())["places"], both["places"]);
     session.reload().await.unwrap();
     assert_eq!(reply(session.places())["selectedKey"], Value::Null);
-    assert_eq!(reply(session.places())["places"], both["places"]);
+    // Reload keeps every place but withdraws the access each one had.
+    let mut reloaded = reply(session.places())["places"].clone();
+    let mut before = both["places"].clone();
+    for place in reloaded.as_array_mut().unwrap() {
+        assert_eq!(place["access"], "revoked");
+        place["access"] = Value::Null;
+    }
+    for place in before.as_array_mut().unwrap() {
+        place["access"] = Value::Null;
+    }
+    assert_eq!(reloaded, before);
 }
 
 #[tokio::test]
@@ -608,6 +618,54 @@ async fn overview_inventory_is_get_only_and_keeps_stale_after_reload_without_rec
         calls,
         "failed re-Use revokes inventory access"
     );
+}
+
+#[tokio::test]
+async fn overview_places_report_access_and_connection_for_send_polls() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let cfg = config(&api.start(), json!({"token":"static-fixture"}));
+    let (session, _) = reading_session(cfg, &orka);
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    let first = reply(session.overview().await);
+    assert_eq!(first[0]["access"], "connected");
+    let connection = first[0]["connection"].as_u64().unwrap();
+    *orka.fail.lock().unwrap() = Some(failed(Check::Permissions, CheckResult::PermissionDenied));
+    let key = first[0]["key"].as_str().unwrap().to_owned();
+    let denied = reply(session.overview_one(&key).await);
+    assert_eq!(denied[0]["access"], "denied");
+    assert_eq!(denied[0]["connection"], connection);
+    *orka.fail.lock().unwrap() = Some(AccessOutcome::Unavailable);
+    assert_eq!(
+        reply(session.overview().await)[0]["access"],
+        "denied",
+        "a refusal stands until a read succeeds"
+    );
+    *orka.fail.lock().unwrap() = None;
+    assert_eq!(reply(session.overview().await)[0]["access"], "connected");
+    *orka.fail.lock().unwrap() = Some(AccessOutcome::Unavailable);
+    let offline = reply(session.overview().await);
+    assert_eq!(offline[0]["access"], "disconnected");
+    assert_eq!(offline[0]["connection"], connection);
+    *orka.fail.lock().unwrap() = None;
+    session.reload().await.unwrap();
+    let reloaded = reply(session.places());
+    assert_eq!(reloaded["places"][0]["access"], "revoked");
+    assert_eq!(reloaded["places"][0]["connection"], connection);
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    let again = reply(session.overview().await);
+    assert_eq!(again[0]["access"], "connected");
+    assert_ne!(again[0]["connection"], connection);
 }
 
 #[tokio::test]

@@ -3,7 +3,10 @@ import { type AttemptSummary, isSummary } from '../clusters/send-api';
 import { isDocumentId, isSourceId, type SourceId } from '../designer/agent-api';
 export type RecordedAttempt = AttemptSummary & { documentId?: string | null; detailState?: 'saved' | 'legacy' | 'omitted' | 'removed' | 'unavailable'; report?: { verdict: 'passed' | 'failed'; passed: number; total: number } | null };
 export type RemoteAgent = Agent & { agentType: string | null; model: string | null; tools: string[] | null; record: RecordedAttempt | null };
-export type Place = { key: string; context: string; service: string; namespace: string; stale: boolean; observedAt: number | null; checkedAt?: number | null; agents: RemoteAgent[] };
+/** `access` and `connection` match what Activity and Sessions report for the place, so any places read, including a
+ * Send poll, shows lost access or a new connection. */
+export type PlaceAccess = 'connected' | 'denied' | 'revoked' | 'disconnected';
+export type Place = { key: string; context: string; service: string; namespace: string; stale: boolean; observedAt: number | null; checkedAt?: number | null; agents: RemoteAgent[]; access?: PlaceAccess; connection?: number | null };
 export type Places = { places: Place[]; historyState: 'complete' | 'unavailable'; unobserved: AttemptSummary[] };
 export type SavedFile = { documentId: string; name: string; draft?: boolean; state: 'readable' | 'unreadable'; source: SourceId | null; summary: { name: string | null; description: string | null; model: string; tools: string[] } | null; reason: string | null; localResult: Observation | null };
 // Identity of an Agent Bridge itself created for a local test: installation + namespace + UID, never a name.
@@ -56,7 +59,8 @@ export function isPlaces(v: unknown): v is Places {
   const keys = new Set<string>();
   return v.places.every(p => {
     if (!object(p) || !text(p.key) || keys.has(p.key) || !text(p.context) || !text(p.service) || !text(p.namespace) || typeof p.stale !== 'boolean'
-      || !(p.observedAt === null && p.stale || time(p.observedAt)) || !(p.checkedAt === undefined || p.checkedAt === null || time(p.checkedAt)) || !Array.isArray(p.agents)) return false;
+      || !(p.observedAt === null && p.stale || time(p.observedAt)) || !(p.checkedAt === undefined || p.checkedAt === null || time(p.checkedAt)) || !Array.isArray(p.agents)
+      || !(p.access === undefined || ['connected', 'denied', 'revoked', 'disconnected'].includes(String(p.access))) || !(p.connection === undefined || p.connection === null || time(p.connection))) return false;
     keys.add(p.key);
     const uids = new Set<string>();
     return p.agents.every(a => {

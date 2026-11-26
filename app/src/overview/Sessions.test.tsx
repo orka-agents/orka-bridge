@@ -145,6 +145,23 @@ test('an unreadable place on the same connection keeps what Bridge last saw', as
   expect(screen.getAllByRole('listitem')).toHaveLength(1);
 });
 
+test('a places poll that reports lost access or a new connection drops cached conversations without rescanning', async () => {
+  const calls = ipc({ places: [read('one', [entry('kept')], { unsupported: 2 }), read('two', [entry('other')])] });
+  const at = (over: object) => ({ ...places, places: [{ ...places.places[0], ...over }, { ...places.places[1], access: 'connected' as const, connection: 1 }] });
+  const view = render(<SessionList onCheck={noop} active places={at({ access: 'connected', connection: 1 })} revision={rev} />);
+  expect(await screen.findAllByRole('listitem')).toHaveLength(2);
+  view.rerender(<SessionList onCheck={noop} active places={at({ stale: true, access: 'disconnected', connection: 1 })} revision={rev} />);
+  expect(screen.getAllByRole('listitem')).toHaveLength(2);
+  view.rerender(<SessionList onCheck={noop} active places={at({ stale: true, access: 'denied', connection: 1 })} revision={rev} />);
+  expect(screen.getAllByRole('listitem')).toHaveLength(1);
+  expect(screen.getByText(/Can't list conversations on team-one/)).toBeTruthy();
+  expect(screen.queryByText(/Bridge can't open yet/)).toBeNull();
+  view.rerender(<SessionList onCheck={noop} active places={at({ access: 'connected', connection: 2 })} revision={rev} />);
+  expect(screen.getAllByRole('listitem')).toHaveLength(1);
+  expect(screen.queryByText('No conversations yet on connected clusters.')).toBeNull();
+  expect(calls.filter(c => c[0] === 'overview_sessions')).toHaveLength(1);
+});
+
 test('under StrictMode the first read still lands', async () => {
   ipc({ places: [read('one', [entry('a')])] });
   render(<StrictMode><SessionList revision={rev} onCheck={noop} active places={places} /></StrictMode>);
