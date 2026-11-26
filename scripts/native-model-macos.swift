@@ -427,15 +427,14 @@ for (phase, expected) in [("installing", "Downloading, 1.1 of 2.1 GB"), ("starti
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
         localSize(width, height)
         scroll(4000)
-        _ = try capture("local-setup-\(phase)-\(size)", ["Getting your workspace ready", "Where agents run", "Get your workspace ready", expected])
-        if phase == "installing" {
-            // Show the file-derived tool/test rows, not just the card heading at the fold.
-            scroll(-4000)
-            require(nativeChatTextIsVisible("web_fetch"), "Meet tool name must be visible")
-            _ = try capture("local-setup-meet-\(size)", ["Meet your first agent", "web-reader", "Read a web page"])
-        }
+        // Outside the guided first run, a first workspace getting ready is two cards: the Workspace card (pill, bar,
+        // elapsed or download line, Cancel) and the AI card, with no step list headings and no Meet card.
+        _ = try capture("local-setup-\(phase)-\(size)", ["This computer", "Workspace", expected])
+        require(enabledButton("Cancel") != nil, "The Workspace card must offer Cancel while \(phase)")
+        require(!["Getting your workspace ready", "Get your workspace ready", "Meet your first agent"].contains(where: nativeTextExists),
+                "Two-card first setup must not show the step list headings or Meet your first agent")
     }
-    if phase == "installing" { try setupFitCapture("download", ["Meet your first agent", "Run your first agent"], "Read its instructions") }
+    if phase == "installing" { try setupFitCapture("download", ["Workspace", expected], "Cancel") }
 }
 localSize(1280, 800)
 scroll(4000)
