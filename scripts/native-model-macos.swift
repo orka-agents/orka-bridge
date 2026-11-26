@@ -279,13 +279,16 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
             && (name.hasPrefix("chat-") || name.hasPrefix("cluster-") || name.hasPrefix("local-shell-chat-"))
             && nativeChatTextIsVisible(value)
         let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
+        // Context choices are buttons named by their mono context (WebKit exposes no text inside them), and Vision can
+        // skip a short mono line in the picker; accept the exact named choice drawn inside the window.
+        let pickerChoice = !found && name.hasPrefix("cluster-picker-") && nativeWorkspaceButtonIsVisible(value)
         let overviewControl = !found && name.hasPrefix("local-") && name.contains("overview") && nativeWorkspaceButtonIsVisible(value)
         let overviewHeading = !found && value == "web-reader"
             && (name.hasPrefix("local-overview-") || name.hasPrefix("local-controls-overview-"))
             && ["web-xeader", "WeD-reader"].contains(where: visible.contains) && nativeOverviewHeadingIsVisible(value)
         let accountValue = !found && value == "team-runner" && name.hasPrefix("cluster-account-allowed-")
             && nativeControlShowsObservedOCRValue("ServiceAccount", value, ["team- runner", "Team- Tunne t"], rows, capturedWindow)
-        require(found || nativeText || upgradeText || chatText || workspaceControl || overviewControl || overviewHeading || accountValue, "Missing \(value) in \(name): \(text)")
+        require(found || nativeText || upgradeText || chatText || workspaceControl || overviewControl || overviewHeading || pickerChoice || accountValue, "Missing \(value) in \(name): \(text)")
     }
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
         let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
