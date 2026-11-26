@@ -6,6 +6,8 @@
 .overview-filters { margin-bottom: var(--space-4); }
 .overview-filters .field { width: 220px; max-width: 100%; }
 .overview-filters .view-switch { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+/* A long place name wraps inside its button at every width, so it can never push the page sideways. */
+.overview-filters .view-switch button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .overview-filter-count { margin-left: auto; color: var(--color-text-secondary); }
 
 /* Notes: a plain ink-2 line for the AI reason, then one row in the well per place note. */
@@ -84,8 +86,4 @@
   .overview-places { margin-left: 0; }
   .overview-place-head { grid-template-columns: auto auto minmax(0, 1fr) auto; grid-template-areas: "place pill . time" "count count count action" "details details details details"; }
   .overview-place-head > span:first-child { max-width: 12rem; }
-}
-/* A cluster label (context, namespace and service when they clash) can be wider than a narrow window. */
-@media (max-width: 820px) {
-  .overview-filters .view-switch button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 }
