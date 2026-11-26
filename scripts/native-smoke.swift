@@ -233,6 +233,13 @@ func bodyBounds() -> CGRect {
     let bottom = statusBar.map { $0.minY - 8 } ?? rect.maxY - 8
     return CGRect(x: left, y: top, width: max(0, rect.maxX - left), height: max(0, bottom - top))
 }
+// A point in the page panel's bare left padding: page content starts 16-24pt in from the panel's left edge, so
+// no control, text or scrollbar is under it. Just under the title bar it is also above every fixed picker (80pt
+// down), so its colour is page paper, or paper under the picker's backdrop.
+func pageGutter(y: CGFloat? = nil) -> CGPoint {
+    let page = bodyBounds()
+    return CGPoint(x: page.minX + 8, y: y ?? page.minY + 12)
+}
 func visibleButtons(_ label: String) -> [CGRect] {
     nativeButtons(label).filter { attribute($0, "AXEnabled") as? Bool == true }
         .compactMap { nativeBounds($0) }.filter { bodyBounds().contains($0) }
@@ -385,12 +392,13 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         guard let tiff = comparison.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) else { fail("Cannot compose native comparison") }
         try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
     }
-    // Overview's scrolled evidence can paint an overlay scrollbar at the window edge.
-    let chromeInset = name == "overview" || name.hasPrefix("overview-") ? 20 : 8
+    // The window edge is now the chrome around the page panel, so sample the panel itself.
+    let frame = window()!.1, paper = pageGutter()
     // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
         let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-        let pixel = image.cropping(to: CGRect(x: CGFloat(image.width - chromeInset), y: CGFloat(image.height - 8), width: 1, height: 1)),
+        let pixel = image.cropping(to: CGRect(x: ((paper.x - frame.minX) * CGFloat(image.width) / frame.width).rounded(.down),
+            y: ((paper.y - frame.minY) * CGFloat(image.height) / frame.height).rounded(.down), width: 1, height: 1)),
         let space = CGColorSpace(name: CGColorSpace.sRGB) else { fail("Cannot decode screenshot") }
     var rgba = [UInt8](repeating: 0, count: 4)
     let sampled = rgba.withUnsafeMutableBytes { bytes in
@@ -647,9 +655,11 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         return observations
     }
     let pages = ["Your agents", "Designer", "Clusters", "web-reader"]
+    // The sidebar's page names share this band at the window's left; only the page panel holds headings.
+    let headingFrame = window()!.1, headingLeft = bodyBounds().minX
     let headings = Set(observations.compactMap { observation -> String? in
         let top = 1 - observation.boundingBox.maxY
-        guard top > 0.10 && top < 0.25,
+        guard top > 0.10 && top < 0.25, headingFrame.minX + observation.boundingBox.minX * headingFrame.width >= headingLeft,
             let text = observation.topCandidates(1).first?.string,
             pages.contains(text) else { return nil }
         return text
@@ -664,9 +674,9 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     return observations
 }
 func scrollMain(_ pixels: Int32) {
-    let rect = window()!.1
     let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)
-    scroll?.location = CGPoint(x: rect.maxX - 20, y: rect.midY)
+    // The page's own padding, not the panel's scrollbar at the window's right edge.
+    scroll?.location = pageGutter(y: window()!.1.midY)
     scroll?.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: 0.3)
 }

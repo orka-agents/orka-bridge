@@ -2,7 +2,7 @@
 param([Parameter(Mandatory)][string]$Executable, [Parameter(Mandatory)][string]$Output)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Hosted CI walk only; never run against an existing user profile' }
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing, Accessibility
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Windows.Forms, System.Drawing, Accessibility
 # Accessibility's legacy System.Runtime metadata needs the same reference-unification allowance as the .NET SDK.
 Add-Type -ReferencedAssemblies 'System.Collections.dll', ([Accessibility.IAccessible].Assembly.Location) -CompilerOptions '/nowarn:1701' @'
 using System;
@@ -117,10 +117,27 @@ function Get-UiNames($Root) {
     @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
 }
 $menuItem = [System.Windows.Automation.ControlType]::MenuItem
+# The undecorated window keeps Tauri's resize-border child window on top of its whole frame. That window's
+# region is only the border, so real clicks reach the page, but UIA's clickable-point search goes by window
+# rectangles and finds every page point covered. Then click the visible centre of the control, and only
+# after a real hit test at that point lands on the control itself.
+function Get-ClickPoint($Element) {
+    $point = [System.Windows.Point]::new()
+    if ($Element.TryGetClickablePoint([ref]$point)) { return [Drawing.Point]::new([int]$point.X, [int]$point.Y) }
+    $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $visible = [System.Windows.Rect]::Intersect($Element.Current.BoundingRectangle, [System.Windows.Rect]::new($area.X, $area.Y, $area.Width, $area.Height))
+    if ($Element.Current.IsOffscreen -or $visible.IsEmpty -or $visible.Width -lt 1 -or $visible.Height -lt 1) { throw "Native control is not on screen: $($Element.Current.Name)" }
+    $centre = [System.Windows.Point]::new($visible.X + $visible.Width / 2, $visible.Y + $visible.Height / 2)
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    for ($hit = [System.Windows.Automation.AutomationElement]::FromPoint($centre); $hit; $hit = $walker.GetParent($hit)) {
+        if ([System.Windows.Automation.Automation]::Compare($hit, $Element)) { return [Drawing.Point]::new([int]$centre.X, [int]$centre.Y) }
+    }
+    throw "Native control is covered at its visible centre: $($Element.Current.Name)"
+}
 function Press($Element) {
     $pattern = $null
     if ($Element -isnot [Drawing.Point] -and $Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { $pattern.Invoke(); return }
-    $point = if ($Element -is [Drawing.Point]) { $Element } else { $Element.GetClickablePoint() }
+    $point = if ($Element -is [Drawing.Point]) { $Element } else { Get-ClickPoint $Element }
     [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y) | Out-Null
     [NativeWalk]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
     [NativeWalk]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
@@ -133,9 +150,14 @@ function Capture([string]$Name, [bool]$Menu = $false) {
         $graphics.CopyFromScreen([int]$r.X, [int]$r.Y, 0, 0, $bitmap.Size)
         $bitmap.Save((Join-Path $script:themeOutput "$Name.png"), [Drawing.Imaging.ImageFormat]::Png)
         if (!$Menu) {
-            # The maximized frame can extend below the display; sample the visible
-            # window interior, not the themed taskbar or off-screen padding.
-            $colour = $bitmap.GetPixel($bitmap.Width - 30, [int]($bitmap.Height / 2))
+            # Sample the page panel, not the sidebar, title bar or the chrome margin around the panel. It starts
+            # 8px right of the sidebar's buttons and under the title bar, which ends 4px above the sidebar's first
+            # button (Home); its content starts 16-24px in, so this pixel in its left padding is bare page colour.
+            # It is near the top, clear of the taskbar where the maximized frame extends below the display.
+            $nav = Find-Control $script:window 'Clusters' $button
+            $homeButton = Find-Control $script:window 'Home' $button
+            if (!$nav -or !$homeButton) { throw 'Cannot locate the native sidebar beside the page' }
+            $colour = $bitmap.GetPixel([int]($nav.Current.BoundingRectangle.Right + 16 - $r.X), [int]($homeButton.Current.BoundingRectangle.Top + 8 - $r.Y))
             $expected = if ($script:theme -eq 'dark') { @(9, 9, 10) } else { @(255, 255, 255) }
             $actual = @($colour.R, $colour.G, $colour.B)
             for ($channel = 0; $channel -lt 3; $channel++) {

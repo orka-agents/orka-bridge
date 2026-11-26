@@ -94,7 +94,18 @@ for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps
     ? /theme\s*==\s*"dark"\s*\?\s*\[\s*9\s*,\s*9\s*,\s*10\s*\]\s*:\s*\[\s*255\s*,\s*255\s*,\s*255\s*\]/
     : /if\s*\(\s*\$script:theme\s*-eq\s*'dark'\s*\)\s*\{\s*@\(\s*9\s*,\s*9\s*,\s*10\s*\)\s*\}\s*else\s*\{\s*@\(\s*255\s*,\s*255\s*,\s*255\s*\)\s*\}/;
   assert.match(driver, palette, `${name}: light/dark Orka paper branches are missing or reversed`);
+  // The window edge is chrome around the page panel; the paper sample sits in the panel's bare left padding.
+  const sample = name.endsWith('.swift')
+    ? ['gutter = CGPoint(x: nav.maxX + 16, y: home.minY + 8)', 'x: ((gutter.x - rect.minX) * CGFloat(image.width) / rect.width).rounded(.down)', 'scroll?.location = CGPoint(x: gutter.x, y: rect.midY)', 'heading.minY >= pageTop']
+    : ["Find-Control $script:window 'Clusters' $button", '$bitmap.GetPixel([int]($nav.Current.BoundingRectangle.Right + 16 - $r.X), [int]($homeButton.Current.BoundingRectangle.Top + 8 - $r.Y))'];
+  for (const text of sample) assert.ok(driver.includes(text), `${name}: page paper must be sampled beside the actual sidebar: ${text}`);
 }
+const windowsLifecycle = await read('./native-lifecycle-windows.ps1');
+const clickPoint = windowsLifecycle.slice(windowsLifecycle.indexOf('function Get-ClickPoint('), windowsLifecycle.indexOf('function Press('));
+// A coordinate click without UIA's clickable point must still prove, by hit test, that it lands on the control.
+assert.ok(clickPoint.includes('$Element.TryGetClickablePoint([ref]$point)') && clickPoint.includes('[System.Windows.Automation.AutomationElement]::FromPoint($centre)')
+  && clickPoint.includes('[System.Windows.Automation.Automation]::Compare($hit, $Element)') && clickPoint.includes('throw "Native control is covered at its visible centre')
+  && windowsLifecycle.includes('{ $Element } else { Get-ClickPoint $Element }') && !windowsLifecycle.includes('$Element.GetClickablePoint()'), 'Windows lifecycle clicks must be hit-tested on the control');
 const captures = JSON.parse(await read('./native-model-captures.json'));
 // Upgrade frames share the destination journey but have their own exact matrix gate.
 const destinationCaptures = new Set(captures['destinations-workspace'].filter(name => !name.startsWith('local-upgrade-')));

@@ -253,7 +253,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     } else {
         guard let panel = rows.filter({
             let label = $0.topCandidates(1).first?.string ?? ""
-            // The shell now also says Connect the AI. Anchor below the tab bar, in the model column.
+            // The shell now also says Connect the AI. Anchor below the title bar, in the model column.
             return (label.contains("Connect the AI") || label.contains("Connect the Al")) && $0.boundingBox.minX > 0.5 && $0.boundingBox.maxY < 0.85
         }).max(by: { $0.boundingBox.maxY < $1.boundingBox.maxY })
             else { fatalError("Model panel heading was not recognized") }
@@ -290,11 +290,9 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
         let space = CGColorSpace(name: CGColorSpace.sRGB) else { fail("Cannot decode native theme") }
     let windowFrame = capturedWindow.1
-    let titlebarHeight = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable]).height - 100
-    // This blank tab-bar point is always --color-page and lies outside every picker.
-    let pagePoint = CGPoint(x: (12 * CGFloat(image.width) / windowFrame.width).rounded(.down),
-        y: ((titlebarHeight + 2) * CGFloat(image.height) / windowFrame.height).rounded(.down))
+    let paper = pageGutter()
+    let pagePoint = CGPoint(x: ((paper.x - windowFrame.minX) * CGFloat(image.width) / windowFrame.width).rounded(.down),
+        y: ((paper.y - windowFrame.minY) * CGFloat(image.height) / windowFrame.height).rounded(.down))
     guard let pixel = image.cropping(to: CGRect(origin: pagePoint, size: CGSize(width: 1, height: 1)))
         else { fail("Cannot locate native theme sample") }
     var rgba = [UInt8](repeating: 0, count: 4)
@@ -371,6 +369,20 @@ func enabledButton(_ label: String) -> AXUIElement? {
 }
 // The page starts under the title bar, which ends just above the sidebar's first button (Home).
 func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 4 } ?? window()!.1.minY }
+// A sidebar page button by name, enabled or not: an open picker makes the page behind it inert, not moved.
+func sidebarButton(_ label: String) -> CGRect? {
+    nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
+    }.compactMap(nativeBounds).min { $0.minX < $1.minX }
+}
+// A point in the page panel's bare left padding. The panel starts 8pt right of the sidebar's buttons and its
+// content 16-24pt further in, so no control, text or scrollbar is under it. Just under the title bar it is also
+// above every fixed picker (80pt down), so its colour is page paper, or paper under the picker's backdrop.
+func pageGutter(y: CGFloat? = nil) -> CGPoint {
+    guard let nav = sidebarButton("Clusters"), let home = sidebarButton("Home") else { fail("Cannot locate the native sidebar beside the page") }
+    return CGPoint(x: nav.maxX + 16, y: y ?? home.minY + 8)
+}
 func setOverviewExpanded(_ title: String, _ expanded: Bool) {
     let label = "Show places for \(title)"
     let buttons = nativeElements().filter { element in
@@ -794,7 +806,8 @@ func setupFitCapture(_ name: String, _ expected: [String], _ anchor: String) thr
 func scroll(_ pixels: Int32) {
     let rect = window()!.1
     let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)
-    event?.location = CGPoint(x: rect.maxX - 20, y: rect.midY)
+    // The page's own padding, not the panel's scrollbar at the window's right edge.
+    event?.location = sidebarButton("Clusters").map { CGPoint(x: $0.maxX + 16, y: rect.midY) } ?? CGPoint(x: rect.maxX - 20, y: rect.midY)
     event?.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: 0.3)
 }
@@ -1131,13 +1144,14 @@ func nativeControlShowsObservedOCRValue(_ label: String, _ expected: String, _ o
     return matches.count == 1
 }
 func nativeOverviewHeadingIsVisible(_ expected: String) -> Bool {
-    guard let headerBottom = enabledButton("Overview").flatMap(nativeBounds)?.maxY else { return false }
+    // The page starts under the title bar, which ends just above the sidebar's first button (Home).
+    guard let top = enabledButton("Home").flatMap(nativeBounds).map({ $0.minY - 4 }) else { return false }
     return nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXHeading",
             ["AXValue", "AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == expected }),
             let bounds = nativeBounds(element) else { return false }
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
-            && bounds.minY >= headerBottom + 8 && bounds.maxY <= window()!.1.maxY - 32
+            && bounds.minY >= top + 8 && bounds.maxY <= window()!.1.maxY - 32
     }
 }
 func nativeOverviewResultIsVisible(_ agent: String, before nextAgent: String, _ expected: String) -> Bool {

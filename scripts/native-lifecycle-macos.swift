@@ -154,17 +154,46 @@ func windowInfo() -> (CGWindowID, CGRect)? {
         let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
     return (id, rect)
 }
+func bounds(_ element: AXUIElement) -> CGRect? {
+    guard let position = attribute(element, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
+        let size = attribute(element, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+    var point = CGPoint.zero; var extent = CGSize.zero
+    guard AXValueGetValue(position as! AXValue, .cgPoint, &point) && AXValueGetValue(size as! AXValue, .cgSize, &extent)
+        && extent.width > 0 && extent.height > 0 else { return nil }
+    return CGRect(origin: point, size: extent)
+}
+// A sidebar page button by name (the leftmost match), which places the page panel beside it.
+func sidebarButton(_ label: String) -> CGRect? {
+    nodes(AXUIElementCreateApplication(app!.processIdentifier)).filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == label }
+    }.compactMap(bounds).min { $0.minX < $1.minX }
+}
 func capture(_ name: String, menu: Bool = false) throws {
+    // The page panel starts 8pt right of the sidebar's buttons and under the title bar, which ends 4pt above
+    // the sidebar's first button (Home). Its content starts 16-24pt in, so its left padding is bare page paper.
+    var gutter = CGPoint.zero, pageTop = CGFloat(0)
     if !menu, let rect = windowInfo()?.1 {
+        guard let nav = sidebarButton("Clusters"), let home = sidebarButton("Home") else {
+            check(false, "Cannot locate the native sidebar beside the page"); return
+        }
+        gutter = CGPoint(x: nav.maxX + 16, y: home.minY + 8); pageTop = home.minY - 4
         // File view now grows with its content. Restore the page heading after
         // end-of-file typing before testing its visible title in the capture.
-        let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
-            wheel1: 1000, wheel2: 0, wheel3: 0)
-        // A posted mouse move is asynchronous; bind the wheel to the page gutter
-        // instead of letting it inherit the previous position inside the textarea.
-        scroll?.location = CGPoint(x: rect.maxX - 20, y: rect.midY)
-        scroll?.post(tap: .cghidEventTap)
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+        for attempt in 0..<10 {
+            let heading = nodes(AXUIElementCreateApplication(app!.processIdentifier)).first {
+                attribute($0, "AXRole") as? String == "AXHeading" && attribute($0, "AXTitle") as? String == "web-reader.agent.md"
+            }.flatMap(bounds)
+            if attempt > 0, let heading, heading.minY >= pageTop { break }
+            let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                wheel1: 1000, wheel2: 0, wheel3: 0)
+            // A posted mouse move is asynchronous; bind the wheel to the page's own padding
+            // instead of letting it inherit the previous position inside the textarea. The
+            // window's right edge is now the panel's scrollbar and the chrome around it.
+            scroll?.location = CGPoint(x: gutter.x, y: rect.midY)
+            scroll?.post(tap: .cghidEventTap)
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+        }
     }
     let file = "\(output)/\(name).png"
     let options = menu ? ["-x", file] : ["-x", "-o", "-l", String(windowInfo()!.0), file]
@@ -179,7 +208,9 @@ func capture(_ name: String, menu: Bool = false) throws {
         // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
         guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-            let pixel = image.cropping(to: CGRect(x: CGFloat(image.width - 8), y: CGFloat(image.height - 8), width: 1, height: 1)),
+            let rect = windowInfo()?.1,
+            let pixel = image.cropping(to: CGRect(x: ((gutter.x - rect.minX) * CGFloat(image.width) / rect.width).rounded(.down),
+                y: ((gutter.y - rect.minY) * CGFloat(image.height) / rect.height).rounded(.down), width: 1, height: 1)),
             let space = CGColorSpace(name: CGColorSpace.sRGB) else { fatalError("Cannot decode screenshot") }
         var rgba = [UInt8](repeating: 0, count: 4)
         let sampled = rgba.withUnsafeMutableBytes { bytes in
