@@ -1890,7 +1890,20 @@ func captureUpgradeMatrix(manage: Bool) throws {
         try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
         if manage && index == 0 { waitForButton("Manage"); click("Manage", []) }
         waitForNativeText([expected])
-        waitForNativeText([manage ? "Agents" : "Where agents run"])
+        if manage {
+            // The returning Workspace card (region "Workspace"); an update or recovery decision replaces its Agents and
+            // Files facts until settled (Workspace.tsx), so the region, not the facts, proves this is Manage.
+            var returning = false
+            for _ in 0..<40 {
+                returning = nativeElements().contains { element in attribute(element, "AXSubrole") as? String == "AXLandmarkRegion" && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Workspace" } }
+                    && !nativeTextExists("Where agents run")
+                if returning { break }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            require(returning, "Manage upgrade \(state) is not on the returning Workspace card")
+        } else {
+            waitForNativeText(["Where agents run"])
+        }
         if state == "eligible-credential" {
             waitForNativeText(["A saved connection can be reused without connecting automatically."])
         }
