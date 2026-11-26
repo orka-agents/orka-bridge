@@ -3,13 +3,14 @@
 .designer-test-list .test-result > summary > .disclosure-label > .pill { grid-column: 2; font: var(--type-small); }
 .test-name > span { font-family: var(--font-ui); font-size: var(--size-body); font-weight: 500; }
 .test-name > code { color: var(--color-text-secondary); font-size: .92em; }
-.test-story { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-4); }
+.test-story { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
 .test-story > li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-2); align-items: start; }
-.story-number { font: var(--type-small); border-radius: 50%; background: var(--color-tint-stale); text-align: center; }
-.test-story h5 { font: var(--type-body); font-weight: 600; }
+.story-number { font: var(--type-small); font-weight: 600; border-radius: 50%; background: var(--color-tint-stale); text-align: center; }
+/* Each step is a section label (Asked, Used a tool, Answered) over body-size content. */
+.test-story h5 { margin: 0; font: var(--type-label); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--color-text-secondary); }
 .test-story p { margin: 0; overflow-wrap: anywhere; max-width: 70ch; }
-.test-story .reading { margin: var(--space-1) 0 0; }
-.story-tools { list-style: none; padding: 0; margin: var(--space-1) 0 0; }
+.test-story .reading { margin: var(--space-0-5) 0 0; font: var(--type-body); }
+.story-tools { list-style: none; padding: 0; margin: var(--space-0-5) 0 0; }
 .story-tools li { overflow-wrap: anywhere; }
 .story-tools code { color: var(--color-text-secondary); }
 .test-preview { padding: var(--space-4) var(--space-2); }

@@ -41,6 +41,7 @@
 .alert-failed .alert-title { color: var(--color-status-failed); }
 .alert-needs-you { background: var(--color-tint-pending); }
 .alert-needs-you .alert-title { color: var(--color-status-pending); }
-.empty-state { padding: var(--space-5) var(--space-4); border: var(--border-control) dashed var(--color-border-strong); border-radius: var(--radius-control); color: var(--color-text-secondary); text-align: center; }
+/* Nothing to list yet: a dashed outline where the rows would be, the sentence on the left. */
+.empty-state { margin: 0; padding: var(--space-5) var(--space-4); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-page); color: var(--color-text-secondary); text-align: left; }
 .code-chip { font: 500 var(--size-body)/18px var(--font-mono); font-variant-ligatures: none; padding: 1px var(--space-1-5); border-radius: var(--radius-small); background: var(--color-chrome); overflow-wrap: anywhere; }
 .key { display: inline-block; font: var(--type-label); padding: 0 5px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-small); background: var(--color-card); color: var(--color-text-secondary); }

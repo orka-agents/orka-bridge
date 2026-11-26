@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import mark from '../assets/orka-mark.svg';
 import { Button } from '../components/Button';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
 import Chat from '../designer/Chat';
@@ -26,7 +25,7 @@ export default function Home({ active, revision, blocked: placeBlocked, blockedF
   const blocked = placeBlocked ?? (chosen ? blockedFor?.(chosen.id) : undefined);
   return <section className="home" aria-labelledby="page-title">
     <div className="home-hero">
-      <img className="home-mark" src={mark} width="44" height="44" alt="" />
+      <div className="art-orca" aria-hidden="true" />
       <h1 id="page-title">What should your agents do?</h1>
       <p className="muted">Give one of your agents a job. It answers in your workspace on this computer.</p>
     </div>

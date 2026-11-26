@@ -177,7 +177,10 @@ a { color: var(--color-text); text-underline-offset: 3px; }
 .muted { color: var(--color-text-secondary); }
 .icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .icon-tile { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex: none; border-radius: var(--radius-control); color: var(--color-action); background: var(--color-icon-tile); }
-.card { padding: var(--space-4); border: 1px solid var(--color-border-strong); border-radius: var(--radius-card); background: var(--color-card); min-width: 0; }
+/* List rows (Clusters) use a larger outlined tile; the sidebar keeps the small filled one. */
+.icon-tile-row { width: 36px; height: 36px; border: var(--border-control) solid var(--color-text); background: var(--color-card); color: var(--color-text); }
+/* A plain card's edge is the ink at 70%, so it reads as a line on paper; .card-strong is the full ink at 1.5px. */
+.card { padding: var(--space-4); border: 1px solid color-mix(in srgb, var(--color-text) 70%, transparent); border-radius: var(--radius-card); background: var(--color-card); min-width: 0; }
 .setup { max-width: 760px; display: grid; gap: 16px; margin-top: 16px; }
 .setup h3 { font-size: var(--size-body); font-weight: 600; margin: 0; }
 .setup p { max-width: 70ch; margin-top: 8px; }
@@ -218,7 +221,7 @@ a { color: var(--color-text); text-underline-offset: 3px; }
 .chat-waiting { display: flex; align-items: center; gap: var(--space-2); }
 .chat-notice { color: var(--color-text-secondary); }
 .chat-tools { list-style: none; margin: 0; padding: 0; color: var(--color-text-secondary); font: var(--type-body); }
-.chat-composer { position: sticky; bottom: calc(-1 * var(--space-6)); z-index: 1; display: grid; gap: var(--space-2); margin-top: auto; padding: var(--space-3) 0 var(--space-6); border-top: 1px solid var(--color-border); background: var(--color-page); }
+.chat-composer { position: sticky; bottom: calc(-1 * var(--page-pad, var(--space-6))); z-index: 1; display: grid; gap: var(--space-2); margin-top: auto; padding: var(--space-3) 0 var(--page-pad, var(--space-6)); border-top: 1px solid var(--color-border); background: var(--color-page); }
 .chat-compose-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-2); }
 .chat-composer p { margin: 0; }
 .chat-composer textarea { width: 100%; min-height: 48px; max-height: 40dvh; overflow-y: auto; resize: none; padding: var(--space-3); font: var(--type-reading); }

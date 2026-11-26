@@ -1,6 +1,5 @@
 /* Welcome: one centred column, the hero headline, the three steps in a row and one large next step. */
-.welcome-screen { max-width: 780px; margin-inline: auto; padding-block: var(--space-8) var(--space-6); display: grid; justify-items: center; gap: var(--space-5); text-align: center; font: var(--type-body); }
-.welcome-mark { filter: var(--mark-filter); }
+.welcome-screen { max-width: 780px; margin-inline: auto; padding-block: calc(80px - var(--page-pad, 24px)) 0; display: grid; justify-items: center; gap: var(--space-4); text-align: center; font: var(--type-body); }
 .welcome-screen h1 { margin: 0; font: var(--type-display-hero); letter-spacing: var(--tracking-display); text-wrap: balance; }
 .welcome-lede { max-width: 56ch; margin: 0; font: var(--type-reading); color: var(--color-text-secondary); text-wrap: balance; }
 .welcome-journey { list-style: none; margin: 0; padding: 0; width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--color-border-strong); text-align: left; }
@@ -16,7 +15,7 @@
 .welcome-actions p { max-width: 46ch; margin: 0; }
 .welcome-screen .welcome-expert { padding-inline: 0; }
 @media (max-width: 820px) {
-  .welcome-screen { padding-block: var(--space-4); gap: var(--space-4); }
+  .welcome-screen { padding-block: calc(80px - var(--page-pad, 16px)) var(--space-4); gap: var(--space-4); }
   .welcome-screen h1 { font: var(--type-display); letter-spacing: var(--tracking-display); }
 }
 @media (max-width: 600px) {

@@ -19,7 +19,7 @@
 
 /* The list: one row card per place on shared columns, so names, pills and actions line up. */
 /* A subgrid row's padding sits inside the parent's edge tracks, so the icon track adds the row's 16px padding. */
-.places-list { display: grid; grid-template-columns: calc(26px + var(--space-4)) minmax(0, 1fr) auto auto; gap: var(--space-3); }
+.places-list { display: grid; grid-template-columns: calc(36px + var(--space-4)) minmax(0, 1fr) auto auto; gap: var(--space-3); }
 .places-list > * { grid-column: 1 / -1; }
 .place-row { display: grid; grid-template-columns: subgrid; align-items: center; column-gap: var(--space-4); row-gap: var(--space-2); padding: var(--space-4); }
 .place-summary { grid-column: 2; min-width: 0; overflow-wrap: anywhere; }
@@ -36,7 +36,6 @@
 .place-workspace-running { grid-column: 2 / -1; grid-row: 2; margin: 0; color: var(--color-status-running); font-size: var(--size-body); }
 .place-model-recovery { grid-column: 2 / -1; grid-row: 3; min-width: 0; }
 .place-model-recovery:empty { display: none; }
-.places-list > .empty-state { text-align: left; }
 .places-list > [role="status"] { color: var(--color-text-secondary); }
 .places-workspace .workspace-choice, .places-workspace .setup { max-width: none; width: 100%; }
 .places-workspace [hidden] { display: none; }
@@ -169,7 +168,7 @@
 .send-history li details { margin-top: var(--space-2); }
 .send-history .send-history-remove:not(:disabled) { color: var(--color-text); }
 @media (max-width: 820px) {
-  .places-list { grid-template-columns: calc(26px + var(--space-4)) minmax(0, 1fr) auto; }
+  .places-list { grid-template-columns: calc(36px + var(--space-4)) minmax(0, 1fr) auto; }
   .place-row { align-items: start; column-gap: var(--space-3); }
   .place-summary { grid-column: 2 / -1; }
   .place-row > .pill { grid-column: 2; grid-row: 2; justify-self: start; align-self: center; }
