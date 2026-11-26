@@ -1957,8 +1957,14 @@ func workspaceCapture(_ state: String, _ expected: [String]) throws {
         require(enabledButton("Stop the workspace") == nil && enabledButton("Start") == nil && (enabledButton("Cancel") != nil) == starting,
                 starting ? "Returning Starting must offer Cancel and no Start/Stop" : "Returning workspace must not expose Start/Stop/Cancel")
         if ["failed", "stopped-unexpectedly", "stop-failed", "forced-stop"].contains(state) {
-            require(!anyButton("Hide details"), "Diagnostics must start folded")
-            click("Show details", [])
+            // A failed start opens its diagnostics when the failure appears, as the board shows; a stop's stay folded.
+            // Only the first (wide) look at a scene sees that initial state; later sizes keep whatever the walk left.
+            let opensByDefault = ["failed", "stopped-unexpectedly"].contains(state)
+            if size == "wide" {
+                require(anyButton("Hide details") == opensByDefault,
+                        opensByDefault ? "A failed start's diagnostics must start open" : "A stop's diagnostics must start folded")
+            }
+            if !anyButton("Hide details") { click("Show details", []) }
             _ = try capture("local-workspace-\(state)-details-\(size)", state == "stopped-unexpectedly" ? ["Synthetic workspace stopped unexpectedly.", "Hide details"] : ["Hide details"])
             click("Hide details", [])
         }
