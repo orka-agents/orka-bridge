@@ -1,4 +1,5 @@
 import { Button } from '../components/Button';
+import { setupTime, type WorkspaceRequirements } from './requirements';
 
 export const welcomePreference = 'bridge.welcomeSeen.v1';
 export function hasSeenWelcome() {
@@ -7,7 +8,7 @@ export function hasSeenWelcome() {
 }
 
 // Someone who already runs Orka picks their cluster on the next screens, beside this computer.
-export default function Welcome({ titleId, onStart, unavailable }: { titleId?: string; onStart: () => void; unavailable?: string }) {
+export default function Welcome({ titleId, onStart, unavailable, requirements }: { titleId?: string; onStart: () => void; unavailable?: string; requirements?: WorkspaceRequirements | null }) {
   return <section className="welcome-screen">
     <div className="art-orca" aria-hidden="true" />
     <h1 id={titleId}><span>Your agents. Your models.</span> <span>Your keys. Your cluster.</span></h1>
@@ -19,7 +20,7 @@ export default function Welcome({ titleId, onStart, unavailable }: { titleId?: s
     </ol>
     <div className="welcome-actions">
       <Button kind="primary" size="large" type="button" onClick={onStart}>Get started</Button>
-      <span className="muted">About 5 minutes, mostly a download</span>
+      <span className="muted">{setupTime(requirements)}</span>
       {unavailable && <p className="muted">{unavailable}</p>}
     </div>
   </section>;

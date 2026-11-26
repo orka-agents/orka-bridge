@@ -16,7 +16,7 @@ function nativeSetup(status: Record<string, unknown>, preflight?: Record<string,
   mockIPC(command => {
     if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return status;
-    if (command === 'setup_requirements') return { memoryBytes: 6 * 1024 ** 3, imageBytes: 3e9, stateDiskBytes: 32e9, downloadBytes: null };
+    if (command === 'setup_requirements') return { memoryBytes: 6 * 1024 ** 3, stateDiskBytes: 32e9, downloadBytes: null, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null };
     if (command === 'setup_preflight' && preflight) return { platform: 'windows', virtualization: 'ready', memory: 'ready', installedMemoryBytes: 16 * 1024 ** 3, requiredMemoryBytes: 6 * 1024 ** 3, ...preflight };
     if (command === 'setup_example') return example;
     if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
