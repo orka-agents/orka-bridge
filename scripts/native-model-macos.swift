@@ -1710,7 +1710,13 @@ _ = try seek("Earlier tasks: 1", -100)
 _ = try capture("chat-followup-compact", ["Earlier tasks: 1", "Read another page."])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("Earlier tasks: 1", -4000, diagnosticPrefix: "chat-long-early-\(size)-seek")
+    // At narrow widths Instructions and settings follow Earlier tasks, so the page's end is not the list. Bring the
+    // folded list just inside the window's lower edge by its own bounds, which keeps the long task's first line in view.
+    if let list = enabledButton("Earlier tasks: 1").flatMap(nativeBounds) {
+        let delta = list.maxY - (window()!.1.maxY - 12)
+        if delta > 0 { scroll(-Int32(delta.rounded())) }
+    }
+    _ = try seek("Earlier tasks: 1", -100, diagnosticPrefix: "chat-long-early-\(size)-seek")
     require(!nativeChatTextIsVisible("The checksum is ALPHA."), "Earlier tasks must stay folded until opened")
     _ = try capture("chat-long-early-\(size)", ["Earlier tasks: 1", "Read another page."])
     press("Earlier tasks: 1")

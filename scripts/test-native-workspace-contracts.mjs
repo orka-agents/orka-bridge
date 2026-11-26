@@ -250,29 +250,39 @@ assert.ok(manualError, 'actual Setup manual owner-refresh error missing');
 const refreshedExpression = source.match(/const refreshedText = ([^;]+);/)?.[1];
 assert.ok(refreshedExpression, 'Windows manual-refresh capture expectation missing');
 const model = await read('./native-model-macos.swift');
-// Drive the actual earlier-tasks call's delta and seek loop bound from the top of
-// the page, where Try a task's composer is. A reversed wheel sign must fail rather
-// than exhausting retries above the folded list.
+// Drive the actual earlier-tasks call's delta and seek loop bound. At 540x640 the folded list is followed by
+// Instructions and settings, so the page's end is not the list: measured in run 45897379875 at 540 wide, the long
+// task's first line starts 517pt below the top of the page area and the list ends 1054pt below it, in a 596pt window,
+// so both fit only between 458 and 517pt of scroll. The walk first places the list by its own bounds, then the seek
+// may only take short downward steps; a reversed sign or a jump to the page's end must fail.
 function earlySeek(driver) {
   const helper = driver.match(/func seek\([\s\S]*?\n\}/)?.[0];
-  // The early, per-size seek (the one with diagnostics), not the follow-up frames' short seeks below the new task.
   const call = driver.match(/seek\("Earlier tasks: 1", (-?\d+)(, diagnosticPrefix[^\n]*)/);
   assert.ok(helper && call, 'actual earlier-tasks seek and helper must exist');
   const bound = Number(helper.match(/for (?:_|attempt) in 0\.\.<(\d+)/)?.[1]);
   assert.equal(bound, 6, 'recovery must retain the existing six attempts');
   assert.match(helper, /scroll\(pixels\)/, 'misses must use the caller delta');
-  let position = 0;
-  const captures = [];
-  for (let attempt = 0; attempt < bound; attempt++) {
-    captures.push(position);
-    if (position === 1000) return { captures, helper, call };
-    position = Math.max(0, Math.min(1000, position - Number(call[1])));
-  }
-  assert.fail('earlier-tasks seek cannot recover from the top');
+  const message = 517, list = 1054, window = 596, end = 1700;
+  // Unplaced (from the top) and already placed (list 12pt inside the lower edge) starts.
+  return [0, list - window + 12].map(start => {
+    let position = start;
+    const captures = [];
+    for (let attempt = 0; attempt < bound; attempt++) {
+      captures.push(position);
+      if (position >= list - window) {
+        if (position > message) assert.fail('earlier-tasks seek overshot the long task\'s first line');
+        return { captures, helper, call };
+      }
+      position = Math.max(0, Math.min(end, position - Number(call[1])));
+    }
+    assert.fail('earlier-tasks seek cannot recover from the top');
+  }).reduce((first, placed) => ({ ...first, placed: placed.captures }));
 }
 const earlyRecovery = earlySeek(model);
-assert.deepEqual(earlyRecovery.captures, [0, 1000], 'large downward recovery must capture top then bottom');
+assert.deepEqual(earlyRecovery.placed, [470], 'a placed list is captured at once');
+assert.ok(model.includes('let delta = list.maxY - (window()!.1.maxY - 12)'), 'the walk places the folded list by its own bounds before seeking it');
 assert.throws(() => earlySeek(model.replace(/seek\("Earlier tasks: 1", -?\d+(?=, diagnosticPrefix)/, 'seek("Earlier tasks: 1", 100')), /cannot recover/);
+assert.throws(() => earlySeek(model.replace(/seek\("Earlier tasks: 1", -?\d+(?=, diagnosticPrefix)/, 'seek("Earlier tasks: 1", -4000')), /overshot/);
 assert.ok(earlyRecovery.call[2].includes(String.raw`diagnosticPrefix: "chat-long-early-\(size)-seek"`), 'only explicit early caller opts into per-size diagnostics');
 assert.match(earlyRecovery.helper, /diagnosticPrefix: String\? = nil/);
 assert.ok(earlyRecovery.helper.indexOf('if let prefix = diagnosticPrefix') > earlyRecovery.helper.indexOf('capture("local-probe", [])'));
