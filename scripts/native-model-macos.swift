@@ -718,7 +718,10 @@ for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
         }
         if ["memory", "mixed"].contains(state) {
             require(strings.contains { showsText($0, "This computer has 2.1 GB of memory; Bridge needs 4.3 GB.") }, "Insufficient RAM must show its native amounts")
-            require(enabledButton("Check again") == nil && enabledButton("Copy details for help") == nil, "RAM failure needs only the cluster alternative")
+            // Installed memory can't change by checking again; the computer check offers the cluster alternative and,
+            // since the memory shortfall is named, Copy details for help.
+            require(enabledButton("Check again") == nil && enabledButton("Use a cluster instead") != nil && enabledButton("Copy details for help") != nil,
+                    "RAM failure needs the cluster alternative and Copy details for help, not Check again")
         }
         if state == "cluster" {
             click("Use a cluster instead", [])
