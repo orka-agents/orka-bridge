@@ -14,8 +14,8 @@
   -webkit-mask: url('./assets/art/chart.png') 0 100% / cover no-repeat; mask: url('./assets/art/chart.png') 0 100% / cover no-repeat;
 }
 .page-content:is([data-page="Home"], [data-page="Overview"], [data-page="Designer"], [data-page="Clusters"])::before { display: block; }
-/* An empty Overview and the Clusters list show the pod in the bottom right instead. */
-.page-content:is([data-page="Overview"]:has(.overview-empty), [data-page="Clusters"]:has(.places-list):not(.guided *))::before {
+/* An empty or filtered-out Overview and the Clusters list show the pod in the bottom right instead. */
+.page-content:is([data-page="Overview"]:has(.overview-empty, .overview-list > .empty-state), [data-page="Clusters"]:has(.places-list):not(.guided *))::before {
   -webkit-mask: url('./assets/art/pod.png') 100% 100% / min(560px, 60%) auto no-repeat; mask: url('./assets/art/pod.png') 100% 100% / min(560px, 60%) auto no-repeat;
 }
 
@@ -42,7 +42,7 @@
 
 /* Narrow windows keep the chart and the orca, smaller. */
 @media (max-width: 820px) {
-  .page-content:is([data-page="Overview"]:has(.overview-empty), [data-page="Clusters"]:has(.places-list):not(.guided *))::before { display: none; }
+  .page-content:is([data-page="Overview"]:has(.overview-empty, .overview-list > .empty-state), [data-page="Clusters"]:has(.places-list):not(.guided *))::before { display: none; }
   .app-shell.guided .page-content { background-image: none; }
   :root:not([data-theme="light"]) .app-shell.guided .page-content, :root[data-theme="dark"] .app-shell.guided .page-content { background-image: none; }
   .app-shell.guided .page-content::after { content: none; }
