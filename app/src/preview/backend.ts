@@ -6,10 +6,11 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import agentSource from '../../src-tauri/example-agent/web-reader.agent.md?raw';
 import testSource from '../../src-tauri/example-agent/web-reader.agent.test.md?raw';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
+import { orkaPermissions } from '../clusters/api';
 import { sidebarPreference } from '../chrome/sidebar';
 import { themePreference } from '../chrome/theme';
 import {
-  clusterCatalog, type Credential, createdSeed, deniedAccess, failingClusterPlace, failingClusterProvider, failingClusterTarget, type FailureScenario,
+  clusterCatalog, type Credential, contextTargets, createdSeed, deniedAccess, kubeContexts, failingClusterPlace, failingClusterProvider, failingClusterTarget, type FailureScenario,
   installationMismatch, keyInvalid, keyRejected, modelGuest, sendRows, unreachableCluster, upgradeStatus, workspaceFailures,
 } from './fixtures';
 
@@ -38,6 +39,8 @@ export const scenarios = {
   sendRunning: 'Send running on the cluster',
   sendFailed: 'Send finished with a failing test',
   testIncomplete: 'First test is incomplete',
+  clusterContexts: 'Add a cluster with kubectl contexts',
+  wsStarting: 'First setup, the workspace starting',
 } as const;
 export type Scenario = keyof typeof scenarios;
 type Gh = 'missing' | 'signedOut' | 'signedIn';
@@ -59,7 +62,8 @@ let gh: Gh = (['missing', 'signedOut', 'signedIn'] as const).find(value => value
 const now = () => Date.now() * speed;
 const fresh = scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow';
 let selected: 'localVm' | null = fresh ? null : 'localVm';
-let startedAt: number | null = scenario === 'restart' ? now() : null;
+// wsStarting opens a first setup 12 seconds into starting, after the files were checked and installed.
+let startedAt: number | null = scenario === 'restart' ? now() : scenario === 'wsStarting' ? now() - (timing.verify + timing.copy + 12) * 1000 : null;
 let reopened = scenario === 'restart';
 let stopped: 'cancelled' | 'closed' | null = null;
 let modelConnected = scenario === 'connected' || scenario === 'runFails' || scenario === 'clusterReady';
@@ -226,7 +230,7 @@ function clusterReply(command: string, args?: Record<string, unknown>): unknown 
 // Scenarios that open in states the ordinary walk can't reach. Replies come from ./fixtures; a command
 // a scenario doesn't own falls through to the ordinary script in handle().
 const unscripted = Symbol('unscripted');
-const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed', 'clusterReady'].includes(scenario);
+const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed', 'clusterReady', 'clusterContexts', 'wsStarting'].includes(scenario);
 const upgradeScenario = scenario === 'wsUpdate' || scenario === 'wsRestore' || scenario === 'wsRecovery';
 const remoteScenario = ['clusterDenied', 'clusterUnreachable', 'sendBlocked', 'sendRunning', 'sendFailed'].includes(scenario);
 const sendScenario = scenario === 'sendBlocked' || scenario === 'sendRunning' || scenario === 'sendFailed';
@@ -288,7 +292,46 @@ function sendStatus(id: string) {
   return { documentId: id, view: s.documentId === id ? view : null, busy: running ? { documentId: s.documentId, name: doc.name } : null };
 }
 
+// clusterContexts: kubeconfig lists contexts whose clusters have one, two or no Orka installations, and one
+// whose installation needs a ServiceAccount. A cluster used in this run is remembered, as native does.
+const contexts = kubeContexts(uuid);
+const targets = contextTargets(uuid, contexts);
+const contextProvider = { id: uuid('contexts-provider'), name: 'team-model', ready: true };
+let usedTarget: (typeof targets)[number] | null = null;
+function usedPlace() {
+  if (!usedTarget) return null;
+  const { target } = usedTarget;
+  return { key: `${target.context_name}/${target.service_namespace}/${target.service_name}`, context: target.context_name, service: `${target.service_namespace}/${target.service_name}`, namespace: target.watched_namespace, stale: false, observedAt: Date.now(), checkedAt: Date.now(), agents: [] };
+}
+async function contextReply(command: string, args?: Record<string, unknown>): Promise<unknown> {
+  const place = usedPlace();
+  switch (command) {
+    case 'cluster_contexts': case 'cluster_reload': await wait(0.3); return contexts;
+    case 'cluster_discover': await wait(0.8); return targets.filter(item => item.target.context_id === args?.contextId).map(item => item.target);
+    case 'cluster_use': {
+      await wait(0.8);
+      const item = targets.find(candidate => candidate.target.id === args?.targetId);
+      if (!item) throw { check: 'configuration', result: 'unknown' };
+      if (item.serviceAccount && !args?.saName) return { status: 'needServiceAccount', providers: [], failure: null };
+      usedTarget = item;
+      return { status: 'connected', providers: [contextProvider], failure: null };
+    }
+    case 'cluster_service_accounts': await wait(0.3); return { names: ['bridge-user', 'default', 'orka-reader'], truncated: false };
+    case 'cluster_service_account_preview': await wait(0.3); return { status: 'allowed', checks: orkaPermissions.map(([resource, verb]) => ({ resource, verb, status: 'allowed' })) };
+    case 'cluster_places': return { places: place ? [place] : [], selectedKey: place?.key ?? null, persistenceState: 'complete' };
+    case 'overview_places': return { places: place ? [place] : [], historyState: 'complete', unobserved: [] };
+    case 'cluster_select':
+      if (!place || !usedTarget || args?.key !== place.key) throw { check: 'configuration', result: 'unknown' };
+      return { target: usedTarget.target, providers: [contextProvider] };
+  }
+  return unscripted;
+}
+
 async function scenarioReply(command: string, args?: Record<string, unknown>): Promise<unknown> {
+  if (scenario === 'clusterContexts') {
+    const reply = await contextReply(command, args);
+    if (reply !== unscripted) return reply;
+  }
   switch (command) {
     case 'setup_preflight':
       if (scenario !== 'memoryLow') break;
@@ -564,7 +607,8 @@ export function installPreview() {
     // Each load starts from the scenario, not from the previous walk's browser storage. Theme and sidebar choices are kept: they are presentation only.
     for (const key of Object.keys(localStorage)) if (key.startsWith('bridge.') && key !== themePreference && key !== sidebarPreference) localStorage.removeItem(key);
     if (!fresh) localStorage.setItem('bridge.welcomeSeen.v1', '1');
-    if (!fresh) localStorage.setItem('bridge.firstTest.v1', 'attempted');
+    // wsStarting is a first setup still under way, so its first test is still pending.
+    if (!fresh) localStorage.setItem('bridge.firstTest.v1', scenario === 'wsStarting' ? 'pending' : 'attempted');
   } catch { /* Storage is optional in the preview. */ }
   (globalThis as { isTauri?: boolean }).isTauri = true;
   mockWindows('main');

@@ -1,7 +1,7 @@
 import { clearMocks } from '@tauri-apps/api/mocks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readWorkspaceCatalog } from '../catalog';
-import { ClusterRequestError, clusterPlaces, connectCluster, reconnectCluster, selectCluster } from '../clusters/api';
+import { ClusterRequestError, clusterPlaces, connectCluster, contexts, discover, previewServiceAccount, reconnectCluster, reloadContexts, selectCluster, serviceAccounts } from '../clusters/api';
 import { sendCall, sendPreflight } from '../clusters/send-api';
 import { readAgents, readFiles, readPlaces } from '../overview/api';
 import { chatCall } from '../designer/chat-api';
@@ -214,6 +214,38 @@ describe('preview backend replies', () => {
     await vi.waitFor(async () => expect(await sendCall('send_status')).toMatchObject({ view: { state: 'complete', report: { verdict: 'failed' } } }), { timeout: 3000 });
     expect(await sendPreflight(targetId, providerId)).toMatchObject({ action: 'unchanged' });
     expect((await readPlaces())?.places[0].agents).toHaveLength(1);
+  });
+
+  it('lists kubectl contexts with one, two, no and a ServiceAccount-gated Orka installation', async () => {
+    await preview('scenario=clusterContexts&speed=100');
+    const listed = await contexts();
+    expect(listed.map(context => context.name)).toEqual(['team-dev', 'team-shared', 'kind-scratch', 'team-restricted']);
+    expect(await reloadContexts()).toEqual(listed);
+    const [dev, shared, kind, restricted] = listed;
+    expect(await discover(kind.id)).toEqual([]);
+    expect((await discover(shared.id)).map(target => `${target.service_namespace}/${target.service_name} · ${target.watched_namespace}`)).toEqual(['control/orka · agents', 'staging/orka · agents-staging']);
+    const [gated] = await discover(restricted.id);
+    expect(await connectCluster(gated.id, null)).toMatchObject({ status: 'needServiceAccount', providers: [] });
+    expect(await serviceAccounts(gated.id)).toMatchObject({ names: ['bridge-user', 'default', 'orka-reader'], truncated: false });
+    expect(await previewServiceAccount(gated.id, 'bridge-user')).toMatchObject({ status: 'allowed' });
+    expect(await clusterPlaces()).toMatchObject({ places: [], selectedKey: null });
+    const [target] = await discover(dev.id);
+    const access = await connectCluster(target.id, null);
+    expect(access).toMatchObject({ status: 'connected', providers: [{ name: 'team-model', ready: true }] });
+    const remembered = await clusterPlaces();
+    expect(remembered).toMatchObject({ places: [{ context: 'team-dev', service: 'control/orka' }] });
+    expect(await selectCluster(remembered!.selectedKey!)).toMatchObject({ target: { id: target.id } });
+    expect((await readPlaces())?.places).toHaveLength(1);
+  });
+
+  it('opens a first setup with the workspace starting', async () => {
+    const { scenario } = await preview('scenario=wsStarting');
+    expect(scenario).toBe('wsStarting');
+    expect(localStorage.getItem('bridge.firstTest.v1')).toBe('pending');
+    const status = await setupStatus();
+    expect(status).toMatchObject({ ok: true, status: { selected: 'localVm', localVm: 'starting', workspaceProgress: { phase: 'starting' } } });
+    expect(status.ok && status.status.workspaceProgress!.elapsedMs).toBeGreaterThanOrEqual(12_000);
+    expect(await connectModel()).toMatchObject({ ok: false, category: 'modelGuest' });
   });
 
   it('opens a created agent whose tests are the draft skeleton', async () => {

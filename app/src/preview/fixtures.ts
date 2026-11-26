@@ -100,3 +100,27 @@ export function createdSeed(name: string, model = 'gpt-5.6-terra') {
     tests: `---\nschemaVersion: 1\n---\n\n# ${name} tests\n\n\`\`\`yaml agent-test\nid: first-test\ninput: ""\nassertions: []\n\`\`\`\n`,
   };
 }
+
+// kubeconfig contexts for Add a cluster, with what discovery finds behind each: one Orka installation, two, none,
+// and one whose installation is used through a ServiceAccount. Shapes follow ContextView and TargetView.
+export function kubeContexts(uid: (seed: string) => string) {
+  return [
+    { id: uid('context-team-dev'), name: 'team-dev', current: true },
+    { id: uid('context-team-shared'), name: 'team-shared', current: false },
+    { id: uid('context-kind-scratch'), name: 'kind-scratch', current: false },
+    { id: uid('context-team-restricted'), name: 'team-restricted', current: false },
+  ];
+}
+export function contextTargets(uid: (seed: string) => string, contexts: { id: string; name: string }[]) {
+  const target = (context: { id: string; name: string }, namespace: string, watched: string) => ({
+    id: uid(`target-${context.name}-${namespace}`), context_id: context.id, context_name: context.name,
+    service_name: 'orka', service_namespace: namespace, watched_namespace: watched, image: 'ghcr.io/orka-agents/orka:v0.1.3',
+  });
+  const [dev, shared, , restricted] = contexts;
+  return [
+    { target: target(dev, 'control', 'agents'), serviceAccount: false },
+    { target: target(shared, 'control', 'agents'), serviceAccount: false },
+    { target: target(shared, 'staging', 'agents-staging'), serviceAccount: false },
+    { target: target(restricted, 'control', 'agents'), serviceAccount: true },
+  ];
+}
