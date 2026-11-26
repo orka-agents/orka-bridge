@@ -201,13 +201,13 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       <span className="overview-filter-count" role="status">{summaryLabel(rows, partial)}</span>
     </div>}
     {needsAi && <p id={aiReasonId} className="overview-note" tabIndex={0}>Connect the AI in Clusters to chat or run tests on this computer.</p>}
-    {focusNote && <div className="overview-note" role="status"><p>{focusNote}</p><Button kind="quiet" onClick={() => { if (focus && !focus.target && onRetryFocus) onRetryFocus(focus.sendId); else setFocusRetry(v => v + 1); }}>Refresh</Button></div>}
-    {placeError && <div className="overview-note" role="status"><p>Couldn't read clusters just now.{places && ' Showing what Bridge last saw.'}</p><Button kind="quiet" onClick={actions.onCheck}>Check again</Button></div>}
-    {places?.historyState === 'unavailable' && <div role="alert" className="overview-note"><p>Saved Send results are unavailable, so cluster agents show no test result.</p><Button kind="quiet" onClick={actions.onCheck}>Check again</Button></div>}
+    {focusNote && <div className="overview-note alert" role="status"><p>{focusNote}</p><Button size="small" onClick={() => { if (focus && !focus.target && onRetryFocus) onRetryFocus(focus.sendId); else setFocusRetry(v => v + 1); }}>Refresh</Button></div>}
+    {placeError && <div className="overview-note alert" role="status"><p>Couldn't read clusters just now.{places && ' Showing what Bridge last saw.'}</p><Button size="small" onClick={actions.onCheck}>Check again</Button></div>}
+    {places?.historyState === 'unavailable' && <div role="alert" className="overview-note alert"><p>Saved Send results are unavailable, so cluster agents show no test result.</p><Button size="small" onClick={actions.onCheck}>Check again</Button></div>}
     <PlaceNotes groups={clusters} actions={actions} />
     {empty ? <>
       <div className="card overview-empty"><h2>No agents yet</h2><p>Make an agent, or start from web-reader, the example that answers from a web page. Agents you test or send show up here, with their results in each place.</p>
-        <div className="overview-card-actions">{onNewAgent && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}<Button onClick={onOpenExample}>Open web-reader</Button></div></div>
-    </> : <div className="overview-list">{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="overview-note">No agents match these filters.</p>}</div>}
+        <div className="overview-card-actions">{onNewAgent && <Button kind="primary" size="large" onClick={onNewAgent}>New agent</Button>}<Button size="large" onClick={onOpenExample}>Open web-reader</Button></div></div>
+    </> : <div className={rows.length ? 'overview-list card' : 'overview-list'}>{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="empty-state">No agents match these filters.</p>}</div>}
   </section>;
 }
