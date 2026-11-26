@@ -122,7 +122,7 @@ $menuItem = [System.Windows.Automation.ControlType]::MenuItem
 # rectangles and finds every page point covered. Then click the visible centre of the control, and only
 # after a real hit test at that point lands on the control itself.
 function Get-ClickPoint($Element) {
-    $point = [System.Windows.Point]::new()
+    $point = [System.Windows.Point]::new(0, 0)
     if ($Element.TryGetClickablePoint([ref]$point)) { return [Drawing.Point]::new([int]$point.X, [int]$point.Y) }
     $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
     $visible = [System.Windows.Rect]::Intersect($Element.Current.BoundingRectangle, [System.Windows.Rect]::new($area.X, $area.Y, $area.Width, $area.Height))
