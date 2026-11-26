@@ -435,8 +435,17 @@ for (phase, expected) in [("installing", "Downloading, 1.1 of 2.1 GB"), ("starti
         // elapsed or download line, Cancel) and the AI card, with no step list headings and no Meet card.
         _ = try capture("local-setup-\(phase)-\(size)", ["This computer", "Workspace", expected])
         require(enabledButton("Cancel") != nil, "The Workspace card must offer Cancel while \(phase)")
-        require(!["Getting your workspace ready", "Get your workspace ready", "Meet your first agent"].contains(where: nativeTextExists),
-                "Two-card first setup must not show the step list headings or Meet your first agent")
+        // The sidebar status card still says "Getting your workspace ready, step 2 of 4"; only the page must drop them.
+        let pageLeft = sidebarButton("Clusters")?.maxX ?? window()!.1.minX
+        let pageText = { (expected: String) -> Bool in
+            nativeElements().contains { element in
+                guard attribute(element, "AXRole") as? String == "AXStaticText", let text = attribute(element, "AXValue") as? String,
+                      showsText(text, expected), let bounds = nativeBounds(element) else { return false }
+                return bounds.minX > pageLeft
+            }
+        }
+        require(!["Getting your workspace ready", "Get your workspace ready", "Meet your first agent"].contains(where: pageText),
+                "Two-card first setup must not show the step list headings or Meet your first agent on the page")
     }
     if phase == "installing" { try setupFitCapture("download", ["Workspace", expected], "Cancel") }
 }
