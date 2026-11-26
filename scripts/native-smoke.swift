@@ -304,6 +304,10 @@ func leaveGuidedFirstRun() {
     clickButton("Use this computer")
     requireNoLocalWorkspace()
     require(nativeButtons("Use this computer").isEmpty && guidedTitleRow() == nil, "This computer was not chosen again after leaving guidance")
+    // The Clusters page keeps its last view; return it to Places, where Get started left the walk before.
+    _ = clickTab("Clusters", [])
+    for _ in 0..<30 where visibleButtons("Set up").count != 1 { Thread.sleep(forTimeInterval: 0.1) }
+    require(visibleButtons("Set up").count == 1 && nativeTextIsVisible("No other clusters added yet"), "Clusters did not return to Places after leaving guidance")
 }
 // A point in the page's bare left padding: page content starts 16-30pt in from the page's left edge, so no control,
 // text or scrollbar is under it. Just under the title bar it is also above every fixed picker (80pt down), and inside
