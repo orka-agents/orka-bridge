@@ -6,7 +6,8 @@ export type ClustersView = { kind: 'places' } | { kind: 'local' } | { kind: 'clu
 export type Location =
   | { page: 'Home' }
   | { page: 'Overview' }
-  | { page: 'Designer'; documentId?: string; view: DesignerView }
+  /** `creating`: the New agent form, shown in place of the open agent. */
+  | { page: 'Designer'; documentId?: string; view: DesignerView; creating?: boolean }
   | { page: 'Clusters'; view: ClustersView };
 export type History = { entries: Location[]; index: number };
 
@@ -14,7 +15,7 @@ export const historyLimit = 50;
 
 export function locationKey(location: Location): string {
   switch (location.page) {
-    case 'Designer': return `Designer/${location.documentId ?? ''}/${location.view}`;
+    case 'Designer': return location.creating ? 'Designer/new' : `Designer/${location.documentId ?? ''}/${location.view}`;
     case 'Clusters': return `Clusters/${location.view.kind}${location.view.kind === 'cluster' ? `/${location.view.key ?? ''}` : ''}`;
     default: return location.page;
   }
@@ -23,7 +24,7 @@ export const sameLocation = (a: Location, b: Location) => locationKey(a) === loc
 
 /** Whether two entries name the same agent or the same remembered cluster, so a missing one can be dropped everywhere. */
 export function sameTarget(a: Location, b: Location) {
-  if (a.page === 'Designer' && b.page === 'Designer') return !!a.documentId && a.documentId === b.documentId;
+  if (a.page === 'Designer' && b.page === 'Designer') return !a.creating && !b.creating && !!a.documentId && a.documentId === b.documentId;
   if (a.page === 'Clusters' && b.page === 'Clusters' && a.view.kind === 'cluster' && b.view.kind === 'cluster') return !!a.view.key && a.view.key === b.view.key;
   return false;
 }

@@ -130,6 +130,9 @@ export default function App() {
   const [overviewCounts, setOverviewCounts] = useState('Reading saved files…');
   const [savedAgents, setSavedAgents] = useState<number>();
   const [creatingAgent, setCreatingAgent] = useState(false);
+  // Leaving New agent (Create or Cancel) replaces its Back/Forward entry with the agent shown next.
+  const creatingShown = useRef(false);
+  const observeCreating = useCallback((value: boolean) => { if (creatingShown.current && !value) appMove.current?.(); creatingShown.current = value; setCreatingAgent(value); }, []);
   const [documentAction, setDocumentAction] = useState<DocumentAction>();
   const actionSequence = useRef(0);
   const handleDocumentAction = useCallback((id: number) => setDocumentAction(current => current?.id === id ? undefined : current), []);
@@ -263,7 +266,7 @@ export default function App() {
   const placesRead = useRef<ClusterPlaceSnapshot>(undefined);
   const navigation = useNavigationHistory({
     enabled: !guided,
-    location: page === 'Designer' ? { page, documentId: exampleOpen ? documentId : undefined, view: exampleOpen ? designerView : 'Agent' } : page === 'Clusters' ? { page, view: clustersView } : { page },
+    location: page === 'Designer' ? creatingAgent ? { page, view: 'Agent', creating: true } : { page, documentId: exampleOpen ? documentId : undefined, view: exampleOpen ? designerView : 'Agent' } : page === 'Clusters' ? { page, view: clustersView } : { page },
     exists: async target => {
       if (target.page === 'Designer' && target.documentId && target.documentId !== SAMPLE_DOCUMENT_ID) {
         const agents = await listDocuments();
@@ -411,6 +414,7 @@ export default function App() {
   const restorePlace = (target: Location) => {
     setDocumentAction(undefined); setSidebarOpen(false);
     if (target.page === 'Designer') {
+      if (target.creating) { openDesigner(undefined, true); return; }
       const id = target.documentId;
       if (!id) { if (exampleOpen) setPage('Designer'); else openDesigner(); return; }
       // Switching agents saves pending edits first, as the picker does; the view follows once the agent is open.
@@ -497,7 +501,7 @@ export default function App() {
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
           blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}
         {page === 'Designer' && overviewNotice && <p className="muted" role="status">{overviewNotice}</p>}
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} onCreating={setCreatingAgent} /></div>}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} onCreating={observeCreating} /></div>}
         <Overview onNewAgent={() => openDesigner(undefined, true)} localAiConnected={overviewAiConnected} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} activeDocumentId={firstTest === 'running' ? SAMPLE_DOCUMENT_ID : run?.busy?.documentId} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} workspaceNote={overviewWorkspaceNote} filesRevision={agentsRevision} placesRevision={placesRevision} onCounts={setOverviewCounts} onSavedCount={setSavedAgents}
           onOpenDocument={(id, key) => { void openOverviewDocument(id, 'open', key); }}
           onChatDocument={id => openOverviewDocument(id, 'chat')}

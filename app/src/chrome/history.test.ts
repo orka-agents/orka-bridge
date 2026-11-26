@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { back, canGoBack, canGoForward, currentLocation, editable, forward, type History, historyShortcut, historyShortcutLabels, type Location, prune, push, replace, sameTarget, startHistory } from './history';
+import { back, canGoBack, canGoForward, currentLocation, editable, forward, type History, historyShortcut, historyShortcutLabels, type Location, prune, push, replace, sameLocation, sameTarget, startHistory } from './history';
 
 const home: Location = { page: 'Home' };
 const overview: Location = { page: 'Overview' };
@@ -78,6 +78,8 @@ describe('navigation history', () => {
     expect(sameTarget(cluster(), cluster())).toBe(false);
     expect(sameTarget(places, places)).toBe(false);
     expect(sameTarget(home, home)).toBe(false);
+    expect(sameTarget({ page: 'Designer', view: 'Agent', creating: true }, { page: 'Designer', view: 'Agent', creating: true })).toBe(false);
+    expect(sameLocation({ page: 'Designer', documentId: 'a', view: 'File', creating: true }, { page: 'Designer', view: 'Agent', creating: true })).toBe(true);
   });
 });
 

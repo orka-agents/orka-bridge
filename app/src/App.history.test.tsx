@@ -168,3 +168,24 @@ test('the guided first run has no Back or Forward; history starts when the full 
   expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Forward' })).toBeNull();
 });
+
+test('New agent is a place: Back leaves it, Forward returns, and Cancel takes its entry’s place', async () => {
+  ipc(); const user = userEvent.setup(); render(<App />);
+  await launched();
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'New agent' }));
+  await screen.findByRole('heading', { name: 'New agent', level: 1 });
+  await user.click(backButton());
+  await waitFor(() => expect(shown()).toBe('Overview'));
+  await user.click(forwardButton());
+  await screen.findByRole('heading', { name: 'New agent', level: 1 });
+  expect(shown()).toBe('Designer');
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 });
+  // Back goes to Overview, not to the form that was cancelled.
+  await user.click(backButton());
+  await waitFor(() => expect(shown()).toBe('Overview'));
+  await user.click(forwardButton());
+  await screen.findByRole('heading', { name: 'reader', level: 1 });
+  expect(forwardButton().disabled).toBe(true);
+});
