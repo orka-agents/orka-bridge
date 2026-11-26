@@ -1699,8 +1699,9 @@ localSize(1280, 800); scroll(4000)
 fillMessage("Read another page." + String(repeating: "\nA longer task description.", count: 12))
 waitForButton("Run task")
 click("Run task", [])
-// Earlier tasks folds below the new, long task's card (designer/TryTask.tsx), so it can start below the window.
-waitForNativeText(["Earlier tasks: 1"])
+// Earlier tasks folds below the new, long task's card (designer/TryTask.tsx), so it can start below the window. Its
+// label is a Disclosure summary (role="button"), which WebKit exposes as a button titled with it, not as static text.
+waitForButton("Earlier tasks: 1")
 require(enabledButton("Stop") != nil, "A running task must offer Stop")
 _ = try seek("Earlier tasks: 1", -100)
 _ = try capture("chat-followup-wide", ["Earlier tasks: 1", "Read another page."])
