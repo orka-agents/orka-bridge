@@ -100,6 +100,16 @@ for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps
     : ["Find-Control $script:window 'Clusters' $button", '$bitmap.GetPixel([int]($nav.Current.BoundingRectangle.Right + 16 - $r.X), [int]($homeButton.Current.BoundingRectangle.Top + 8 - $r.Y))'];
   for (const text of sample) assert.ok(driver.includes(text), `${name}: page paper must be sampled beside the actual sidebar: ${text}`);
 }
+// A fresh profile opens on guided Welcome, without the sidebar: start from Get started, leave guidance through
+// Show all of Bridge before the sidebar, and sample guided pages under their title-bar row.
+{
+  const mac = await read('./native-lifecycle-macos.swift'), windows = await read('./native-lifecycle-windows.ps1');
+  assert.ok(mac.includes('if !nodes(main).contains(where: { pressable($0, "Get started") }) { press(find(main, "Clusters") { pressable($0, "Clusters") }) }')
+    && mac.indexOf('pressable($0, "Show all of Bridge")') < mac.indexOf('press(find(main, "Designer")'), 'Mac lifecycle must start from guided Welcome and leave guidance before Designer');
+  assert.ok(windows.includes("if (!$control) { $control = Find-Control $script:window 'Get started' $button }")
+    && windows.indexOf("Find-Control $script:window 'Show all of Bridge' $button") < windows.indexOf("Wait-For 'Designer button missing'")
+    && windows.includes('$bitmap.GetPixel([int]($row.Left + 8 - $r.X), [int]($row.Bottom + 12 - $r.Y))'), 'Windows lifecycle must start from guided Welcome, sample guided pages and leave guidance before Designer');
+}
 const windowsLifecycle = await read('./native-lifecycle-windows.ps1');
 const clickPoint = windowsLifecycle.slice(windowsLifecycle.indexOf('function Get-ClickPoint('), windowsLifecycle.indexOf('function Press('));
 // A coordinate click without UIA's clickable point must still prove, by hit test, that it lands on the control.
