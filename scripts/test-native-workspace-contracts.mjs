@@ -94,6 +94,12 @@ for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps
     ? /theme\s*==\s*"dark"\s*\?\s*\[\s*9\s*,\s*9\s*,\s*10\s*\]\s*:\s*\[\s*255\s*,\s*255\s*,\s*255\s*\]/
     : /if\s*\(\s*\$script:theme\s*-eq\s*'dark'\s*\)\s*\{\s*@\(\s*9\s*,\s*9\s*,\s*10\s*\)\s*\}\s*else\s*\{\s*@\(\s*255\s*,\s*255\s*,\s*255\s*\)\s*\}/;
   assert.match(driver, palette, `${name}: light/dark Orka paper branches are missing or reversed`);
+  // The window edge is chrome around the page panel; the paper sample sits in the panel's bare left padding.
+  if (name.endsWith('.swift')) {
+    for (const text of ['gutter = CGPoint(x: nav.maxX + 16, y: home.minY + 8)', 'x: ((gutter.x - rect.minX) * CGFloat(image.width) / rect.width).rounded(.down)', 'scroll?.location = CGPoint(x: gutter.x, y: rect.midY)', 'heading.minY >= pageTop']) {
+      assert.ok(driver.includes(text), `${name}: page paper must be sampled beside the actual sidebar: ${text}`);
+    }
+  }
 }
 const captures = JSON.parse(await read('./native-model-captures.json'));
 // Upgrade frames share the destination journey but have their own exact matrix gate.
