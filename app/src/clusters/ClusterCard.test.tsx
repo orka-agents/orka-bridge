@@ -25,7 +25,8 @@ function native(status: object = { selected: null, localVm: 'idle', model: 'lock
 }
 async function open() {
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'I already run Orka on a cluster' }));
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
   await screen.findByRole('button', { name: 'kubectl context' });
   return user;
 }

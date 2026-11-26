@@ -36,7 +36,7 @@ test('the default local choice keeps Continue inside the containing card', async
   const card = action.closest('.card');
   expect(card).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
-  expect(within(card as HTMLElement).getByText('Step 1 of 4')).toBeTruthy();
+  expect(within(card as HTMLElement).getByText('Step 1 of 4 · Choose where agents run')).toBeTruthy();
   expect(within(card as HTMLElement).getByRole('group', { name: 'Where agents run' })).toBeTruthy();
   expect(screen.getByRole<HTMLInputElement>('radio', { name: 'On this computer' }).checked).toBe(true);
   expect(screen.getByRole<HTMLInputElement>('radio', { name: 'On a cluster you already have' }).checked).toBe(false);

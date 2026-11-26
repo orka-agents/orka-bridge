@@ -30,7 +30,8 @@ afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlo
 
 test('Get started remembers the welcome without starting a workspace, including on remount', async () => {
   const ipc = native(); const user = userEvent.setup(); const first = render(<App />);
-  expect(await screen.findByRole('heading', { name: 'Build an AI agent that does a real job' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Your agents. Your models. Your keys. Your cluster.' })).toBeTruthy();
+  expect(screen.getByText("Build and test an agent on this computer, then send the same agent to your team's Orka cluster.")).toBeTruthy();
   await waitFor(() => expect(document.querySelector('#tab-status-Overview')?.textContent).toBe(''));
   expect(screen.getByText('Write it')).toBeTruthy();
   expect(screen.getByText('Test it')).toBeTruthy();
@@ -68,12 +69,11 @@ test('a saved native choice skips welcome even without a renderer preference', a
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
 
-test('expert route is available without starting a local workspace', async () => {
+test('someone who already runs Orka reaches their cluster from the screen after Welcome, without starting a local workspace', async () => {
   const ipc = native(); const user = userEvent.setup(); render(<App />);
-  const expert = await screen.findByRole('button', { name: 'I already run Orka on a cluster' });
-  expect(expert.matches(':disabled')).toBe(false);
-  expect(expert.classList.contains('welcome-expert')).toBe(true);
-  await user.click(expert);
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  expect(screen.queryByRole('button', { name: 'I already run Orka on a cluster' })).toBeNull();
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
   expect(await screen.findByRole('button', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
@@ -206,13 +206,13 @@ const current = () => document.querySelector('.page-tab[aria-current="page"]')?.
 
 test('a computer that dismissed Welcome before but set nothing up opens on Welcome again', async () => {
   localStorage.setItem(preference, '1'); launch(unselected); render(<App />);
-  expect(await screen.findByRole('heading', { name: 'Build an AI agent that does a real job' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Your agents. Your models. Your keys. Your cluster.' })).toBeTruthy();
   expect(current()).toBe('Clusters');
   expect(await within(screen.getByRole('navigation')).findByText('Start here')).toBeTruthy();
   expect(within(screen.getByRole('contentinfo')).getByText('Nothing is set up yet')).toBeTruthy();
 });
 
-test.each(['Get started', 'I already run Orka on a cluster'])('%s dismisses Welcome for the rest of the run', async name => {
+test.each(['Get started'])('%s dismisses Welcome for the rest of the run', async name => {
   localStorage.setItem(preference, '1'); launch(unselected); const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name }));
   await user.click(screen.getByRole('button', { name: 'Overview' }));

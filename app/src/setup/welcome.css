@@ -1,25 +1,30 @@
-/* Welcome: one centred column, the hero headline, the three steps in a row and one large next step. */
-.welcome-screen { max-width: 780px; margin-inline: auto; padding-block: calc(80px - var(--page-pad, 24px)) 0; display: grid; justify-items: center; gap: var(--space-4); text-align: center; font: var(--type-body); }
-.welcome-screen h1 { margin: 0; font: var(--type-display-hero); letter-spacing: var(--tracking-display); text-wrap: balance; }
-.welcome-lede { max-width: 56ch; margin: 0; font: var(--type-reading); color: var(--color-text-secondary); text-wrap: balance; }
-.welcome-journey { list-style: none; margin: 0; padding: 0; width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--color-border-strong); text-align: left; }
-.welcome-journey li { display: grid; gap: var(--space-1); align-content: start; padding: var(--space-3) var(--space-4) 0; }
-.welcome-journey li:first-child { padding-left: 0; }
-.welcome-journey li + li { border-left: 1px solid var(--color-border-strong); }
-.welcome-journey b { font: var(--type-body); font-weight: 600; }
-.welcome-journey span { font: var(--type-caption); color: var(--color-text-secondary); }
-.welcome-journey .journey-number { display: none; }
-.welcome-actions { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
-.welcome-actions > .button-primary { min-width: 300px; }
-.welcome-actions > span { font: var(--type-small); font-family: var(--font-mono); font-variant-ligatures: none; }
-.welcome-actions p { max-width: 46ch; margin: 0; }
-.welcome-screen .welcome-expert { padding-inline: 0; }
-@media (max-width: 820px) {
-  .welcome-screen { padding-block: calc(80px - var(--page-pad, 16px)) var(--space-4); gap: var(--space-4); }
-  .welcome-screen h1 { font: var(--type-display); letter-spacing: var(--tracking-display); }
+/* Welcome: one centred column, sized with the window. The orca leads, then the hero headline on two lines, the
+   three steps in a row and one large next step. Type and spacing grow with the window, within limits. */
+.welcome-screen {
+  /* One board pixel: the boards are drawn at 1200 by 820. */
+  --u: clamp(.78px, min(100vw / 1200, 100vh / 820), 1.55px);
+  width: 100%; max-width: calc(780 * var(--u)); margin-inline: auto; display: grid; justify-items: center; gap: calc(12 * var(--u)); text-align: center; font: var(--type-body);
 }
+.welcome-screen .art-orca { width: clamp(160px, min(26.7vw, 39vh), 640px); }
+.welcome-screen h1 { margin: 0; font: var(--type-display-hero); font-size: clamp(36px, min(5.2vw, 7.6vh), 92px); letter-spacing: var(--tracking-display); text-wrap: balance; }
+.welcome-screen h1 > span { display: block; }
+.welcome-lede { max-width: 35em; margin: 0; font: var(--type-reading); font-size: clamp(16px, calc(20 * var(--u)), 28px); line-height: 1.45; color: var(--color-text-secondary); text-wrap: pretty; }
+.welcome-journey { list-style: none; margin: var(--space-1) 0 0; padding: 0; width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--color-border-strong); text-align: left; }
+.welcome-journey li { display: grid; gap: var(--space-0-5); align-content: start; padding: var(--space-2-5) var(--space-4) 0; }
+.welcome-journey li:first-child { padding-left: 0; }
+.welcome-journey li:last-child { padding-right: 0; }
+.welcome-journey li + li { border-left: 1px solid var(--color-border-strong); }
+.welcome-journey b { font: 600 14px/20px var(--font-ui); font-size: clamp(14px, calc(14 * var(--u)), 20px); }
+.welcome-journey span { font: 400 13px/20px var(--font-ui); font-size: clamp(12px, calc(13 * var(--u)), 18px); line-height: 1.5; color: var(--color-text-secondary); }
+.welcome-journey .journey-number { display: none; }
+.welcome-actions { display: flex; flex-direction: column; align-items: center; gap: calc(12 * var(--u)); margin-top: calc(10 * var(--u)); }
+.welcome-actions > .button-primary { min-width: calc(300 * var(--u)); min-height: calc(56 * var(--u)); gap: var(--space-3); padding-inline: var(--space-8); font: 600 20px/1 var(--font-ui); font-size: calc(20 * var(--u)); }
+.welcome-actions > span { font: 400 13px/16px var(--font-mono); font-size: clamp(12px, calc(13 * var(--u)), 17px); font-variant-ligatures: none; }
+.welcome-actions p { max-width: 46ch; margin: 0; }
+/* The onward arrow is decoration: screen readers and textContent keep the button's own name. */
+.welcome-actions > .button-primary::after,
+.local-preflight .workspace-step-actions > .button-primary::after { content: '→' / ''; font-size: 1.15em; font-weight: 400; line-height: 1; }
 @media (max-width: 600px) {
-  .welcome-screen h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
   .welcome-journey { grid-template-columns: minmax(0, 1fr); border-top: 0; }
   .welcome-journey li, .welcome-journey li:first-child { padding: var(--space-2) 0; border-top: 1px solid var(--color-border-strong); }
   .welcome-journey li + li { border-left: 0; }
@@ -81,3 +86,13 @@
   .workspace-option-detail { grid-column: 2; }
   .workspace-preflight.alert { padding: var(--space-3); }
 }
+
+/* Where agents run: the step label sits above the question, as on the boards. Its wrappers step aside so the label
+   can move; the controls keep their order. */
+.places-workspace:has(> div:not([hidden]) > .local-preflight) { display: flex; flex-direction: column; gap: var(--space-4); }
+.places-workspace:has(> div:not([hidden]) > .local-preflight) > .workspace-heading { margin: 0; }
+.places-workspace > div:not([hidden]):has(> .local-preflight), .places-workspace .local-preflight, .places-workspace .local-preflight > .card { display: contents; }
+.places-workspace .local-preflight .workspace-choice-step { order: -1; margin-bottom: calc(var(--space-2-5) - var(--space-4)); font-size: 12px; }
+.local-preflight .workspace-option > label { font-size: 20px; }
+.workspace-option:has(#workspace-local) .workspace-option-detail > p:first-child { font-size: 13px; line-height: 18px; }
+.workspace-option-detail { font-size: 14px; }

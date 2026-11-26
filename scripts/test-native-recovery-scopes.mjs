@@ -184,9 +184,10 @@ assert.throws(() => checkQueued({ ...queuedState, cancel: true }, 'setup-transfe
 const welcomeGuard = source.split('\n').find(line => line.includes('if (!welcome.primary'));
 assert.ok(welcomeGuard);
 const checkWelcome = Function('welcome', welcomeGuard);
-const welcomeState = { primary: true, expert: true, text: "Send it to your team's cluster (preview)." };
+const welcomeState = { primary: true, expert: false, text: "Send it to your team's cluster (preview)." };
 assert.doesNotThrow(() => checkWelcome(welcomeState));
 assert.throws(() => checkWelcome({ ...welcomeState, primary: false }));
+assert.throws(() => checkWelcome({ ...welcomeState, expert: true }), 'the cluster route lives on the screen after Welcome');
 // Exercise the real layout gate with measurements, without pretending to render a native window.
 const layoutGate = source.slice(source.indexOf('  async function checkLayout('), source.indexOf('  // Setup-progress states:'));
 assert.ok(layoutGate.includes('sidebar tabs must stack in one column left of the page'));
@@ -216,6 +217,16 @@ for (const mutation of [
   { theme: { page: 'rgb(242, 241, 237)', ink: 'rgb(27, 32, 38)' } },
   { scrollHeight: 703 },
 ]) await assert.rejects(() => gate({ ...wide, ...mutation }));
+// The guided first run spans the window with no sidebar or status card on screen, keeps the status live region and
+// offers Show all of Bridge; any other screen is still held to the sidebar layout above.
+const guided = { ...wide, guided: true, tabs: [], names: 0, subtitles: 0, hostShown: 0, host: { x: 0, y: 0, right: 0, width: 0 }, hostLabel: { width: 0 }, page: { x: 0, right: 1280 }, statusRegion: true, exit: 1 };
+await gate(guided);
+await gate({ ...guided, width: 540, page: { x: 0, right: 540 } });
+for (const mutation of [
+  { tabs: wide.tabs }, { names: 4 }, { hostShown: 1 }, { page: { x: 232, right: 1280 } }, { page: { x: 0, right: 1000 } },
+  { statusRegion: false }, { exit: 0 },
+]) await assert.rejects(() => gate({ ...guided, ...mutation }));
+await assert.rejects(() => gate({ ...guided, guided: false }));
 // The compact Change image must be framed before requesting its screenshot.
 const changeCapture = source.match(/if \(name\.startsWith\('ai-removal-'\)\) \{([\s\S]*?)\n      await clickAction\('Remove saved sign-in'\);/)?.[1];
 assert.ok(changeCapture);

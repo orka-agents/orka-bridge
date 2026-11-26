@@ -343,7 +343,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); }, showCluster(item?: Place) { chooseCluster(item); } }));
   const titleId = active ? 'page-title' : undefined;
   if (!status && !error || launchPending) return <><h1 id={titleId}>Clusters</h1><p role="status">Checking the workspace…</p></>;
-  if (welcome && status) return <Welcome titleId={titleId} onStart={start} onCluster={() => chooseCluster()} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
+  if (welcome && status) return <Welcome titleId={titleId} onStart={start} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
   const selected = status?.selected === 'localVm';
   const modelRecovery = ['failed', 'resetFailed', 'removalFailed', 'resetting'].includes(modelState);
   const aiHeadings: Partial<Record<ModelState, string>> = {
@@ -376,7 +376,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
       <div className={workspace ? 'setup workspace-setup-grid' : selected ? `setup workspace-setup-grid${status?.localVm === 'failed' || modelRecovery ? ' workspace-setup-failed' : ''}` : 'workspace-choice local-preflight'}>
         {!selected && !workspace && <>
           <section className="card">
-            <p className="workspace-choice-step muted">Step 1 of 4</p>
+            <p className="workspace-choice-step muted">Step 1 of 4 · Choose where agents run</p>
             <fieldset className="workspace-options">
               <legend className="workspace-sr-only">Where agents run</legend>
               <div className={`workspace-option${location === 'local' ? ' workspace-selected' : ''}`}>
