@@ -802,7 +802,11 @@ for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum",
     scrollMain(-4000)
     try capture("welcome-\(size)-end", "Clusters")
     // A release build names its download; the bare "Mostly a download" means the sizes never arrived.
-    let sized = nativeStrings().contains { $0.range(of: #"Mostly a \d+\.\d GB download"#, options: .regularExpression) != nil }
+    // Welcome draws its fallback until the native requirements answer.
+    let sizedLine = { nativeStrings().contains { $0.range(of: #"Mostly a \d+\.\d GB download"#, options: .regularExpression) != nil } }
+    let sizedDeadline = Date(timeIntervalSinceNow: 10)
+    while !sizedLine() && Date() < sizedDeadline { Thread.sleep(forTimeInterval: 0.5) }
+    let sized = sizedLine()
     require(visibleButtons("Get started").count == 1 && sized,
             "Welcome next action and time cue must remain reachable at \(size)")
     require(nativeStrings().contains { $0.contains("Send it to your team's cluster (preview).") }, "Welcome lost the team-cluster preview caveat")
