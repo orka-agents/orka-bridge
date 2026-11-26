@@ -211,7 +211,8 @@ test('the place label stays This computer without inventing selection or readine
   await act(async () => { release(); });
   await waitFor(() => expect(chip().querySelector('.host-label')?.textContent).toBe('This computer'));
   expect(chip().querySelector('.live-dot')?.className).not.toContain('ready');
-  expect(chip().tagName).toBe('SPAN');
+  // The chip opens the place switcher; it names the place but is not a navigation tab.
+  expect(chip().tagName).toBe('BUTTON'); expect(chip().getAttribute('aria-haspopup')).toBe('menu');
   expect(within(screen.getByRole('navigation')).queryByRole('button', { name: /computer|place/i })).toBeNull();
   // A valid saved choice restored after relaunch is "This computer"; an unreadable read afterwards is not "no selection".
   sim.selected = 'localVm'; sim.localVm = 'starting';

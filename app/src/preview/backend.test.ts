@@ -1,6 +1,9 @@
 import { clearMocks } from '@tauri-apps/api/mocks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readAgents, readFiles } from '../overview/api';
+import { readWorkspaceCatalog } from '../catalog';
+import { clusterPlaces, selectCluster } from '../clusters/api';
+import { sendPreflight } from '../clusters/send-api';
+import { readAgents, readFiles, readPlaces } from '../overview/api';
 import { chatCall } from '../designer/chat-api';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
 import { runCall } from '../designer/run-api';
@@ -59,6 +62,19 @@ describe('preview backend replies', () => {
     expect(await chatCall('agent_chat_send', SAMPLE_DOCUMENT_ID, 'Hello')).toMatchObject({ ok: true, snapshot: { busy: true } });
     expect((await readFiles()).state).toBe('complete');
     expect((await readAgents()).state).toBe('complete');
+  });
+
+  it('passes the cluster validators for a cluster connected in this run', async () => {
+    await preview('scenario=clusterReady');
+    const snapshot = await clusterPlaces();
+    expect(snapshot).toMatchObject({ selectedKey: 'team-dev', persistenceState: 'complete', places: [{ key: 'team-dev', context: 'team-dev' }] });
+    expect((await readPlaces())?.places.map(place => place.key)).toEqual(['team-dev']);
+    const selected = await selectCluster('team-dev');
+    expect(selected).toMatchObject({ target: { context_name: 'team-dev' }, providers: [{ ready: true }] });
+    await expect(selectCluster('elsewhere')).rejects.toThrow();
+    const remote = { targetId: selected.target.id, providerId: selected.providers[0].id };
+    expect(await readWorkspaceCatalog(new AbortController().signal, remote)).toMatchObject({ models: { state: 'ready' } });
+    expect(await sendPreflight(remote.targetId, remote.providerId, SAMPLE_DOCUMENT_ID)).toMatchObject({ canSend: false });
   });
 
   it('reports the signed-out GitHub CLI as a sign-in failure', async () => {

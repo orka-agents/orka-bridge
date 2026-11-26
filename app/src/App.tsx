@@ -9,6 +9,7 @@ import { selectedDocument } from './designer/documents-api';
 import Example, { type DocumentAction } from './designer/Example';
 import { type RunSnapshot, runCall } from './designer/run-api';
 import FileMenu from './chrome/FileMenu';
+import OrkaSwitcher from './chrome/OrkaSwitcher';
 import WindowControls, { customTitleBar } from './chrome/WindowControls';
 import { finishGuidedFirstRun, guidedFirstRun, guidedStep } from './firstrun/guided';
 import GuidedSteps from './firstrun/GuidedSteps';
@@ -338,8 +339,9 @@ export default function App() {
     openDesigner(id);
     setDocumentAction({ id: ++actionSequence.current, documentId: id, action });
   };
+  const localLine = welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' || setup?.model === 'locked' && setup?.localVm === 'ready' ? setupDetail : view.footerLine;
   const footer = [
-    remote ? place.target ? `Cluster: ${place.target.context_name}` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' || setup?.model === 'locked' && setup?.localVm === 'ready' ? setupDetail : view.footerLine,
+    remote ? place.target ? `Cluster: ${place.target.context_name}` : 'Choose a cluster' : localLine,
     exampleState === 'loaded' && (saveState !== 'saved' || saveNotice.id === documentId && saveNotice.edited) ? { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState] : undefined,
   ].filter(Boolean);
   const checkFirstTest = () => {
@@ -404,7 +406,10 @@ export default function App() {
         {page === 'Designer' && !exampleOpen && <p role="status">Opening your agent…</p>}
       </main>
       <footer className="status-bar">
-        <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span>{remote && place.target && <span className="chip">In use</span>}<span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
+        <OrkaSwitcher title={remote ? placeName : hostDetail} place={place} computerLine={localLine} computerTone={hostTone} onPlace={choosePlace}
+          onClusters={item => { setPage('Clusters'); localCluster.current?.showCluster(item); }} onManage={() => { setPage('Clusters'); localCluster.current?.showPlaces(); }}>
+          <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span>{remote && place.target && <span className="chip">In use</span>}<span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span>
+        </OrkaSwitcher>
         <span className="status-lines">{footer.map((part, index) => <span key={index}>{index > 0 && <span aria-hidden="true"> · </span>}<span aria-live={index > 0 ? 'polite' : undefined}>{part}</span></span>)}
 </span>
         {checks && <span className="checks-status">{checks}</span>}

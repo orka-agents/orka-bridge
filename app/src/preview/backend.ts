@@ -16,6 +16,7 @@ export const scenarios = {
   ghSignedOut: 'GitHub CLI installed, signed out',
   runFails: 'Example test fails',
   vmFailed: 'Virtualization turned off',
+  clusterReady: 'A cluster connected in this run',
 } as const;
 export type Scenario = keyof typeof scenarios;
 type Gh = 'missing' | 'signedOut' | 'signedIn';
@@ -40,7 +41,7 @@ let selected: 'localVm' | null = fresh ? null : 'localVm';
 let startedAt: number | null = scenario === 'restart' ? now() : null;
 let reopened = scenario === 'restart';
 let stopped: 'cancelled' | 'closed' | null = null;
-let modelConnected = scenario === 'connected' || scenario === 'runFails';
+let modelConnected = scenario === 'connected' || scenario === 'runFails' || scenario === 'clusterReady';
 
 // Deterministic 64-hex digest; the preview only needs stable, distinct source ids.
 function digest(text: string) {
@@ -162,7 +163,32 @@ function pair(documentId: string) {
 const documentId = (args?: Record<string, unknown>) => typeof args?.documentId === 'string' ? args.documentId : SAMPLE_DOCUMENT_ID;
 const upgradeNone = { state: 'none', transaction: null, createdAt: null, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, credential: 'absent', busy: false, error: null, repeated: false, canReplace: false, canRestore: false, canCancel: false };
 
+// clusterReady: one remembered cluster, team-dev, whose access this run already confirmed, so the
+// switcher can select it without reconnecting.
+function clusterReply(command: string, args?: Record<string, unknown>): unknown {
+  const key = 'team-dev';
+  const place = { key, context: 'team-dev', service: 'control/orka', namespace: 'agents', stale: false, observedAt: Math.floor(Date.now() / 1000), checkedAt: Math.floor(Date.now() / 1000), agents: [] };
+  const target = { id: uuid('team-dev-target'), context_id: uuid('team-dev-context'), context_name: 'team-dev', service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka-agents/orka:preview' };
+  const provider = { id: uuid('team-dev-provider'), name: 'team-model', ready: true };
+  switch (command) {
+    case 'cluster_places': return { places: [place], selectedKey: key, persistenceState: 'complete' };
+    case 'overview_places': return { places: [place], historyState: 'complete', unobserved: [] };
+    case 'cluster_select': if (args?.key !== key) throw { check: 'configuration', result: 'unknown' }; return { target, providers: [provider] };
+    case 'cluster_catalog': return { defaultModel: null, models: { state: 'ready', items: [{ id: 'gpt-5.6-terra' }] }, tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Fetch a web page and return its text.' }] } };
+    case 'send_preflight': {
+      const id = documentId(args);
+      const doc = docs.get(id);
+      return { documentId: id, targetId: target.id, providerId: provider.id, source: doc ? source(doc) : null, model: 'gpt-5.6-terra', canSend: false,
+        rows: [{ label: 'Destination', status: 'allowed', message: 'team-dev is connected' }, { label: 'Send', status: 'cannotCheck', message: 'The preview does not send agents' }] };
+    }
+  }
+}
+
 async function handle(command: string, args?: Record<string, unknown>): Promise<unknown> {
+  if (scenario === 'clusterReady') {
+    const reply = clusterReply(command, args);
+    if (reply !== undefined) return reply;
+  }
   switch (command) {
     case 'setup_requirements': return { memoryBytes: 6 * GiB, imageBytes, stateDiskBytes: 32 * GiB, downloadBytes: null };
     case 'setup_preflight': return { platform: 'windows', virtualization: scenario === 'vmFailed' ? 'disabled' : 'ready', memory: 'ready', installedMemoryBytes: 32 * GiB, requiredMemoryBytes: 6 * GiB };
