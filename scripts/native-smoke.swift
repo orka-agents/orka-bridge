@@ -119,7 +119,8 @@ while Date() < rendererDeadline {
         // Observe the welcome, the actual release setup result or Home (a remembered
         // cluster opens there), not a button that merely happens to be below the header.
         // The text viewport also needs the tab bar; do not query it during renderer startup.
-        if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names)
+        // The guided first run (a fresh profile, or Welcome again while nothing is set up) has no sidebar.
+        if (Set(["Overview", "Designer", "Clusters"]).isSubset(of: names) || names.contains("Get started"))
             && (names.contains("Get started") || nativeTextIsVisible("Choose where agents run") || nativeTextIsVisible("What do you want done?")) { found = true; break }
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
@@ -222,7 +223,10 @@ func bodyBounds() -> CGRect {
     let rect = window()!.1
     guard let nav = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).first,
           let home = nativeButtons("Home").compactMap({ nativeBounds($0) }).map({ $0.minY }).min() else {
-        fail("Cannot locate the native sidebar for the page viewport")
+        // The guided first run has no sidebar and no visible status card: the page is the whole window under
+        // the app's title-bar row.
+        guard let row = guidedTitleRow() else { fail("Cannot locate the native sidebar or the guided title bar for the page viewport") }
+        return CGRect(x: rect.minX, y: row.maxY, width: rect.width, height: max(0, rect.maxY - row.maxY))
     }
     let left = nav.maxX + 8
     let top = max(rect.minY, home - 4)
@@ -233,9 +237,39 @@ func bodyBounds() -> CGRect {
     let bottom = statusBar.map { $0.minY - 8 } ?? rect.maxY - 8
     return CGRect(x: left, y: top, width: max(0, rect.maxX - left), height: max(0, bottom - top))
 }
+// The guided first run's title-bar row: the full-width row that holds the Setup progress list.
+func guidedTitleRow() -> CGRect? {
+    let rect = window()!.1
+    guard var node = nativeElements().first(where: { element in
+        attribute(element, "AXRole") as? String == "AXList"
+            && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Setup progress" }
+    }) else { return nil }
+    for _ in 0..<8 {
+        if let bounds = nativeBounds(node), bounds.width >= rect.width * 0.9, bounds.height < 100 { return bounds }
+        guard let parent = attribute(node, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { return nil }
+        node = parent as! AXUIElement
+    }
+    return nil
+}
+// Show all of Bridge, in the guided title bar after Welcome, is the only way to the sidebar during a guided run.
+func leaveGuidedFirstRun() {
+    guard nativeButtons("Home").isEmpty else { return }
+    let rect = window()!.1
+    let exits = nativeButtons("Show all of Bridge").filter { attribute($0, "AXEnabled") as? Bool == true }
+        .compactMap { nativeBounds($0) }.filter { rect.contains($0) }
+    require(exits.count == 1, "The guided first run must offer one visible Show all of Bridge")
+    mouse(.leftMouseDown, CGPoint(x: exits[0].midX, y: exits[0].midY)); mouse(.leftMouseUp, CGPoint(x: exits[0].midX, y: exits[0].midY))
+    for _ in 0..<30 {
+        if !nativeButtons("Home").isEmpty && !nativeButtons("Clusters").isEmpty { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(!nativeButtons("Home").isEmpty && !nativeButtons("Clusters").isEmpty && guidedTitleRow() == nil,
+            "Show all of Bridge did not end the guided first run and bring back the sidebar")
+}
 // A point in the page panel's bare left padding: page content starts 16-24pt in from the panel's left edge, so
 // no control, text or scrollbar is under it. Just under the title bar it is also above every fixed picker (80pt
-// down), so its colour is page paper, or paper under the picker's backdrop.
+// down), so its colour is page paper, or paper under the picker's backdrop. On guided screens it is inside the
+// solid paper corner (32pt radius) that art.css keeps clear of the chart.
 func pageGutter(y: CGFloat? = nil) -> CGPoint {
     let page = bodyBounds()
     return CGPoint(x: page.minX + 8, y: y ?? page.minY + 12)
@@ -634,7 +668,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if page == "Clusters" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can read the capital I in AI as lowercase l. Match the rest of the heading.
-        let welcome = showsText(text, "Build an") && showsText(text, "does a real job") || !nativeButtons("Get started").isEmpty
+        let welcome = showsText(text, "Your agents. Your models.") && showsText(text, "Your keys. Your cluster.") || !nativeButtons("Get started").isEmpty
         let places = showsText(text, "Choose where agents run") || nativeTextIsVisible("Choose where agents run")
         let detail = showsText(text, "Back to clusters") || showsText(text, "Where should your agents run?") || !nativeButtons("Continue").isEmpty
         require(welcome || places || detail, "Places heading or subview not visible; observed: \(text)")
@@ -815,6 +849,7 @@ func localPreflight(_ name: String) throws {
     try capture(name, "Clusters")
     requireNoLocalWorkspace() // the size screen must never start the VM
     require(visibleButtons("Back to clusters").isEmpty, "Local setup must not have a header Back link")
+    leaveGuidedFirstRun()
     clickTab("Clusters", [])
 }
 func requireBlankPair(_ agent: URL, _ tests: URL, _ name: String) throws {
@@ -830,7 +865,8 @@ try FileManager.default.createDirectory(atPath: output, withIntermediateDirector
 setContent(1280, 800)
 var initial = try capture("initial", "Clusters")
 // Each theme owns a fresh runner profile; verify retention after its own restart.
-let initiallyWelcome = initial.contains { $0.topCandidates(1).first?.string == "Get started" }
+// Get started draws a CSS arrow after its name, so find it as the native button, not as an exact OCR line.
+let initiallyWelcome = visibleButtons("Get started").count == 1
 require(initiallyWelcome, "Expected a first-run welcome in the fresh \(theme) job")
 for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
     setContent(width, height)
@@ -845,8 +881,8 @@ for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum",
 }
 setContent(1280, 800)
 scrollMain(4000)
-if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" }) {
-    clickText("Get started", in: initial)
+if visibleButtons("Get started").count == 1 {
+    clickButton("Get started")
     initial = try capture("places-empty", "Clusters")
 }
 try localPreflight("local-preflight")
@@ -970,13 +1006,15 @@ app.activate(options: [])
 waitForWorkspaceRenderer()
 // Nothing is set up yet, so Welcome returns on every launch until Get started in that run.
 let reopened = try capture("welcome-reopened", "Clusters")
-require(reopened.contains { $0.topCandidates(1).first?.string == "Get started" },
-        "Restart with nothing set up must show Welcome again")
-clickText("Get started", in: reopened)
+require(visibleButtons("Get started").count == 1 && guidedTitleRow() != nil,
+        "Restart with nothing set up must show Welcome again, guided")
+_ = reopened
+clickButton("Get started")
 let retained = try capture("places-retained", "Clusters")
-require(!retained.contains { $0.topCandidates(1).first?.string == "Get started" },
+require(nativeButtons("Get started").isEmpty,
         "Get started must dismiss Welcome without starting a workspace")
 requireNoLocalWorkspace()
+leaveGuidedFirstRun()
 clickTab("Overview", retained)
 _ = try capture("overview", "Overview")
 require(!nativeTextIsVisible("This workspace can't list its agents yet."),
