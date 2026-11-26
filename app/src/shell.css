@@ -4,7 +4,16 @@
   height: 100dvh; display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas: "title title" "nav main" "status main"; background: var(--color-chrome);
 }
-.title-bar { grid-area: title; display: flex; align-items: center; min-width: 0; min-height: 36px; padding-left: var(--space-4); }
+/* Three columns: controls at each end and a centre that stays centred whatever the ends hold. */
+.title-bar { grid-area: title; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; column-gap: var(--space-2); min-width: 0; min-height: 44px; padding-left: var(--space-4); }
+.title-bar-start, .title-bar-end { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.title-bar-centre { display: flex; justify-content: center; min-width: 0; }
+.title-bar-end { justify-content: flex-end; align-self: stretch; padding-right: var(--space-3); }
+.title-bar-end:has(.window-controls) { padding-right: 0; }
+.chrome-control { position: relative; display: inline-flex; }
+.title-bar .button-icon { color: var(--color-text); }
+.title-bar .button-icon .icon { width: 16px; height: 16px; }
+.chrome-control:hover .control-tip, .chrome-control:focus-within .control-tip { display: block; }
 .brand { display: flex; align-items: center; gap: var(--space-2); font: var(--type-card); }
 .brand img { object-fit: contain; filter: var(--mark-filter); }
 .page-nav { grid-area: nav; display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; overflow: auto; padding: var(--space-1) var(--space-2) var(--space-2); }

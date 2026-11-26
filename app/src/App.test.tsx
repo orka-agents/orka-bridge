@@ -139,6 +139,9 @@ test('selected_heading', async () => {
 test('keyboard_activation', async () => {
   const user = userEvent.setup();
   render(<App />);
+  // The title bar comes first in reading order.
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Theme: System. Click for Light' }));
   await user.tab();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Home' }));
   await user.tab();

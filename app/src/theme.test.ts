@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const css = readFileSync('src/app.css', 'utf8');
-const palettes = [...css.matchAll(/:root\s*\{([^}]+)\}/g)].map(([, block]) =>
+// Light, then dark when the system asks for it (unless Light is chosen), then dark when chosen outright.
+const palettes = [...css.matchAll(/:root(?::not\(\[data-theme="light"\]\)|\[data-theme="dark"\])?\s*\{([^}]+)\}/g)].map(([, block]) =>
   Object.fromEntries([...block.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [name, value.trim()])),
 );
 
@@ -64,8 +65,18 @@ describe('Orka ink and paper theme contract', () => {
   });
   it('uses the system dark preference and bundled reading and code families', () => {
     expect(css).toContain('@media (prefers-color-scheme: dark)');
+    expect(css).toMatch(/@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \{/);
     expect(palettes[0]['font-ui']).toContain('Geist Variable');
     expect(palettes[0]['font-mono']).toContain('Geist Mono Variable');
+  });
+  it('makes a chosen theme match the system one', () => {
+    expect(palettes).toHaveLength(3);
+    // Chosen Dark uses exactly the system dark values; chosen Light turns the system dark rule off, so it is the base palette.
+    expect(palettes[2]).toEqual(palettes[1]);
+    expect(css).toMatch(/:root\s*\{\s*color-scheme: light;/);
+    expect(css).toMatch(/:root:not\(\[data-theme="light"\]\) \{\s*color-scheme: dark;/);
+    expect(css).toMatch(/:root\[data-theme="dark"\] \{\s*color-scheme: dark;/);
+    expect(css).not.toMatch(/:root\[data-theme="light"\]/);
   });
   it('uses one six-pixel radius and reserves colour for state', () => {
     expect(palettes[0]).toMatchObject({

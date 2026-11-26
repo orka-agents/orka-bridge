@@ -9,6 +9,7 @@ import { selectedDocument } from './designer/documents-api';
 import Example, { type DocumentAction } from './designer/Example';
 import { type RunSnapshot, runCall } from './designer/run-api';
 import FileMenu from './chrome/FileMenu';
+import ThemeButton from './chrome/ThemeButton';
 import WindowControls, { customTitleBar } from './chrome/WindowControls';
 import { finishGuidedFirstRun, guidedFirstRun, guidedStep } from './firstrun/guided';
 import GuidedSteps from './firstrun/GuidedSteps';
@@ -350,11 +351,16 @@ export default function App() {
   return (
     <div className={guided ? 'app-shell guided' : 'app-shell'}>
       <header className="title-bar" data-tauri-drag-region={customTitleBar() ? 'deep' : undefined}>
-        <span className="brand"><img src={mark} width="22" height="22" alt="Orka" /><b>Bridge</b></span>
-        <FileMenu />
-        {guided && <GuidedSteps current={guidedStep(view.step, view.done)} />}
-        {guided && !welcome && <Button type="button" kind="quiet" className="guided-exit" onClick={leaveGuided}>Show all of Bridge</Button>}
-        <WindowControls />
+        <div className="title-bar-start">
+          <span className="brand"><img src={mark} width="22" height="22" alt="Orka" /><b>Bridge</b></span>
+          <FileMenu />
+        </div>
+        <div className="title-bar-centre">{guided && <GuidedSteps current={guidedStep(view.step, view.done)} />}</div>
+        <div className="title-bar-end">
+          {guided && !welcome && <Button type="button" kind="quiet" className="guided-exit" onClick={leaveGuided}>Show all of Bridge</Button>}
+          <ThemeButton />
+          <WindowControls />
+        </div>
       </header>
       <nav className="page-nav" aria-label="Main">
         {navGroups.map(group => <div key={group.pages[0]} className="nav-group" role={group.label ? 'group' : undefined} aria-labelledby={group.label ? `nav-group-${group.label}` : undefined}>
