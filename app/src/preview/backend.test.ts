@@ -65,10 +65,19 @@ describe('preview backend replies', () => {
     expect((await readAgents()).state).toBe('complete');
   });
 
+  it('reports an idle Send in the original scenarios', async () => {
+    for (const name of ['ready', 'connected', 'runFails', 'restart']) {
+      await preview(`scenario=${name}`);
+      expect(await sendCall('send_status')).toEqual({ documentId: SAMPLE_DOCUMENT_ID, view: null, busy: null });
+    }
+  });
+
   it('passes the cluster validators for a cluster connected in this run', async () => {
     await preview('scenario=clusterReady');
     const snapshot = await clusterPlaces();
     expect(snapshot).toMatchObject({ selectedKey: 'team-dev', persistenceState: 'complete', places: [{ key: 'team-dev', context: 'team-dev' }] });
+    // Native observation times are Unix milliseconds, as RelativeTime reads them.
+    expect(Math.abs(Date.now() - snapshot!.places[0].checkedAt!)).toBeLessThan(60_000);
     expect((await readPlaces())?.places.map(place => place.key)).toEqual(['team-dev']);
     const selected = await selectCluster('team-dev');
     expect(selected).toMatchObject({ target: { context_name: 'team-dev' }, providers: [{ ready: true }] });
@@ -136,6 +145,7 @@ describe('preview backend replies', () => {
     await preview('scenario=clusterDenied&speed=100');
     const places = await clusterPlaces();
     expect(places).toMatchObject({ selectedKey: null, places: [{ context: 'team-dev', stale: true }] });
+    expect(Math.abs(Date.now() - 2 * 86_400_000 - places!.places[0].checkedAt!)).toBeLessThan(60_000);
     const target = await reconnectCluster(places!.places[0].key);
     expect(await connectCluster(target.id, null)).toMatchObject({ status: 'denied', failure: { check: 'permissions', result: 'permissionDenied' } });
     expect((await readPlaces())?.places).toHaveLength(1);

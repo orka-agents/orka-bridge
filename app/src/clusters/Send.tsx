@@ -364,13 +364,9 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
   const hasHappened = !!(foreignBusy || message || snapshot || controlCancelling);
   // Only an unused local Send may be hidden. Keep all existing work and recovery visible.
   const visible = expanded || !!target || !!snapshot || !!foreignBusy || busy || !!message;
-  return <>{visible && <h2 className="section-label">Team cluster</h2>}<section hidden={!visible} ref={panel} tabIndex={-1} className="send-panel card" aria-label="Send and cluster tests">
+  return <>{visible && <h2 className="section-label">Team cluster</h2>}<section hidden={!visible} ref={panel} tabIndex={-1} className="send-panel card card-strong" aria-label="Send and cluster tests">
     <LongCard title={target ? <>To <code>{target.context_name}</code></> : 'Send your agent'} status={<><StatusPill state={resultState}>{pillWord}</StatusPill><span className="status-description">{outdated ? unconfirmed ? undefined : 'Not run since your edit' : running || busy || !snapshot ? undefined : unhealthy ? undefined : uncertain ? snapshot.stage === 'stopped' && !cancellation ? 'Stopped watching' : undefined : undefined}</span></>} summary={snapshot && <>{targetName && <>{samePlace ? 'Result on ' : 'Earlier result on '}<code>{targetName}</code>. </>}{snapshot.model && <>Captured model: <code>{modelLabel(snapshot.model)}</code>.</>}</>}
-      action={<>
-        {target && <Button type="button" kind="quiet" disabled={busy || running || !onChooseCluster} title={busy || running ? 'Wait for this Send to finish before changing the destination.' : !onChooseCluster ? 'Change the destination in Clusters.' : undefined} onClick={onChooseCluster}>Change</Button>}
-        <div className="workspace-step-actions">{running ? <Button type="button" kind="secondary" disabled={busy || cancelling} onClick={() => { void mutate('send_cancel'); }}>Cancel tests</Button>
-          : <>{primaryAction}{secondaryAction}</>}
-      </div></>}>
+      action={target && <Button type="button" kind="quiet" disabled={busy || running || !onChooseCluster} title={busy || running ? 'Wait for this Send to finish before changing the destination.' : !onChooseCluster ? 'Change the destination in Clusters.' : undefined} onClick={onChooseCluster}>Change</Button>}>
     {showWarning && failing && <SendWarning anchor={warning.anchor} test={failing.id}
       onFix={() => { setWarning(undefined); onFixLocal?.(failing.id); }}
       onSend={() => { setWarning(undefined); void mutate('send_start', warning.separate); }}
@@ -405,6 +401,9 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
     {outdated && uncertain && !snapshot?.report && <p>Earlier result unknown</p>}
     <TestResults report={snapshot?.report} stale={outdated} />
     </CardSection>}
+    <div className="workspace-step-actions send-actions">{running ? <Button type="button" kind="secondary" disabled={busy || cancelling} onClick={() => { void mutate('send_cancel'); }}>Cancel tests</Button>
+      : <>{primaryAction}{secondaryAction}</>}
+    </div>
     <Details hint="Resources and file hashes">
       <dl className="cluster-details"><div><dt>Source</dt><dd>Your saved agent and test files</dd></div>
         <div><dt>This computer</dt><dd>{localEvidence}</dd></div>

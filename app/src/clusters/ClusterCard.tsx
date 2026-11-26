@@ -221,10 +221,10 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
       <select className="field" id="cluster-installation" disabled={busy} value={targetId} onChange={e => { setTargetId(e.target.value); setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setNotice(''); onPlace({ kind: 'cluster' }); }}>
         <option value="">Choose an installation</option>{targets.map(t => <option key={t.id} value={t.id}>{t.service_namespace} / {t.service_name} · {t.watched_namespace}</option>)}
       </select></>}
-    {error && recovery && <div className="workspace-failure cluster-failure" role="alert"><div className="workspace-failure-explanation">
-      <p className="failure-summary">{networkFailure ? `Can't reach ${contextName}. Check your network or VPN.` : recovery.cause}</p>{!networkFailure && <p>{error.operation === 'Read kubeconfig' ? 'Check again to read your contexts. If you changed kubeconfig, use Reload kubeconfig in Details.' : recovery.next}</p>}
+    {error && recovery && <div className="alert alert-failed cluster-failure" role="alert">
+      <p className="alert-title failure-summary">{networkFailure ? `Can't reach ${contextName}. Check your network or VPN.` : recovery.cause}</p>{!networkFailure && <p>{error.operation === 'Read kubeconfig' ? 'Check again to read your contexts. If you changed kubeconfig, use Reload kubeconfig in Details.' : recovery.next}</p>}
       <p>Your workspace and agent files are kept. Connection checks do not create an agent or run tests.</p>
-    </div></div>}
+    </div>}
     {target && <>
       {connected ? <>
         <div className="cluster-result"><p>Orka in <code>{target.service_namespace}/{target.service_name}</code></p></div>
@@ -238,35 +238,12 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
         {summary === undefined ? <p role="status">Reading agents…</p> : !summary || summary.stale ? <p>Agents could not be checked. Check access again to retry.</p> : summary.agents.length ? <ul>{summary.agents.map(agent => <li key={agent.uid}><code>{agent.name}</code>{agent.model && <> · <code>{agent.model}</code></>}</li>)}</ul> : <p>No agents on this cluster yet.</p>}
         {persistence === 'unavailable' && <p role="status">Remembered cluster information is unavailable. This connection is usable, but may not be remembered after Bridge closes.</p>}
       </> : <>
-        <div className="cluster-found"><b>Cluster found</b><span><code>{target.watched_namespace}</code> · <code>{target.service_namespace} / {target.service_name}</code></span></div>
+        <div className="cluster-found"><StatusIcon state="passed" /><b>Cluster found</b><span><code>{target.watched_namespace}</code> · <code>{target.service_namespace} / {target.service_name}</code></span></div>
         {!error && <p className="muted">Check that you can access this cluster.</p>}
         {needsAccount && <ServiceAccountPicker key={`${entry?.revision}/${target.id}`} target={target} active={active} disabled={busy} value={account} onChange={setAccount} />}
       </>}
-      {!error && <Disclosure summaryRef={detailsButton} label={details ? 'Hide details' : 'Show details'} open={details} controls="cluster-details" onOpenChange={setDetails}>
-      {details && <div id="cluster-details"><dl className="cluster-details"><div><dt>Context</dt><dd>{target.context_name}</dd></div><div><dt>Service</dt><dd>{target.service_namespace} / {target.service_name}</dd></div><div><dt>Watched namespace</dt><dd>{target.watched_namespace}</dd></div><div><dt>Orka image</dt><dd>{target.image}</dd></div>
-        {access?.providers.map(p => <div key={p.id}><dt>Provider</dt><dd>{p.name} <span className="muted">{p.ready ? 'Ready' : 'Not ready'}</span></dd></div>)}</dl>
-        {connected && !confirmRemoval && <div className="workspace-step-actions">
-          <Button type="button" kind="secondary" disabled={busy} onClick={() => { void confirm(); }}>Check access again</Button>
-          <Button type="button" kind="quiet" disabled={busy || removing} onClick={() => { setChangingContext(true); if (!initialLoaded.current) readContexts(); }}>Change context</Button>
-          <Button type="button" kind="quiet" disabled={reloading || removing} onClick={() => { void reload(); }}>Reload kubeconfig</Button>
-          {retained && !confirmRemoval && <Button ref={removeButton} type="button" kind="quiet" className="cluster-remove" onClick={() => setConfirmRemoval(true)}>Remove</Button>}
-        </div>}
-      </div>}</Disclosure>}
     </>}
-    {error && <Disclosure label="Details" open={details} onOpenChange={setDetails}>{details && <div className="cluster-error-details">
-      <p>Check: {error.failure.check}</p><p>Result: {error.failure.result}</p>
-      <Button type="button" kind="quiet" onClick={() => { void copy(); }}>Copy details for help</Button>
-      <Button type="button" kind="secondary" disabled={reloading || removing} onClick={() => { void reload(); }}>Reload kubeconfig</Button>
-      <p className="muted">After reloading kubeconfig, choose a context and check access again.</p>
-    </div>}</Disclosure>}
-    {retained && confirmRemoval ? <div role="group" aria-label="Remove cluster confirmation">
-      <p>Remove <code>{retained.context}</code>? This only forgets the cluster in Bridge. Its agents and your kubeconfig are kept.</p>
-      {removeError && <p role="alert">Couldn't confirm removal from Bridge. Check that its local storage is available, then reopen Bridge. Its agents and your kubeconfig are kept.</p>}
-      <div className="workspace-step-actions">
-        <Button type="button" kind="secondary" className="cluster-remove" disabled={removing} onClick={() => { void remove(); }}>Remove cluster</Button>
-        <Button ref={keepCluster} type="button" kind="secondary" disabled={removing} onClick={() => { focusRemoval.current = true; setConfirmRemoval(false); setRemoveError(false); }}>Keep cluster</Button>
-      </div>
-    </div> : <div className="workspace-step-actions cluster-actions">
+    {!(retained && confirmRemoval) && <div className="workspace-step-actions cluster-actions">
       {error && <Button type="button" kind="primary" disabled={busy || (error.operation === 'Use cluster' && needsAccount && !account.trim())} onClick={() => {
         if (error.operation === 'Reconnect cluster' && retained) void reconnect(retained.key);
         else if (error.operation === 'Use cluster') void confirm();
@@ -281,6 +258,30 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
       {!connected && entry?.remembered && !changingContext && <Button type="button" kind="quiet" disabled={removing} onClick={() => { setChangingContext(true); if (!initialLoaded.current) readContexts(); }}>Change context</Button>}
       {!error && !connected && <Button type="button" kind="quiet" disabled={reloading || removing} onClick={() => { void reload(); }}>{reloading ? 'Reloading kubeconfig…' : 'Reload kubeconfig'}</Button>}
       {retained && (!connected || error) && <Button ref={removeButton} type="button" kind="quiet" className="cluster-remove" onClick={() => setConfirmRemoval(true)}>Remove</Button>}
+    </div>}
+    {target && !error && <Disclosure summaryRef={detailsButton} label={details ? 'Hide details' : 'Show details'} open={details} controls="cluster-details" onOpenChange={setDetails}>
+      {details && <div id="cluster-details"><dl className="cluster-details"><div><dt>Context</dt><dd>{target.context_name}</dd></div><div><dt>Service</dt><dd>{target.service_namespace} / {target.service_name}</dd></div><div><dt>Watched namespace</dt><dd>{target.watched_namespace}</dd></div><div><dt>Orka image</dt><dd>{target.image}</dd></div>
+        {access?.providers.map(p => <div key={p.id}><dt>Provider</dt><dd>{p.name} <span className="muted">{p.ready ? 'Ready' : 'Not ready'}</span></dd></div>)}</dl>
+        {connected && !confirmRemoval && <div className="workspace-step-actions">
+          <Button type="button" kind="secondary" disabled={busy} onClick={() => { void confirm(); }}>Check access again</Button>
+          <Button type="button" kind="quiet" disabled={busy || removing} onClick={() => { setChangingContext(true); if (!initialLoaded.current) readContexts(); }}>Change context</Button>
+          <Button type="button" kind="quiet" disabled={reloading || removing} onClick={() => { void reload(); }}>Reload kubeconfig</Button>
+          {retained && !confirmRemoval && <Button ref={removeButton} type="button" kind="quiet" className="cluster-remove" onClick={() => setConfirmRemoval(true)}>Remove</Button>}
+        </div>}
+      </div>}</Disclosure>}
+    {error && <Disclosure label="Details" open={details} onOpenChange={setDetails}>{details && <div className="cluster-error-details">
+      <p>Check: {error.failure.check}</p><p>Result: {error.failure.result}</p>
+      <Button type="button" kind="quiet" onClick={() => { void copy(); }}>Copy details for help</Button>
+      <Button type="button" kind="secondary" disabled={reloading || removing} onClick={() => { void reload(); }}>Reload kubeconfig</Button>
+      <p className="muted">After reloading kubeconfig, choose a context and check access again.</p>
+    </div>}</Disclosure>}
+    {retained && confirmRemoval && <div role="group" aria-label="Remove cluster confirmation">
+      <p>Remove <code>{retained.context}</code>? This only forgets the cluster in Bridge. Its agents and your kubeconfig are kept.</p>
+      {removeError && <p role="alert">Couldn't confirm removal from Bridge. Check that its local storage is available, then reopen Bridge. Its agents and your kubeconfig are kept.</p>}
+      <div className="workspace-step-actions">
+        <Button type="button" kind="secondary" className="cluster-remove" disabled={removing} onClick={() => { void remove(); }}>Remove cluster</Button>
+        <Button ref={keepCluster} type="button" kind="secondary" disabled={removing} onClick={() => { focusRemoval.current = true; setConfirmRemoval(false); setRemoveError(false); }}>Keep cluster</Button>
+      </div>
     </div>}
     {notice && <p role="status">{notice}</p>}
   </section>;

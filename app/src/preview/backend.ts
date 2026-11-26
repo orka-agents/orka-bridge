@@ -188,7 +188,8 @@ const upgradeNone = { state: 'none', transaction: null, createdAt: null, sourceR
 // switcher can select it without reconnecting.
 function clusterReply(command: string, args?: Record<string, unknown>): unknown {
   const key = 'team-dev';
-  const place = { key, context: 'team-dev', service: 'control/orka', namespace: 'agents', stale: false, observedAt: Math.floor(Date.now() / 1000), checkedAt: Math.floor(Date.now() / 1000), agents: [] };
+  // Native observation times are Unix milliseconds.
+  const place = { key, context: 'team-dev', service: 'control/orka', namespace: 'agents', stale: false, observedAt: Date.now(), checkedAt: Date.now(), agents: [] };
   const target = { id: uuid('team-dev-target'), context_id: uuid('team-dev-context'), context_name: 'team-dev', service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka-agents/orka:preview' };
   const provider = { id: uuid('team-dev-provider'), name: 'team-model', ready: true };
   switch (command) {
@@ -492,7 +493,7 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
     case 'cluster_places': return { places: [], selectedKey: null, persistenceState: 'complete' };
     case 'cluster_contexts': case 'cluster_reload': return [];
     case 'send_history': return [];
-    case 'send_status': return null;
+    case 'send_status': return { documentId: documentId(args), view: null, busy: null };
     case 'quit_bridge': document.body.textContent = 'Bridge quit.'; return null;
     default:
       if (command.startsWith('plugin:window|')) return command === 'plugin:window|is_maximized' ? false : null;

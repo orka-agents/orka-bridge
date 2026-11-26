@@ -355,7 +355,8 @@ test('Manage refreshes confirmed agents and offers cancellable removal, finite f
   await user.click(screen.getByRole('button', { name: 'Remove' }));
   await user.click(screen.getByRole('button', { name: 'Remove cluster' }));
   expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm removal");
-  expect(confirmation.contains(document.activeElement)).toBe(true);
+  // The confirmation reopens as a new group below Details.
+  expect(screen.getByRole('group', { name: 'Remove cluster confirmation' }).contains(document.activeElement)).toBe(true);
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep cluster' }));
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
   expect(observe).not.toHaveBeenCalled();

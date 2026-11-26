@@ -36,6 +36,6 @@ export default function Places({ snapshot, unavailable, status, view, place, onL
       </section>;
     })}
     {snapshot?.persistenceState === 'unavailable' && <p role="status">Remembered cluster information is unavailable. New connections may not be remembered after Bridge closes.</p>}
-    {unavailable ? <p role="status">Couldn't read your clusters. Try opening Clusters again.</p> : !snapshot ? <p role="status">Reading your clusters…</p> : knownEmpty && <p className="muted">No other clusters added yet. Connect a cluster your team already uses.</p>}
+    {unavailable ? <p role="status">Couldn't read your clusters. Try opening Clusters again.</p> : !snapshot ? <p role="status">Reading your clusters…</p> : knownEmpty && <p className="empty-state">No other clusters added yet. Connect a cluster your team already uses.</p>}
   </div>;
 }
