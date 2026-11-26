@@ -551,7 +551,8 @@ assert.ok(smoke.includes('text.hasSuffix("-")'), 'hyphenated fixture IDs must su
 assert.ok(smoke.includes('region: "Past Sends", requiring:'), 'saved history anchors keep their separate region');
 // The Send card is always in Designer's right column: the walk brings its native region into view, with no page-head entry.
 assert.ok(!smoke.includes('clickText("Send to a cluster"') && !smoke.includes('clickSendControl("Send to a cluster"') && smoke.includes('guard let card = nativeBounds(nativeRegion("Send and cluster tests")) else { fail("Send card has no bounds") }')
-  && smoke.includes('guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {'), 'the walk must reach the always-shown Send card and Past Sends without a page-head entry');
+  && smoke.includes('guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {'), 'the walk must reach the always-shown Send card, and Past Sends once Sends are saved, without a page-head entry');
+assert.ok(model.includes('!nativeHeadingExists("Past Sends")') && model.includes('_ = try capture("local-shell-history-\\(size)", ["Past Sends keeps up to 256 Sends"])') && !model.includes('Saved results and limits'), 'with no saved Sends the model walk must see no Past Sends and read its limits in the Send card Details');
 assert.ok(smoke.includes('if let anchor = textAnchor ?? buttonAnchor'), 'native action anchors retain frozen-frame verification');
 assert.ok(smoke.includes('func uniqueOCRTarget('), 'scoped OCR click selection must reject distinct targets');
 assert.ok(smoke.includes('let scopedSeen = seen.filter'), 'OCR click candidates must belong to the selected native region');

@@ -2054,7 +2054,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             "Removed cluster returned after restart")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
-    // Past Sends is an always-open card under the Send card, labelled by its heading.
+    // Past Sends shows under the Send card once a Send is saved (several are by now), labelled by its heading.
     guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {
         fail("Saved Send history was not reachable after restart")
     }
