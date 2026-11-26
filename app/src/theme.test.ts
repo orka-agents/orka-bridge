@@ -16,6 +16,28 @@ const contrast = (foreground: string, background: string) => {
   const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
   return (lighter + 0.05) / (darker + 0.05);
 };
+const rgb = (hex: string) => hex.slice(1).match(/../g)!.map(channel => parseInt(channel, 16));
+const hex = (channels: number[]) => `#${channels.map(channel => Math.round(channel).toString(16).padStart(2, '0')).join('')}`;
+const over = (top: string, alpha: number, bottom: string) => hex(rgb(top).map((channel, index) => channel * alpha + rgb(bottom)[index] * (1 - alpha)));
+// The page artwork is palette PNGs of one ink at several strengths. Its darkest point on the page is the palette entry
+// with the most opacity laid over the paper, read from the PLTE and tRNS chunks.
+const strongestInk = (file: string) => {
+  const png = readFileSync(file);
+  let palette = Buffer.alloc(0), opacity = Buffer.alloc(0);
+  for (let at = 8; at < png.length;) {
+    const length = png.readUInt32BE(at), type = png.toString('ascii', at + 4, at + 8), data = png.subarray(at + 8, at + 8 + length);
+    if (type === 'PLTE') palette = data;
+    if (type === 'tRNS') opacity = data;
+    at += 12 + length;
+  }
+  let strongest = 0;
+  for (let index = 1; index < opacity.length; index++) if (opacity[index] > opacity[strongest]) strongest = index;
+  return { ink: hex([...palette.subarray(strongest * 3, strongest * 3 + 3)]), alpha: opacity[strongest] / 255 };
+};
+const art = (index: number) => ['chart-faint', 'pod-faint'].map(name => {
+  const { ink, alpha } = strongestInk(`src/assets/art/${name}${index ? '-dark' : ''}.png`);
+  return { name, alpha, darkest: over(ink, alpha, palettes[index]['color-page']) };
+});
 
 describe('Orka ink and paper theme contract', () => {
   it.each([
@@ -42,6 +64,25 @@ describe('Orka ink and paper theme contract', () => {
     expect(contrast(palette['color-terminal-text'], palette['color-terminal'])).toBeGreaterThanOrEqual(4.5);
     // The focus ring is the running blue, so it shows against every surface a control sits on.
     expect(palette['color-focus']).toBe(palette['color-status-running']);
+  });
+  it.each([0, 1])('bakes the artwork at the boards\' strength and keeps page text readable over its darkest line in palette %s', index => {
+    const [chart, pod] = art(index);
+    expect(chart.alpha).toBeCloseTo(index ? .20 : .16, 2);
+    expect(pod.alpha).toBeCloseTo(index ? .14 : .10, 2);
+    const palette = palettes[index];
+    for (const { darkest } of [chart, pod]) {
+      // Text set straight on the page: ink, secondary and tertiary words, and red errors and danger actions.
+      for (const ink of ['color-text', 'color-text-secondary', 'color-text-tertiary', 'color-status-failed']) {
+        expect(contrast(palette[ink], darkest)).toBeGreaterThanOrEqual(4.5);
+      }
+      // Every state colour can be a pill on the page; a pill's paper backing (design-system.css) keeps it readable.
+      const backing = over(palette['color-page'], .8, darkest);
+      for (const ink of ['color-text-secondary', 'color-status-pending', 'color-status-running', 'color-status-succeeded', 'color-status-failed']) {
+        expect(contrast(palette[ink], backing)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    const designSystem = readFileSync('src/components/design-system.css', 'utf8');
+    expect(designSystem).toMatch(/\.pill\s*\{[^}]*background: color-mix\(in srgb, var\(--color-page\) 80%, transparent\)/);
   });
   it.each([0, 1])('keeps every status tint readable in palette %s', index => {
     const palette = palettes[index];
