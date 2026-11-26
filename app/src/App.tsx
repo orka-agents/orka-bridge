@@ -124,6 +124,8 @@ export default function App() {
   const [openDocumentRequest, setOpenDocumentRequest] = useState(0);
   const openRequest = useRef(0);
   const [overviewCounts, setOverviewCounts] = useState('Reading saved files…');
+  const [savedAgents, setSavedAgents] = useState<number>();
+  const [creatingAgent, setCreatingAgent] = useState(false);
   const [documentAction, setDocumentAction] = useState<DocumentAction>();
   const actionSequence = useRef(0);
   const handleDocumentAction = useCallback((id: number) => setDocumentAction(current => current?.id === id ? undefined : current), []);
@@ -248,7 +250,9 @@ export default function App() {
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
   const localChecks = checksStale ? 'Tests not run since your edit' : runUnavailable ? 'Test status unavailable' : run?.cancellation === 'unconfirmed' ? 'Cancellation not confirmed' : run?.state === 'unknown' ? 'Test result unknown'
     : run?.cancellation === 'cancelling' ? 'Cancelling tests' : run?.state === 'running' ? 'Running tests…' : run?.report?.verdict === 'cancelled' ? 'Tests cancelled' : run?.report?.verdict === 'unknown' ? 'Test result unknown' : cases
-    ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} passed` : undefined;
+    ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} passed`
+    // Without a result the line still says where tests stand: nothing saved yet, or tests to run.
+    : remote ? undefined : savedAgents === 0 && !agentName ? 'No saved agents yet' : savedAgents || agentName ? 'Tests need running' : undefined;
   const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
   const firstTest = useFirstTest({
     retired: !!setup?.workspaceReplaced,
@@ -328,7 +332,7 @@ export default function App() {
   const tabStatus: Record<Page, string> = {
     Home: 'Navigator',
     Overview: welcome ? '' : overviewCounts,
-    Designer: agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? exampleReadOnly ? 'Ready after setup' : 'No agent open'
+    Designer: creatingAgent ? 'No agent open' : agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? exampleReadOnly ? 'Ready after setup' : 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: remote ? place.target ? `${place.target.context_name}, connected` : 'Choose a cluster' : welcome ? 'Start here' : returningWorkspace ? view.line : view.tabLine,
   };
@@ -442,11 +446,12 @@ export default function App() {
           onOpenAgent={id => { openDesigner(id); setDocumentAction({ id: ++actionSequence.current, documentId: id, action: 'chat' }); }}
           onAgentCreated={() => setAgentsRevision(value => value + 1)}
           onThisComputer={() => choosePlace({ kind: 'thisComputer' })}
+          onManageClusters={() => { setPage('Clusters'); localCluster.current?.showPlaces(); }}
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
           blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}
         {page === 'Designer' && overviewNotice && <p className="muted" role="status">{overviewNotice}</p>}
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} /></div>}
-        <Overview onNewAgent={() => openDesigner(undefined, true)} localAiConnected={overviewAiConnected} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} activeDocumentId={firstTest === 'running' ? SAMPLE_DOCUMENT_ID : run?.busy?.documentId} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} workspaceNote={overviewWorkspaceNote} filesRevision={agentsRevision} placesRevision={placesRevision} onCounts={setOverviewCounts}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onCreating={setCreatingAgent} /></div>}
+        <Overview onNewAgent={() => openDesigner(undefined, true)} localAiConnected={overviewAiConnected} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} activeDocumentId={firstTest === 'running' ? SAMPLE_DOCUMENT_ID : run?.busy?.documentId} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} workspaceNote={overviewWorkspaceNote} filesRevision={agentsRevision} placesRevision={placesRevision} onCounts={setOverviewCounts} onSavedCount={setSavedAgents}
           onOpenDocument={(id, key) => { void openOverviewDocument(id, 'open', key); }}
           onChatDocument={id => openOverviewDocument(id, 'chat')}
           onRunDocument={(id, key) => { void openOverviewDocument(id, 'run', key); }}
@@ -456,7 +461,7 @@ export default function App() {
         {page === 'Designer' && !exampleOpen && <p role="status">Opening your agent…</p>}
       </main>
       <footer className="status-bar">
-        <OrkaSwitcher title={remote ? placeName : hostDetail} place={place} computerLine={localLine} computerTone={hostTone} onPlace={choosePlace}
+        <OrkaSwitcher title={remote ? placeName : hostDetail} place={place} computerLine={savedAgents ? `${localLine} · ${savedAgents} ${savedAgents === 1 ? 'agent' : 'agents'}` : localLine} computerTone={hostTone} onPlace={choosePlace}
           onClusters={item => { setPage('Clusters'); localCluster.current?.showCluster(item); }} onManage={() => { setPage('Clusters'); localCluster.current?.showPlaces(); }}>
           <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span>{remote && place.target && <span className="chip">In use</span>}<span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span>
         </OrkaSwitcher>
