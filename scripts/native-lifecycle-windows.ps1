@@ -632,7 +632,7 @@ assertions: []
         # File > Quit is exercised by the native menu/failed-stop subprocess test,
         # not by a duplicate GUI lookup through this runner's incomplete UIA tree.
         if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared' }
-        "PASS $theme`: native own-repo chooser, selected path/copy, blank draft pair only; idle-close-exited without notice/marker change; tray menu/Open, same PID/window, File view/edited text retained, minimized second launch, menu Quit Bridge. Standard Quit is covered by native subprocess tests. Integrated debug shell only; empty image source, no VM/Ready/background-close/notice/provider/cluster/session logout proof. OS popup theme is captured as drawn." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
+        "PASS $theme`: native own-repo chooser, selected path/copy, blank draft pair only; idle-close-exited without notice/marker change; tray menu/Open, same PID/window, File view/edited text retained, minimized second launch, menu Quit Bridge. Standard Quit is covered by native subprocess tests. Integrated debug shell only; empty image source, loopback fixture cluster used only to leave the guided first run and then forgotten; no VM/Ready/background-close/notice/provider/cluster/session logout proof. OS popup theme is captured as drawn." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
     }
 } catch {
     $failure = $_
