@@ -1,8 +1,9 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef } from 'react';
 import { Button } from '../components/Button';
 import { StatusIcon } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
-import { type ChatCommand, type ChatSnapshot, chatCall, chatErrors } from './chat-api';
+import { type ChatCommand, type ChatSnapshot, chatErrors } from './chat-api';
+import { useTurn } from './use-turn';
 
 const states: Record<ChatSnapshot['state'], string> = {
   ready: 'Ready for your message.', preparing: 'Preparing your saved agent…', working: 'Your agent is working…',
@@ -14,15 +15,8 @@ const states: Record<ChatSnapshot['state'], string> = {
   contextUnavailable: 'Earlier messages could not be confirmed. Start a new conversation when available.',
 };
 export default function Chat({ documentId, blocked, active = true }: { documentId: string; blocked?: string; active?: boolean }) {
-  const [snapshot, setSnapshot] = useState<ChatSnapshot>();
   // Home and Designer can show the same agent's Chat at once, so element ids are per instance.
   const instance = useId(); const fieldId = `message-${documentId}-${instance}`; const hintId = `chat-hint-${documentId}-${instance}`;
-  const [draft, setDraft] = useState(''); const draftRef = useRef('');
-  const [error, setError] = useState<{ message: string; uncertainSend?: boolean }>(); const [readError, setReadError] = useState<string>();
-  const [command, setCommand] = useState<ChatCommand>();
-  const mutation = useRef(false); const epoch = useRef(0); const alive = useRef(true);
-  const pending = useRef<{ message: string; count: number; scrollTop?: number; uncertain?: boolean; readerMovedAway?: boolean } | undefined>(undefined);
-  const [awaitingTurn, setAwaitingTurn] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null); const composing = useRef(false);
   const transcript = useRef<HTMLElement>(null); const scrollArea = useRef<HTMLElement | null>(null); const follow = useRef(true);
   const resumeFollow = () => {
@@ -32,44 +26,7 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
       follow.current = area.scrollHeight - area.clientHeight - area.scrollTop < 48;
     } else if (!submitted?.readerMovedAway) follow.current = true;
   };
-  const receive = (value: ChatSnapshot) => {
-    const turns = value.versions.flatMap(version => version.turns);
-    const submitted = pending.current;
-    if (submitted && turns.slice(submitted.count).some(turn => turn.message === submitted.message)) {
-      if (submitted.uncertain) resumeFollow();
-      if (draftRef.current === submitted.message) { draftRef.current = ''; setDraft(''); }
-      pending.current = undefined; setAwaitingTurn(false);
-    } else if (submitted) {
-      if (value.busy) {
-        if (submitted.uncertain) resumeFollow();
-        submitted.uncertain = false;
-      }
-      // A lost IPC reply is not a rejection. An idle snapshot alone may precede
-      // admission; retain acknowledgement until a turn or its busy→idle is seen.
-      if (!value.busy && (value.state === 'contextUnavailable' || !submitted.uncertain && value.state === 'ready')) {
-        pending.current = undefined; setAwaitingTurn(false);
-      }
-    }
-    if (submitted && !pending.current) setError(current => current?.uncertainSend ? undefined : current);
-    setSnapshot(value);
-  };
-  const receiveRef = useRef(receive); receiveRef.current = receive;
-  useEffect(() => {
-    alive.current = true; let mounted = true; let timer: ReturnType<typeof setTimeout>;
-    const observe = async () => {
-      if (!mounted) return;
-      if (!mutation.current) {
-        const request = epoch.current;
-        const result = await chatCall('agent_chat_status', documentId);
-        if (mounted && request === epoch.current) {
-          if (result.ok) { receiveRef.current(result.snapshot); setReadError(undefined); } else setReadError(result.message);
-        }
-      }
-      if (mounted) timer = setTimeout(() => { void observe(); }, 500);
-    };
-    void observe();
-    return () => { mounted = false; alive.current = false; epoch.current++; clearTimeout(timer); };
-  }, [documentId]);
+  const { snapshot, draft, setDraft, error, readError, command, awaitingTurn, pending, act: dispatch } = useTurn(documentId, blocked, { resumeFollow, scrollTop: () => scrollArea.current?.scrollTop });
   useLayoutEffect(() => {
     if (!active) return;
     const conversation = transcript.current; const dock = composer.current?.closest('form');
@@ -119,29 +76,7 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     return () => window.removeEventListener('resize', fit);
   }, [draft, active]);
   const act = async (action: ChatCommand) => {
-    if (mutation.current || !snapshot) return;
-    // The parent's block covers every conversation reset too; Stop/Reconnect stay available for recovery.
-    if (action === 'agent_chat_new' && blocked) return;
-    if (action === 'agent_chat_send' && (blocked || !snapshot.canSend || awaitingTurn || !draftRef.current.trim())) return;
-    mutation.current = true; const request = ++epoch.current; setCommand(action); setError(undefined);
-    if (action === 'agent_chat_send') {
-      pending.current = { message: draftRef.current, count: snapshot.versions.reduce((n, version) => n + version.turns.length, 0), scrollTop: scrollArea.current?.scrollTop };
-      setAwaitingTurn(true);
-    }
-    const operation = action === 'agent_chat_reconnect' && pending.current?.uncertain ? 'agent_chat_status' : action;
-    const result = await chatCall(operation, documentId, pending.current?.message);
-    if (!alive.current || request !== epoch.current) return;
-    if (result.ok) {
-      if (action === 'agent_chat_send') resumeFollow();
-      receiveRef.current(result.snapshot);
-    } else {
-      if (action === 'agent_chat_send') {
-        if (result.uncertain && pending.current) pending.current.uncertain = true;
-        else { pending.current = undefined; setAwaitingTurn(false); }
-      }
-      setError({ message: result.message, uncertainSend: action === 'agent_chat_send' && result.uncertain });
-    }
-    mutation.current = false; setCommand(undefined); composer.current?.focus();
+    if (await dispatch(action) !== undefined) composer.current?.focus();
   };
   const reason = blocked ?? (command ? 'Wait for this action to finish.' : awaitingTurn ? 'Wait for this message to be accepted.' : !snapshot ? 'Opening your conversation…' : !snapshot.canSend ? 'Wait for the current conversation or test to finish.' : undefined);
   const latestTurn = snapshot?.versions.at(-1)?.turns.at(-1);
@@ -202,7 +137,7 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
       {(error || readError || snapshotError) && <p role="alert">{error?.message ?? readError ?? snapshotError}</p>}
       <label className="sr-only" htmlFor={fieldId}>Message</label>
       <div className="chat-compose-row"><textarea className="field" ref={composer} id={fieldId} rows={1} placeholder="Message your agent" value={draft} aria-describedby={hintId}
-        onChange={event => { draftRef.current = event.target.value; setDraft(event.target.value); }}
+        onChange={event => setDraft(event.target.value)}
         onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) {
