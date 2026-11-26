@@ -23,5 +23,5 @@ Most of the setup time is the download: 2.4 GB on a Mac, 2.0 GB on Windows. On a
 **New in this release**
 
 - Setup uses much less disk on a Mac: about 7 GB before the workspace first starts, down from about 38 GB.
-- Setup is faster on a Mac: Bridge unpacks the VM image while it downloads, so the VM starts about 30 seconds after the download ends, down from almost 4 minutes.
+- Setup is faster on a Mac: Bridge prepares the VM while it downloads, so its own work after the download takes about 30 seconds, down from almost 4 minutes.
 - Welcome and the setup choice say how big the download is, how long setup takes and how much disk it needs.
