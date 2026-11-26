@@ -504,7 +504,20 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     setOverviewExpanded("web-reader", true)
     require(anyButton("Run tests web-reader") && enabledButton("Run tests web-reader") == nil && enabledButton("Open web-reader") != nil,
             "Without connected AI, Overview must disable local Run but preserve Open")
-    _ = try capture("local-overview-ai-disconnected-expanded-\(size)", ["Your agents", "web-reader", "This computer", "Run tests"])
+    // At 540x640 the stacked cluster note pushes the expanded place row's Run tests below the fold: capture the open
+    // row, then bring its disabled Run tests into view rather than requiring both ends of the page in one frame.
+    if size == "minimum" {
+        _ = try capture("local-overview-ai-disconnected-expanded-\(size)", ["Your agents", "web-reader", "This computer"])
+        // seek("Run tests") waits for an enabled Run tests; this one is disabled, so scroll by its native bounds.
+        for _ in 0..<6 {
+            if nativeElements().contains(where: { attribute($0, "AXRole") as? String == "AXButton" && (attribute($0, "AXTitle") as? String ?? attribute($0, "AXDescription") as? String) == "Run tests web-reader"
+                && nativeBounds($0).map { window()!.1.contains($0) && $0.maxY <= window()!.1.maxY - 32 } == true }) { break }
+            scroll(-150)
+        }
+        _ = try capture("local-overview-ai-disconnected-expanded-run-\(size)", ["web-reader", "This computer", "Run tests"])
+    } else {
+        _ = try capture("local-overview-ai-disconnected-expanded-\(size)", ["Your agents", "web-reader", "This computer", "Run tests"])
+    }
     setOverviewExpanded("web-reader", false)
 }
 localSize(1280, 800); scroll(4000)
@@ -636,7 +649,14 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     setOverviewExpanded("web-reader", true)
     require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to try a task or run tests on this computer."),
             "Connected AI must enable the failed agent's local Run action without the connection reason")
-    _ = try capture("local-overview-ai-connected-expanded-\(size)", ["Your agents", "This computer", "Run tests"])
+    if size == "minimum" {
+        // As above, the stacked cluster note can push Run tests below the fold at 540x640.
+        _ = try capture("local-overview-ai-connected-expanded-\(size)", ["Your agents", "This computer"])
+        if enabledButton("Run tests web-reader").flatMap(nativeBounds).map({ $0.maxY > window()!.1.maxY - 32 }) == true { scroll(-150) }
+        _ = try capture("local-overview-ai-connected-expanded-run-\(size)", ["This computer", "Run tests"])
+    } else {
+        _ = try capture("local-overview-ai-connected-expanded-\(size)", ["Your agents", "This computer", "Run tests"])
+    }
     setOverviewExpanded("web-reader", false)
 }
 localSize(1280, 800); scroll(4000)
