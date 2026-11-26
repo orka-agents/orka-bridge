@@ -1,29 +1,33 @@
+/* Ink and paper, as on the design boards: bar is the title bar and sidebar, well the insets (current nav item, chips,
+   code, disabled controls, segmented track). The chrome colour is the well's older name, kept for page styles. */
 :root {
   color-scheme: light;
   --color-text: #0b0b0c;
   --color-text-secondary: #4b4c52;
-  --color-text-tertiary: #6b6c73;
+  --color-text-tertiary: #5c5d64;
   --color-page: #ffffff;
   --color-card: #ffffff;
-  --color-chrome: #f6f6f7;
-  --color-hover: #f0f0f2;
+  --color-bar: #fafafa;
+  --color-well: #f3f3f5;
+  --color-chrome: #f3f3f5;
+  --color-hover: #f3f3f5;
   --color-border: #e8e8eb;
   --color-border-strong: #d4d4d8;
   --color-action: #0b0b0c;
-  --color-action-hover: #323233;
+  --color-action-hover: #2c2c30;
   --color-action-text: #ffffff;
-  --color-action-tint: #f0f0f2;
-  --color-icon-tile: #f0f0f2;
-  --color-status-pending: #a64b00;
+  --color-action-tint: #f3f3f5;
+  --color-icon-tile: #f3f3f5;
+  --color-status-pending: #b45309;
   --color-status-running: #0369a1;
-  --color-status-succeeded: #047857;
-  --color-status-failed: #be123c;
-  --color-status-cancelled: #6b6c73;
-  --color-tint-pending: #fef3e2;
+  --color-status-succeeded: #15803d;
+  --color-status-failed: #b91c1c;
+  --color-status-cancelled: #5c5d64;
+  --color-tint-pending: #f3f3f5;
   --color-tint-running: #e4fafd;
-  --color-tint-succeeded: #e2f7f0;
-  --color-tint-failed: #fee8ec;
-  --color-tint-stale: #f0f0f2;
+  --color-tint-succeeded: #eaf7ef;
+  --color-tint-failed: #faefef;
+  --color-tint-stale: #f3f3f5;
   --color-terminal: #0e0e10;
   --color-terminal-text: #ededef;
   --color-focus: #0369a1;
@@ -36,22 +40,24 @@
   --font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --size-title: 21px;
   --size-reading: 15px;
-  --size-body: 13px;
+  --size-body: 14px;
   --size-small: 11.5px;
   --type-title: 600 21px/26px var(--font-ui);
-  --type-card: 600 15px/20px var(--font-ui);
+  --type-card: 700 17px/22px var(--font-ui);
+  --tracking-card: -.01em;
+  --type-part: 700 15px/20px var(--font-ui);
   --type-reading: 400 15px/24px var(--font-ui);
-  --type-body: 400 13px/18px var(--font-ui);
+  --type-body: 400 14px/20px var(--font-ui);
   --type-small: 400 11.5px/16px var(--font-ui);
   --type-caption: 400 12px/16px var(--font-ui);
   --type-label: 500 11px/16px var(--font-mono);
   --tracking-label: .05em;
-  --type-control: 600 13px/18px var(--font-ui);
-  --type-control-large: 600 14px/20px var(--font-ui);
+  --type-control: 600 13.5px/18px var(--font-ui);
+  --type-control-large: 600 15px/20px var(--font-ui);
   --type-display-hero: 800 62px/1 var(--font-ui);
   --type-display: 800 46px/1.05 var(--font-ui);
-  --type-display-page: 800 36px/1.1 var(--font-ui);
-  --type-display-object: 700 30px/1.15 var(--font-mono);
+  --type-display-page: 800 34px/1 var(--font-ui);
+  --type-display-object: 700 26px/1.15 var(--font-mono);
   --type-display-section: 800 22px/1.2 var(--font-ui);
   --tracking-display: -.045em;
   --tracking-display-page: -.04em;
@@ -86,28 +92,30 @@
     color-scheme: dark;
     --color-text: #f4f4f5;
     --color-text-secondary: #a1a1a9;
-    --color-text-tertiary: #83838b;
+    --color-text-tertiary: #a0a0a8;
     --color-page: #09090a;
-    --color-card: #111113;
-    --color-chrome: #1b1b1e;
+    --color-card: #09090a;
+    --color-bar: #121214;
+    --color-well: #18181b;
+    --color-chrome: #18181b;
     --color-hover: #1b1b1e;
     --color-border: #222225;
-    --color-border-strong: #313136;
+    --color-border-strong: #353539;
     --color-action: #f4f4f5;
-    --color-action-hover: #cececf;
+    --color-action-hover: #d4d4d8;
     --color-action-text: #09090a;
-    --color-action-tint: #1b1b1e;
-    --color-icon-tile: #1b1b1e;
+    --color-action-tint: #18181b;
+    --color-icon-tile: #18181b;
     --color-status-pending: #f5b544;
     --color-status-running: #4cb8f5;
     --color-status-succeeded: #4ade80;
-    --color-status-failed: #f87171;
-    --color-status-cancelled: #83838b;
-    --color-tint-pending: #352812;
+    --color-status-failed: #f97b7b;
+    --color-status-cancelled: #a0a0a8;
+    --color-tint-pending: #18181b;
     --color-tint-running: #143036;
     --color-tint-succeeded: #173028;
-    --color-tint-failed: #362025;
-    --color-tint-stale: #1b1b1e;
+    --color-tint-failed: #211313;
+    --color-tint-stale: #18181b;
     --color-terminal: #131315;
     --color-terminal-text: #ededef;
     --color-focus: #4cb8f5;
@@ -122,28 +130,30 @@
   color-scheme: dark;
   --color-text: #f4f4f5;
   --color-text-secondary: #a1a1a9;
-  --color-text-tertiary: #83838b;
+  --color-text-tertiary: #a0a0a8;
   --color-page: #09090a;
-  --color-card: #111113;
-  --color-chrome: #1b1b1e;
+  --color-card: #09090a;
+  --color-bar: #121214;
+  --color-well: #18181b;
+  --color-chrome: #18181b;
   --color-hover: #1b1b1e;
   --color-border: #222225;
-  --color-border-strong: #313136;
+  --color-border-strong: #353539;
   --color-action: #f4f4f5;
-  --color-action-hover: #cececf;
+  --color-action-hover: #d4d4d8;
   --color-action-text: #09090a;
-  --color-action-tint: #1b1b1e;
-  --color-icon-tile: #1b1b1e;
+  --color-action-tint: #18181b;
+  --color-icon-tile: #18181b;
   --color-status-pending: #f5b544;
   --color-status-running: #4cb8f5;
   --color-status-succeeded: #4ade80;
-  --color-status-failed: #f87171;
-  --color-status-cancelled: #83838b;
-  --color-tint-pending: #352812;
+  --color-status-failed: #f97b7b;
+  --color-status-cancelled: #a0a0a8;
+  --color-tint-pending: #18181b;
   --color-tint-running: #143036;
   --color-tint-succeeded: #173028;
-  --color-tint-failed: #362025;
-  --color-tint-stale: #1b1b1e;
+  --color-tint-failed: #211313;
+  --color-tint-stale: #18181b;
   --color-terminal: #131315;
   --color-terminal-text: #ededef;
   --color-focus: #4cb8f5;
@@ -166,7 +176,7 @@ body {
 ::selection { background: var(--color-text); color: var(--color-page); }
 h1, h2, p { margin: 0; }
 h1 { font: var(--type-title); letter-spacing: -.025em; text-wrap: balance; }
-h2, h3 { font: var(--type-card); }
+h2, h3 { font: var(--type-card); letter-spacing: var(--tracking-card); }
 code, .mono { font-family: var(--font-mono); font-size: .92em; font-variant-ligatures: none; }
 pre { font-family: var(--font-mono); font-variant-ligatures: none; }
 .reading { font: var(--type-reading); max-width: 70ch; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -177,10 +187,10 @@ a { color: var(--color-text); text-underline-offset: 3px; }
 .muted { color: var(--color-text-secondary); }
 .icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .icon-tile { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex: none; border-radius: var(--radius-control); color: var(--color-action); background: var(--color-icon-tile); }
-/* List rows (Clusters) use a larger outlined tile; the sidebar keeps the small filled one. */
-.icon-tile-row { width: 36px; height: 36px; border: var(--border-control) solid var(--color-text); background: var(--color-card); color: var(--color-text); }
-/* A plain card's edge is the ink at 70%, so it reads as a line on paper; .card-strong is the full ink at 1.5px. */
-.card { padding: var(--space-4); border: 1px solid color-mix(in srgb, var(--color-text) 70%, transparent); border-radius: var(--radius-card); background: var(--color-card); min-width: 0; }
+/* List rows (Clusters) use a larger outlined tile; the sidebar's small one is outlined in shell.css. */
+.icon-tile-row { width: 34px; height: 34px; border: var(--border-control) solid var(--color-text); background: var(--color-card); color: var(--color-text); }
+/* Every card is drawn in ink at 1.5px, like a control; .card-strong (the next action) and .card-editing go to 2px. */
+.card { padding: var(--space-4) 18px; border: var(--border-control) solid var(--color-text); border-radius: var(--radius-card); background: var(--color-card); min-width: 0; }
 .setup { max-width: 760px; display: grid; gap: 16px; margin-top: 16px; }
 .setup h3 { font-size: var(--size-body); font-weight: 600; margin: 0; }
 .setup p { max-width: 70ch; margin-top: 8px; }
@@ -192,8 +202,8 @@ a { color: var(--color-text); text-underline-offset: 3px; }
 .choice-detail { display: block; font-size: var(--size-small); }
 .setup-availability { border-top: 1px solid var(--color-border); padding-top: 12px; margin-top: 12px; }
 .agent-name { font-family: var(--font-mono); font-variant-ligatures: none; }
-.view-switch { display: inline-flex; gap: var(--space-0-5); padding: 3px; border-radius: var(--radius-control); background: var(--color-chrome); }
-.view-switch button { min-height: var(--height-control-small); border: 1px solid transparent; border-radius: var(--radius-small); background: transparent; padding: 0 var(--space-3); color: var(--color-text-secondary); font: var(--type-body); font-weight: 500; white-space: nowrap; }
+.view-switch { display: inline-flex; gap: var(--space-0-5); padding: 3px; border-radius: var(--radius-control); background: var(--color-well); }
+.view-switch button { min-height: var(--height-control-small); border: 1px solid transparent; border-radius: var(--radius-small); background: transparent; padding: 0 var(--space-3); color: var(--color-text-secondary); font: 500 13px/18px var(--font-ui); white-space: nowrap; }
 .view-switch button:not(:disabled, [aria-pressed="true"]):hover { color: var(--color-text); }
 .view-switch button[aria-pressed="true"] { background: var(--color-card); color: var(--color-text); font-weight: 600; box-shadow: inset 0 0 0 1px var(--color-border-strong); }
 .view-switch button:disabled { cursor: not-allowed; }

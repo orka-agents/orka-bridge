@@ -1,8 +1,9 @@
-.disclosure > summary { display: flex; align-items: center; gap: var(--space-1-5); cursor: pointer; list-style: none; min-height: var(--height-control-small); font: var(--type-body); font-weight: 500; color: var(--color-text); }
+.disclosure > summary { display: flex; align-items: center; gap: var(--space-1-5); cursor: pointer; list-style: none; min-height: var(--height-control-small); font: 500 13.5px/20px var(--font-ui); color: var(--color-text); }
 .disclosure > summary::-webkit-details-marker { display: none; }
 .disclosure > summary:hover .disclosure-label { text-decoration: underline; text-underline-offset: 4px; }
-.disclosure-chevron { width: 14px; height: 14px; flex: none; stroke-width: 2.2; transition: transform 120ms ease-out; }
-.disclosure[open] > summary > .disclosure-chevron { transform: rotate(90deg); }
+/* Closed points down, open points up, as on the boards. */
+.disclosure-chevron { width: 12px; height: 12px; flex: none; stroke-width: 2; transition: transform 120ms ease-out; }
+.disclosure[open] > summary > .disclosure-chevron { transform: rotate(180deg); }
 .disclosure-label { min-width: 0; overflow-wrap: anywhere; }
 .disclosure-hint { color: var(--color-text-secondary); font-weight: 400; }
 @media (prefers-reduced-motion: reduce) { .disclosure-chevron { transition: none; } }

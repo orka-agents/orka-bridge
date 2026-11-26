@@ -44,7 +44,7 @@ export function AgentListRow({ row, actions, reveal, onToggle }: { row: AgentRow
   return <article className="overview-agent" aria-label={row.title}>
     <header className="overview-agent-head">
       <h2 aria-label={row.title}><button type="button" className="overview-row-toggle" aria-label={`Show places for ${row.title}`} aria-describedby={`${id}-summary`} aria-expanded={expanded} aria-controls={id} onClick={toggle}>
-        <span className="overview-agent-identity"><svg className={`icon${expanded ? ' overview-chevron-open' : ''}`} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
+        <span className="overview-agent-identity"><svg className={`icon${expanded ? ' overview-chevron-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
           <span className="overview-agent-name"><span className="overview-agent-title">{row.title}</span><span className="overview-description">{row.description}</span></span>
         </span>
         <span className="overview-marks">{marks.map(card => <span key={card.groupKey} role="img" className="overview-mark" aria-label={`${card.place}: ${card.pill ?? 'No recorded result'}`} title={`${card.place}: ${card.pill ?? 'No recorded result'}`}>

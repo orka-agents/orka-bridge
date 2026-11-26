@@ -55,7 +55,7 @@ test('folded tabs keep their page names and status descriptions for assistive te
     expect(description?.textContent).not.toBe('');
   }
   expect(screen.getByRole('button', { name: 'Home' }).getAttribute('aria-describedby')).toBe('tab-status-Home');
-  expect(document.getElementById('tab-status-Home')?.textContent).toBe('Ask your agents');
+  expect(document.getElementById('tab-status-Home')?.textContent).toBe('Give an agent a task');
   // The status card keeps its words in the page; only its dot is drawn.
   const footer = screen.getByRole('contentinfo');
   expect(footer.querySelector('.host-label')?.textContent).not.toBe('');
@@ -80,11 +80,22 @@ test('Ctrl B toggles on Windows and Linux, Cmd B on macOS', () => {
   expect(press({ key: 'b', metaKey: true, altKey: true })).toBe(false);
 });
 
-test('narrow windows ignore the shortcut: the rail is already forced there', () => {
+test('narrow windows open the full sidebar over the rail, and choosing a page or Escape closes it', async () => {
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(max-width: 820px)' }));
   vi.stubGlobal('navigator', { ...navigator, userAgent: linuxAgent });
+  const user = userEvent.setup();
   render(<App />);
+  // The rail is forced, so the toggle offers to expand it; the folded preference is never written.
+  const toggle = screen.getByRole('button', { name: 'Expand sidebar' });
+  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+  await user.click(toggle);
+  expect(shell().getAttribute('data-sidebar')).toBe('overlay');
+  expect(screen.getByRole('button', { name: 'Collapse sidebar' }).getAttribute('aria-pressed')).toBe('false');
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  expect(shell().hasAttribute('data-sidebar')).toBe(false);
   fireEvent.keyDown(window, { key: 'b', ctrlKey: true });
+  expect(shell().getAttribute('data-sidebar')).toBe('overlay');
+  fireEvent.keyDown(window, { key: 'Escape' });
   expect(shell().hasAttribute('data-sidebar')).toBe(false);
   expect(localStorage.getItem(sidebarPreference)).toBeNull();
 });

@@ -1,21 +1,21 @@
 /* Decorative artwork. It sits under the page's content and never takes clicks. On the sidebar pages it stays out of
-   the page's left 24px and top 80px: native walks sample the paper there. Chart and pod are drawn in the ink colour
-   of each theme; the orca and sea have their own dark drawings. */
+   the page's top-left corner: native walks sample the paper there. Chart and pod are drawn in the ink colour of each
+   theme; the orca and sea have their own dark drawings. */
 .page-content { container-type: size; isolation: isolate; }
 
-/* Chart lines, or the pod, are a background of the page panel itself, so they stay put while the page scrolls and
-   can never add a scrollbar. The files are already as faint as they should be (7% ink, 8% in dark), so every text
-   colour still reads at 4.5:1 over the darkest line. A strip of paper keeps the panel's left 24px clear: native
-   walks sample the paper there. */
+/* Chart lines, or the pod, are a background of the flat page itself: they fill it from the sidebar's hairline to the
+   window's edge, stay put while the page scrolls and can never add a scrollbar. The files are baked at the boards'
+   strength (chart 16% ink, 20% in dark; pod 10% and 14%); theme.test.ts measures every page text colour over their
+   darkest pixel. Paper fades in over the top-left corner, where native walks sample it. */
 .page-content:is([data-page="Home"], [data-page="Overview"], [data-page="Designer"], [data-page="Clusters"]) {
-  --art-gutter: linear-gradient(var(--color-page), var(--color-page)) 0 0 / 24px 100% no-repeat;
+  --art-paper: radial-gradient(circle at 0 0, var(--color-page) 40px, transparent 80px);
   --art-chart: url('./assets/art/chart-faint.png');
   --art-pod: url('./assets/art/pod-faint.png');
-  background: var(--art-gutter), var(--art-chart) 100% 100% / cover no-repeat, var(--color-page);
+  background: var(--art-paper), var(--art-chart) 50% 50% / cover no-repeat, var(--color-page);
 }
 /* An empty or filtered-out Overview and the Clusters list show the pod in the bottom right instead. */
 .page-content:is([data-page="Overview"]:has(.overview-empty, .overview-list > .empty-state), [data-page="Clusters"]:has(.places-list):not(.guided *)) {
-  background: var(--art-gutter), var(--art-pod) 100% 100% / min(560px, 60%) auto no-repeat, var(--color-page);
+  background: var(--art-paper), var(--art-pod) 100% 100% / min(600px, 64%) auto no-repeat, var(--color-page);
 }
 
 /* The breaching orca above the Welcome and Home headlines. */

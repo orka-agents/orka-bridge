@@ -19,7 +19,9 @@ describe('shared control styles', () => {
     expect(css).toMatch(/input\.field, select\.field\s*\{\s*height: var\(--height-control\);/);
     expect(css).toMatch(/\.field::placeholder\s*\{[^}]*color: var\(--color-text-secondary\);[^}]*opacity: 1;/);
     expect(readFileSync('src/app.css', 'utf8')).toMatch(/\.tool-picker:popover-open\s*\{[^}]*height: fit-content;[^}]*align-content: start;/s);
-    expect(css).toContain('background-image: linear-gradient(');
+    // The chevron is an SVG file per theme colour: the CSP allows images from Bridge only, never data: URIs.
+    expect(css).toMatch(/select\.field\s*\{[^}]*background-image: var\(--chevron\);[^}]*background-size: 11px 11px/s);
+    for (const file of ['ink', 'secondary', 'ink-dark', 'secondary-dark']) expect(css).toContain(`url('../assets/chevron/${file}.svg')`);
     expect(css).not.toContain('data:');
     expect(css).toContain('var(--color-text-secondary)');
     expect(css).not.toContain('.agent-editor');

@@ -25,8 +25,9 @@
 .overview-agent-head h2 { margin: 0; min-width: 0; font: inherit; }
 .overview-row-toggle { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-4); width: 100%; min-width: 0; padding: 0; border: 0; border-radius: var(--radius-small); background: transparent; color: var(--color-text); text-align: left; }
 .overview-agent-identity { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
-.overview-agent-identity > .icon { flex: none; width: 16px; height: 16px; margin-top: 2px; stroke-width: 2; transition: transform 120ms ease-out; }
-.overview-chevron-open { transform: rotate(90deg); }
+/* The row chevron is the shared disclosure one: 12px, closed points down, open points up. */
+.overview-agent-identity > .icon { flex: none; width: 12px; height: 12px; margin-top: 5px; stroke-width: 2; transition: transform 120ms ease-out; }
+.overview-chevron-open { transform: rotate(180deg); }
 .overview-agent-name { display: grid; gap: var(--space-0-5); min-width: 0; }
 .overview-agent-title { font: 700 16px/22px var(--font-mono); font-variant-ligatures: none; margin: 0; overflow-wrap: anywhere; }
 .overview-description { color: var(--color-text-secondary); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: var(--type-body); }

@@ -20,7 +20,7 @@ export function Disclosure({ label, hint, children, defaultOpen = false, open, o
     <summary ref={summaryRef} role="button" tabIndex={0} aria-expanded={expanded} aria-controls={controls} onClick={event => { event.preventDefault(); change(!expanded); }} onKeyDown={event => {
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.currentTarget.click(); }
     }}>
-      <svg className="icon disclosure-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+      <svg className="icon disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
       <span className="disclosure-label">{label}</span>{hint && <> <span className="disclosure-hint">{hint}</span></>}
     </summary>
     {children}

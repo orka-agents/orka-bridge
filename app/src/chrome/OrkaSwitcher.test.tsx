@@ -39,11 +39,13 @@ test('opens a menu of this computer, remembered clusters and the cluster actions
   const menu = await screen.findByRole('menu', { name: 'Orka in use' });
   expect(button.getAttribute('aria-expanded')).toBe('true');
   const radios = within(menu).getAllByRole('menuitemradio');
-  expect(radios.map(item => item.textContent)).toEqual(['This computerWorkspace ready', 'team-devOrka in control/orka', 'team-oldConnect again']);
+  expect(radios.map(item => item.textContent)).toEqual(['This computerWorkspace ready', 'team-devcontrol/orka · namespace agents', 'team-oldConnect again']);
   expect(radios.map(item => item.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false']);
   expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Add a cluster', 'Manage clusters']);
   expect(within(menu).getByRole('separator')).toBeTruthy();
   expect(document.activeElement).toBe(radios[0]);
+  // Find an Orka is always offered, but a short list keeps the focus on the current place.
+  expect(screen.getByRole('searchbox', { name: 'Find an Orka' })).toBeTruthy();
   await user.keyboard('{Escape}');
   expect(screen.queryByRole('menu')).toBeNull();
   expect(document.activeElement).toBe(button);
@@ -134,7 +136,7 @@ test('more than six places can be filtered by typing', async () => {
   ipc(Array.from({ length: 7 }, (_, index) => remembered(`k-filter-${index}`, `team-${index}`)), null);
   const user = userEvent.setup(); switcher();
   await user.click(screen.getByRole('button', { name: /^This computer/ }));
-  const find = await screen.findByRole('searchbox', { name: 'Find a cluster' });
+  const find = await screen.findByRole('searchbox', { name: 'Find an Orka' });
   expect(document.activeElement).toBe(find);
   await user.keyboard('team-3');
   expect(screen.getAllByRole('menuitemradio').map(item => item.querySelector('code')?.textContent)).toEqual(['team-3']);

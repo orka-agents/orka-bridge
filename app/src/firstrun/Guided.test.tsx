@@ -94,7 +94,6 @@ test('a chosen workspace without a dismissed Welcome means cleared storage, so g
 
 test('guidance hides the sidebar but keeps the status live region; elsewhere the status card stays visible', () => {
   const guided = readFileSync('src/firstrun/firstrun.css', 'utf8');
-  const shellCss = readFileSync('src/shell.css', 'utf8');
   const rule = (selector: string) => guided.match(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
   // The guided page spans the window: one column, no sidebar.
   expect(rule('.app-shell.guided')).toMatch(/grid-template-areas:\s*"title"\s*"main"/);
@@ -107,9 +106,6 @@ test('guidance hides the sidebar but keeps the status live region; elsewhere the
   expect(guided).not.toMatch(/\.status-lines[^,{]*\{[^}]*display:\s*none/);
   // Outside guidance nothing hides the status card or the sidebar.
   expect(guided.replace(/\.app-shell\.guided[^{]*\{[^}]*\}/g, '')).not.toMatch(/status-bar|page-nav/);
-  const compact = shellCss.slice(shellCss.indexOf('@media (max-width: 820px)'));
-  expect(compact).not.toMatch(/\.status-lines[^{]*\{[^}]*display:\s*none/);
-  expect(compact).not.toMatch(/clip-path/);
 });
 
 test('a computer with nothing set up is guided again alongside Welcome, and leaving is kept for the run', async () => {

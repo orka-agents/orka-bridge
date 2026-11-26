@@ -6,7 +6,8 @@ import './switcher.css';
 // Cluster access lives only in native memory, so a remembered cluster can be switched to directly only when
 // this run already confirmed it: native's current selection, or one cluster_select accepted earlier.
 const confirmed = new Set<string>();
-const filterAbove = 6;
+// Find an Orka is always offered; it takes the focus on opening only once the list is long.
+const focusFindAbove = 6;
 
 type Row = { id: string; kind: 'computer' } | { id: string; kind: 'cluster'; place: Place; connected: boolean } | { id: string; kind: 'add' } | { id: string; kind: 'manage' };
 
@@ -31,8 +32,8 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
   const initialFocus = useRef<'current' | 'first' | 'last'>('current');
 
   const clusters = snapshot?.places ?? [];
-  const filtering = clusters.length + 1 > filterAbove;
-  const needle = filtering ? query.trim().toLowerCase() : '';
+  const filtering = clusters.length + 1 > focusFindAbove;
+  const needle = query.trim().toLowerCase();
   const matches = (...values: string[]) => !needle || values.some(value => value.toLowerCase().includes(needle));
   const currentKey = place.kind === 'cluster' && place.target ? snapshot?.selectedKey ?? null : null;
   const rows: Row[] = [
@@ -118,7 +119,7 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
     const next = event.key === 'ArrowDown' ? (at + 1) % list.length : event.key === 'ArrowUp' ? at <= 0 ? list.length - 1 : at - 1
       : event.key === 'Home' && at >= 0 ? 0 : event.key === 'End' && at >= 0 ? list.length - 1 : undefined;
     if (next !== undefined) { event.preventDefault(); list[next]?.focus(); return; }
-    if (filtering && at >= 0 && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) filter.current?.focus();
+    if (at >= 0 && event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey) filter.current?.focus();
   }
 
   const renderRow = (row: Row) => {
@@ -130,7 +131,7 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
     }
     const checked = current(row);
     const tone = row.kind === 'computer' ? computerTone : row.connected ? 'ready' : undefined;
-    const meta = row.kind === 'computer' ? computerLine : row.connected ? `Orka in ${row.place.service.replace(/\s*\/\s*/g, '/')}` : 'Connect again';
+    const meta = row.kind === 'computer' ? computerLine : row.connected ? <><code>{row.place.service.replace(/\s*\/\s*/g, '/')}</code> · namespace {row.place.namespace}</> : 'Connect again';
     return <button key={row.id} type="button" role="menuitemradio" aria-checked={checked} className="switcher-item" aria-labelledby={`${row.id}-name`} aria-describedby={meta ? `${row.id}-meta` : undefined} onClick={() => { void choose(row); }}>
       <span className={tone ? `switcher-dot ${tone}` : 'switcher-dot'} aria-hidden="true" />
       <span className="switcher-copy">
@@ -152,10 +153,10 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
       <svg className="switcher-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m5 6 3-3 3 3M5 10l3 3 3-3" /></svg>
     </button>
     {open && <div className="switcher-popover" onKeyDown={move}>
-      {filtering && <div className="switcher-filter">
+      <div className="switcher-filter">
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3" /></svg>
-        <input ref={filter} type="search" aria-label="Find a cluster" placeholder="Find a cluster" value={query} onChange={event => setQuery(event.target.value)} />
-      </div>}
+        <input ref={filter} type="search" aria-label="Find an Orka" placeholder="Find an Orka" value={query} onChange={event => setQuery(event.target.value)} />
+      </div>
       <div ref={menu} id={`${id}-menu`} role="menu" aria-label="Orka in use">
         {computer.length > 0 && <div role="group" aria-labelledby={`${id}-computer-label`}>
           <p className="switcher-group-label" id={`${id}-computer-label`} role="presentation">On this computer</p>
@@ -166,7 +167,7 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
           {remembered.map(renderRow)}
           {unavailable && <p className="switcher-note" role="presentation">Couldn't read your clusters.</p>}
         </div>}
-        {filtering && needle && computer.length === 0 && remembered.length === 0 && <p className="switcher-note" role="presentation">No cluster matches.</p>}
+        {needle && computer.length === 0 && remembered.length === 0 && <p className="switcher-note" role="presentation">No cluster matches.</p>}
         <div role="separator" className="switcher-separator" />
         {rows.filter(row => row.kind === 'add' || row.kind === 'manage').map(renderRow)}
       </div>

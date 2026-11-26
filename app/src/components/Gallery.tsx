@@ -14,9 +14,9 @@ function Section({ title, note, children }: { title: string; note?: string; chil
 const statuses: { state: Status; words: string[]; means: string }[] = [
   { state: 'passed', words: ['Passed', 'Ready', 'Connected'], means: 'Tests met their checks; a connection works' },
   { state: 'running', words: ['Running', 'Installing', 'Checking'], means: 'Work in progress' },
-  { state: 'needs-you', words: ['Needs you', 'Stopped'], means: 'Waiting on the creator' },
+  { state: 'needs-you', words: ['Needs you', 'Stopped', 'Not run since your edit'], means: 'Waiting on the creator' },
   { state: 'failed', words: ['Failed', 'Denied'], means: 'Did not succeed' },
-  { state: 'stale', words: ['Stale', 'Result unknown'], means: 'Not run since your edit' },
+  { state: 'stale', words: ['Result unknown'], means: 'No result was confirmed' },
   { state: 'not-started', words: ['Not started', 'Cancelled'], means: 'Nothing has run yet' },
 ];
 

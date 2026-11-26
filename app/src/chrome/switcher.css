@@ -5,36 +5,38 @@
 
 .switcher-popover {
   position: absolute; z-index: 20; left: calc(-1 * var(--space-3)); bottom: calc(100% + var(--space-2) + 8px);
-  width: min(292px, calc(100vw - 32px)); max-height: calc(100dvh - 120px); overflow: auto;
-  padding: var(--space-1); border: 1px solid var(--color-border-strong); border-radius: var(--radius-card);
-  background: var(--color-card); color: var(--color-text); box-shadow: var(--shadow-overlay);
+  width: min(280px, calc(100vw - 32px)); max-height: calc(100dvh - 120px); overflow: auto;
+  padding: var(--space-1-5); border: 1px solid var(--color-border-strong); border-radius: var(--radius-overlay);
+  background: var(--color-page); color: var(--color-text); box-shadow: var(--shadow-popover);
   font: var(--type-body); white-space: normal; overflow-wrap: anywhere;
 }
 .app-shell[data-sidebar="collapsed"] .switcher-popover { left: calc(100% + var(--space-3)); bottom: calc(-1 * var(--space-2)); }
 @media (max-width: 820px) {
-  .orka-switcher { flex: none; }
-  .switcher-popover { left: calc(100% + var(--space-3)); bottom: calc(-1 * var(--space-1)); }
+  .app-shell:not([data-sidebar="overlay"]) .switcher-popover { left: calc(100% + var(--space-3)); bottom: calc(-1 * var(--space-2)); }
 }
 
-.switcher-filter { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-1); padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--color-border); }
+.switcher-filter { display: flex; align-items: center; gap: var(--space-2); min-height: 34px; margin: 0 0 var(--space-1); padding: 0 var(--space-2); border-bottom: 1px solid var(--color-border-strong); }
 .switcher-filter svg { flex: none; width: 14px; height: 14px; fill: none; stroke: var(--color-text-secondary); stroke-width: 1.5; stroke-linecap: round; }
-.switcher-filter input { flex: 1; min-width: 0; min-height: 28px; padding: 0; border: 0; background: transparent; color: var(--color-text); font: var(--type-body); }
+.switcher-filter input { flex: 1; min-width: 0; min-height: 28px; padding: 0; border: 0; background: transparent; color: var(--color-text); font: 400 13px/18px var(--font-ui); }
+.switcher-filter input::placeholder { color: var(--color-text-secondary); opacity: 1; }
 .switcher-filter input:focus-visible { outline: none; }
 .switcher-filter:focus-within { border-bottom-color: var(--color-text); }
 
-.switcher-group-label { margin: 0; padding: var(--space-2) var(--space-2) var(--space-1); color: var(--color-text-tertiary); font: 500 11px/16px var(--font-mono); letter-spacing: .05em; text-transform: uppercase; }
+.switcher-group-label { margin: 0; padding: var(--space-2) var(--space-2) var(--space-0-5); color: var(--color-text-secondary); font: 500 11px/16px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
 .switcher-note { margin: 0; padding: var(--space-1) var(--space-2) var(--space-2); color: var(--color-text-secondary); font: var(--type-small); }
-.switcher-separator { height: 1px; margin: var(--space-1) var(--space-1); background: var(--color-border-strong); }
+.switcher-separator { height: 1px; margin: var(--space-1-5) 0; background: var(--color-border-strong); }
 
-.switcher-item { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; min-height: 32px; padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-row); background: transparent; color: var(--color-text); text-align: left; font: var(--type-body); }
+.switcher-item { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 34px; padding: 7px var(--space-2); border: 0; border-radius: var(--radius-row); background: transparent; color: var(--color-text); text-align: left; font: 500 14px/20px var(--font-ui); }
 .switcher-item[role="menuitemradio"] { min-height: 44px; }
-.switcher-item:hover, .switcher-item[aria-checked="true"] { background: var(--color-hover); }
+.switcher-item:hover { background: var(--color-hover); }
+.switcher-item[aria-checked="true"] { background: var(--color-well); }
 .switcher-item:focus-visible { outline-offset: -2px; }
 .switcher-copy { display: grid; flex: 1; min-width: 0; }
-.switcher-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.switcher-name { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .switcher-action .switcher-name { font-weight: 500; }
 .switcher-name code { font-size: 12.5px; }
-.switcher-meta { color: var(--color-text-secondary); font: var(--type-small); }
+.switcher-meta { color: var(--color-text-secondary); font: 400 12px/16px var(--font-ui); }
+.switcher-meta code { font-size: 11.5px; }
 .switcher-mark, .switcher-check { display: inline-flex; flex: none; width: 14px; height: 14px; }
 .switcher-mark svg, .switcher-check svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -49,10 +51,19 @@
 .status-bar:has(> .host-chip) { cursor: pointer; }
 .status-bar:has(> .host-chip):hover { background: var(--color-hover); }
 
-/* In the full sidebar the chevron sits at the card's vertical centre and the menu rises from the card itself. */
+/* In the full sidebar the chevron ends the card's first line, clear of the status lines below it, and the menu rises
+   from the card itself. In the rail the card shows only its dot. */
 @media (min-width: 821px) {
   .app-shell:not([data-sidebar="collapsed"]) :is(.orka-switcher, .host-chip) { position: static; }
   .app-shell:not([data-sidebar="collapsed"]) .host-chip { padding-right: var(--space-6); }
-  .app-shell:not([data-sidebar="collapsed"]) .switcher-chevron { position: absolute; right: var(--space-3); top: 50%; margin: 0; translate: 0 -50%; }
+  .app-shell:not([data-sidebar="collapsed"]) .switcher-chevron { position: absolute; right: var(--space-3); top: calc(var(--space-2-5) + 3px); margin: 0; }
   .app-shell:not([data-sidebar="collapsed"]) .switcher-popover { left: 0; bottom: calc(100% + 8px); }
+  .app-shell[data-sidebar="collapsed"] .switcher-chevron { display: none; }
+}
+@media (max-width: 820px) {
+  .app-shell[data-sidebar="overlay"]:not(.guided) :is(.orka-switcher, .host-chip) { position: static; }
+  .app-shell[data-sidebar="overlay"]:not(.guided) .host-chip { padding-right: var(--space-6); }
+  .app-shell[data-sidebar="overlay"]:not(.guided) .switcher-chevron { position: absolute; right: var(--space-3); top: calc(var(--space-2-5) + 3px); margin: 0; }
+  .app-shell[data-sidebar="overlay"]:not(.guided) .switcher-popover { left: 0; bottom: calc(100% + 8px); }
+  .app-shell:not(.guided, [data-sidebar="overlay"]) .switcher-chevron { display: none; }
 }
