@@ -6,7 +6,7 @@ use cap_std::fs::{Dir, DirBuilder, OpenOptions};
 use sha2::{Digest, Sha256};
 use std::{
     fs::File,
-    io::{self, Read, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::Path,
     sync::Arc,
 };
@@ -465,15 +465,66 @@ fn chunk_stream<'a>(stage: &'a Dir, image: &'a ResolvedImage) -> Chunks<'a> {
         whole: Sha256::new(),
     }
 }
+/// Leaves all-zero blocks of a fresh, empty file unwritten, so filesystems with holes store them free.
+struct SparseOutput {
+    file: File,
+    length: u64,
+    hole: u64,
+}
+const SPARSE_BLOCK: u64 = 4096;
+fn zero(block: &[u8]) -> bool {
+    let (words, tail) = block.as_chunks::<8>();
+    words.iter().fold(0, |a, w| a | u64::from_ne_bytes(*w)) == 0 && tail.iter().all(|b| *b == 0)
+}
+impl SparseOutput {
+    fn write(&mut self, mut data: &[u8]) -> io::Result<()> {
+        while !data.is_empty() {
+            // Blocks align to the logical offset; a run of non-zero blocks is one write.
+            let mut run = 0;
+            let mut zeroes = None;
+            while run < data.len() {
+                let step = ((SPARSE_BLOCK - (self.length + run as u64) % SPARSE_BLOCK) as usize)
+                    .min(data.len() - run);
+                let empty = zero(&data[run..run + step]);
+                if *zeroes.get_or_insert(empty) != empty {
+                    break;
+                }
+                run += step;
+            }
+            if zeroes == Some(true) {
+                self.hole += run as u64;
+            } else {
+                if self.hole > 0 {
+                    let hole = i64::try_from(self.hole).map_err(|_| io::ErrorKind::InvalidData)?;
+                    self.file.seek(SeekFrom::Current(hole))?;
+                    self.hole = 0;
+                }
+                self.file.write_all(&data[..run])?;
+            }
+            self.length += run as u64;
+            data = &data[run..];
+        }
+        Ok(())
+    }
+    fn finish(self) -> io::Result<File> {
+        self.file.set_len(self.length)?;
+        Ok(self.file)
+    }
+}
 fn decode_gzip(
     image: &ResolvedImage,
     stage: &Dir,
-    mut output: File,
+    output: File,
     closed: &tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), ImageError> {
     use std::io::{BufRead, BufReader};
     let chunks = chunk_stream(stage, image);
     let mut source = BufReader::with_capacity(65536, chunks);
+    let mut output = SparseOutput {
+        file: output,
+        length: 0,
+        hole: 0,
+    };
     let mut bytes = 0u64;
     let mut digest = Sha256::new();
     let mut first = true;
@@ -518,7 +569,7 @@ fn decode_gzip(
                 .checked_add(n as u64)
                 .filter(|n| *n <= image.disk_bytes.min(image.limits.disk_bytes))
                 .ok_or(ImageError::Integrity)?;
-            output.write_all(&buffer[..n]).map_err(storage)?;
+            output.write(&buffer[..n]).map_err(storage)?;
             digest.update(&buffer[..n]);
         }
         first = false;
@@ -531,7 +582,11 @@ fn decode_gzip(
     {
         return Err(ImageError::Integrity);
     }
-    output.sync_all().map_err(storage)?;
+    output
+        .finish()
+        .map_err(storage)?
+        .sync_all()
+        .map_err(storage)?;
     Ok(())
 }
 fn verify_checked(
