@@ -182,14 +182,14 @@ try {
         if (recovery.bar || recovery.rows.length !== 4 || !recovery.failed) throw Error(`${name}: recovery must stay inside workspace step 2: ${JSON.stringify(recovery)}`);
       }
       if (cluster) await evaluate(`document.querySelector('.cluster-card').scrollIntoView({ block: 'end' })`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${name}.png`), Buffer.from(image.data, 'base64'));
       console.log(`Captured native WebView2 renderer fixture: ${theme}/${name}`);
     }
   }
   async function checkLayout(theme, size, name) {
-    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     const layout = await evaluate(`(() => {
       const shown = selector => [...document.querySelectorAll(selector)].filter(node => node.getClientRects().length);
       const rect = node => { if (!node) return null; const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width }; };
@@ -337,7 +337,7 @@ try {
     if (rows.count !== 4 || observed && rows.current !== (step === 2 ? 'Get your workspace ready' : 'Connect the AI')) throw Error(`${name}: list and shell disagree: ${JSON.stringify(rows)}`);
     if (observed && localVm !== 'ready' && rows.barRow !== 'Get your workspace ready') throw Error(`${name}: progress is outside the active workspace row`);
     if (localVm === 'starting' && rows.value !== null) throw Error(`${name}: startup must be indeterminate`);
-    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     if (!modelSupported && !await evaluate(`document.body.textContent.includes('Waiting') && !document.body.textContent.includes('Queued') && ![...document.querySelectorAll('button')].some(button => button.textContent === 'Connect the AI')`)) {
       throw new Error(`${name}: an unsupported platform must show Waiting with no model action`);
     }
@@ -540,7 +540,7 @@ try {
     })()`);
     const shoot = async (suffix, selector) => {
       await evaluate(`(() => { const root = document.querySelector('.send-panel'); const anchor = ${selector}; anchor.scrollIntoView({ block: 'start' }); })()`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-${name}${suffix}.png`), Buffer.from(image.data, 'base64'));
     };
@@ -940,7 +940,7 @@ try {
       if (['chat-pending', 'chat-running', 'chat-session-null', 'chat-session-answer'].includes(name) && await evaluate(`['No answer was received.', 'failed without an answer'].some(text => document.querySelector('.try-task .try-result').innerText.includes(text))`)) throw Error('A waiting task shows a premature missing-answer fault');
       if (name.startsWith('chat-session-') && !await evaluate(`document.querySelector('.try-task').innerText.includes('Waiting for the task to finish saving…') || document.querySelector('.try-task .try-result .pill')?.textContent === 'Running'`)) throw Error('Session confirmation lost its pending status');
       await evaluate(`document.querySelector('.designer-try').scrollIntoView({ block: 'start' })`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const chatCopy = await evaluate(`(() => {
         const root = document.querySelector('.try-task'), main = document.querySelector('main'), field = root.querySelector('textarea'), send = root.querySelector('button[type="submit"]'), hint = document.getElementById(field.getAttribute('aria-describedby'));
         const rect = node => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
@@ -1006,7 +1006,7 @@ try {
               }));
             })()`);
             if (!reachable) throw Error(scene + ': cluster actions overlap fixed chrome');
-            await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+            await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
             const image = await call('Page.captureScreenshot', { format: 'png' });
             await writeFile(join(output, `${theme}-${size}-${scene}.png`), Buffer.from(image.data, 'base64'));
             await compareReference(image.data, theme, size, scene, 'clusters');
@@ -1116,7 +1116,7 @@ try {
       // Open the kept answer and capture the card in the real native WebView.
       if (state === 'cancelled') await evaluate(`document.querySelector('.example-run .test-result').open = true`);
       await evaluate(`document.querySelector('.example-run').scrollIntoView({ block: 'start' })`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
       if (await evaluate('window.__bridgeCancelCalls.length') !== 0) throw Error('Cancellation replayed on mount');
@@ -1137,7 +1137,7 @@ try {
       console.log(`Captured native WebView2 local cancellation fixture: ${theme}/${size}/${name}`);
       return;
     }
-    const settle = () => evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    const settle = () => evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     const visibleText = text => `[...document.querySelectorAll('h1, p, span, button')].some(node => node.getClientRects().length && node.textContent === ${JSON.stringify(text)})`;
     if (name === 'first-test-passed') {
       await until(() => evaluate(visibleText('Your first agent passed its test')), 'first-pass moment').catch(async error => { throw Error(`${error.message}: ${await evaluate('document.body.innerText')}`); });
@@ -1206,7 +1206,7 @@ try {
         if (card.text.includes('Its test failed') !== (state === 'failed')) fail('failure message belongs only to the failed test');
         for (const [suffix, target] of [['', '[aria-label="Setup steps"] > li:last-child'], ['-card', '[aria-label="Workspace setup"]']]) {
           await evaluate(`document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' })`);
-          await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+          await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
           const image = await call('Page.captureScreenshot', { format: 'png' });
           await writeFile(join(output, `${theme}-${size}-sample-${state}${suffix}.png`), Buffer.from(image.data, 'base64'));
         }
@@ -1233,7 +1233,7 @@ try {
       const shoot = async (state, frame, target) => {
         await evaluate(`document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' })`);
         await checkLayout(theme, size, `ai-reset-${state}`);
-        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
         const image = await call('Page.captureScreenshot', { format: 'png' });
         await writeFile(join(output, `${theme}-${size}-ai-reset-${state}.png`), Buffer.from(image.data, 'base64'));
         await compareReference(image.data, theme, size, `ai-reset-${state}`, frame);
@@ -1350,7 +1350,7 @@ try {
     }
     if (['designer-connected', 'designer-running', 'designer-failed', 'designer-passed', 'designer-stale'].includes(name)) await evaluate(`document.querySelector('.example-run').scrollIntoView({ block: 'start' })`);
     if (name.startsWith('ai-removal-')) await evaluate(`document.querySelector('.setup-model').scrollIntoView({ block: 'center' })`);
-    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     const image = await call('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
     if (name === 'chat-answer') {
@@ -1402,7 +1402,7 @@ try {
     if (name === 'welcome' || preflight) {
       // The compact loop uses 540×640; preserve the choice and its scrolled action.
       await evaluate(`document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const actionLabel = name === 'welcome' ? 'Get started' : 'Continue';
       const reachable = await evaluate(`(() => {
         const button = [...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(actionLabel)} && button.getClientRects().length);
@@ -1429,7 +1429,7 @@ try {
     if (name.startsWith('chat-') || name.startsWith('new-agent-') || noDestination) await compareDesigner(image.data, theme, size, name);
     if (size !== 'wide' && ['new-agent-form', 'cluster-failure'].includes(name)) {
       await evaluate(`document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const labels = name === 'new-agent-form' ? ['Create', 'Cancel'] : ['Check again'];
       const reachable = await evaluate(`(() => {
         const main = document.querySelector('main').getBoundingClientRect();
@@ -1485,7 +1485,7 @@ try {
       const chip = () => evaluate(`[...document.querySelectorAll('.tool-pill')].some(pill => pill.querySelector('code')?.textContent === 'reply_in_conversation' && pill.getClientRects().length)`);
       const warned = () => evaluate(`[...document.querySelectorAll('[role="alert"]')].some(alert => alert.textContent.includes('reply_in_conversation') && alert.getClientRects().length)`);
       const settleShot = async suffix => {
-        await evaluate('document.querySelector(".agent-tool-row").scrollIntoView({ block: "center" }); document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        await evaluate('document.querySelector(".agent-tool-row").scrollIntoView({ block: "center" }); document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
         const image = await call('Page.captureScreenshot', { format: 'png' });
         await writeFile(join(output, `${theme}-${size}-${suffix}.png`), Buffer.from(image.data, 'base64'));
       };
@@ -1520,7 +1520,7 @@ try {
     if (name === 'ai-idle' && await evaluate(`document.querySelector('.setup-model').innerText.includes('Remove sign-in')`)) throw Error('Unused sign-in removal is visible before connecting');
     if (await evaluate(`document.body.innerText.includes('Change where agents run')`)) throw Error('Removed change panel is still visible');
     if (name === 'designer-connected' || name === 'designer-remote') {
-      const settle = () => evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      const settle = () => evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const shoot = async suffix => {
         await settle();
         const image = await call('Page.captureScreenshot', { format: 'png' });
@@ -1640,7 +1640,7 @@ try {
     await evaluate(`document.querySelector('button.page-tab[aria-label="Overview"]').click()`);
     const text = () => evaluate(`document.querySelector('section.overview:not([hidden])')?.innerText ?? ''`);
     const shoot = async suffix => {
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-overview-${variant}${suffix}.png`), Buffer.from(image.data, 'base64'));
       console.log(`Captured native WebView2 Overview fixture: ${theme}/${size}/${variant}${suffix}`);
@@ -1900,7 +1900,7 @@ try {
         }
         await until(() => evaluate(`document.activeElement?.matches('.workspace-upgrade summary:focus-visible')`), 'upgrade keyboard focus');
       }
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const base64 = await call('Page.captureScreenshot', { format: 'png' });
       // A variant explicitly named -confirm reserves that exact filename for the
       // open confirmation. Keep its prior observation separately, never *-confirm-confirm.
@@ -1918,7 +1918,7 @@ try {
         await until(() => evaluate(`document.activeElement?.textContent === 'Not now' && document.activeElement.matches(':focus-visible')`), 'confirmation keyboard focus');
         // The fresh-C and restore warnings can sit below the fold; scroll before the separate capture.
         await evaluate(`document.querySelector('.workspace-upgrade fieldset.workspace-stop-confirm').scrollIntoView({ block: 'center' })`);
-        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
         const confirmImage = await call('Page.captureScreenshot', { format: 'png' });
         const confirmationName = name.endsWith('-confirm') ? name : `${name}-confirm`;
         await writeFile(join(output, `${theme}-${size}-${confirmationName}.png`), Buffer.from(confirmImage.data, 'base64'));
