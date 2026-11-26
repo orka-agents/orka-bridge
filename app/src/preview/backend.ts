@@ -6,6 +6,10 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import agentSource from '../../src-tauri/example-agent/web-reader.agent.md?raw';
 import testSource from '../../src-tauri/example-agent/web-reader.agent.test.md?raw';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
+import {
+  clusterCatalog, type Credential, createdSeed, deniedAccess, failingClusterPlace, failingClusterProvider, failingClusterTarget, type FailureScenario,
+  installationMismatch, keyInvalid, keyRejected, modelGuest, sendRows, unreachableCluster, upgradeStatus, workspaceFailures,
+} from './fixtures';
 
 export const scenarios = {
   fresh: 'First run on a new computer',
@@ -16,6 +20,21 @@ export const scenarios = {
   ghSignedOut: 'GitHub CLI installed, signed out',
   runFails: 'Example test fails',
   vmFailed: 'Virtualization turned off',
+  memoryLow: 'Not enough memory at setup',
+  wsStopped: 'Workspace stopped',
+  wsCouldntStart: "Workspace couldn't start",
+  wsForced: 'Workspace forcibly stopped',
+  wsUpdate: 'Workspace update needed',
+  wsRestore: 'Interrupted update, restore offered',
+  wsRecovery: 'Interrupted update, setup incomplete',
+  keyRejected: 'API key not accepted',
+  aiMismatch: 'Saved AI connection from an earlier setup',
+  clusterDenied: 'Cluster access denied',
+  clusterUnreachable: "Can't reach the cluster",
+  sendBlocked: 'Send blocked by destination checks',
+  sendRunning: 'Send running on the cluster',
+  sendFailed: 'Send finished with a failing test',
+  testIncomplete: 'First test is incomplete',
 } as const;
 export type Scenario = keyof typeof scenarios;
 type Gh = 'missing' | 'signedOut' | 'signedIn';
@@ -35,7 +54,7 @@ let gh: Gh = (['missing', 'signedOut', 'signedIn'] as const).find(value => value
   ?? (scenario === 'ghMissing' ? 'missing' : scenario === 'ghSignedOut' ? 'signedOut' : 'signedIn');
 
 const now = () => Date.now() * speed;
-const fresh = scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut';
+const fresh = scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow';
 let selected: 'localVm' | null = fresh ? null : 'localVm';
 let startedAt: number | null = scenario === 'restart' ? now() : null;
 let reopened = scenario === 'restart';
@@ -162,7 +181,212 @@ function pair(documentId: string) {
 const documentId = (args?: Record<string, unknown>) => typeof args?.documentId === 'string' ? args.documentId : SAMPLE_DOCUMENT_ID;
 const upgradeNone = { state: 'none', transaction: null, createdAt: null, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, credential: 'absent', busy: false, error: null, repeated: false, canReplace: false, canRestore: false, canCancel: false };
 
+// Scenarios that open in states the ordinary walk can't reach. Replies come from ./fixtures; a command
+// a scenario doesn't own falls through to the ordinary script in handle().
+const unscripted = Symbol('unscripted');
+const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed'].includes(scenario);
+const upgradeScenario = scenario === 'wsUpdate' || scenario === 'wsRestore' || scenario === 'wsRecovery';
+const remoteScenario = ['clusterDenied', 'clusterUnreachable', 'sendBlocked', 'sendRunning', 'sendFailed'].includes(scenario);
+const sendScenario = scenario === 'sendBlocked' || scenario === 'sendRunning' || scenario === 'sendFailed';
+let failed: FailureScenario | null = Object.hasOwn(workspaceFailures, scenario) ? scenario as FailureScenario : null;
+let replaced = scenario === 'wsRestore' || scenario === 'wsRecovery';
+let credential: Credential = scenario === 'wsUpdate' ? 'eligible' : 'absent';
+let upgrade = upgradeScenario ? upgradeStatus(scenario === 'wsUpdate' ? 'eligible' : scenario === 'wsRestore' ? 'sourceRetained' : 'incomplete', uuid('upgrade'), credential) : null;
+let mismatch = scenario === 'aiMismatch';
+let clusterKnown = true;
+let clusterChecked = false;
+let sent = false;
+let remoteSend: { id: string; documentId: string; startedAt: number; count: number; created: boolean; cancelled: boolean } | null = null;
+let sendCount = 0;
+if (scenario === 'wsStopped') stopped = 'cancelled';
+if (sendScenario || scenario === 'testIncomplete') modelConnected = true;
+const draftDocument = uuid('doc-my-agent');
+if (scenario === 'testIncomplete') {
+  docs.set(draftDocument, { name: 'my-agent', ...createdSeed('my-agent') });
+  selectedDocument = draftDocument;
+}
+const clusterTarget = failingClusterTarget(uuid);
+const clusterProvider = failingClusterProvider(uuid);
+const sendAgent = { name: `bridge-run-${digest('send-agent').slice(0, 32)}`, uid: uuid('send-agent') };
+function clusterPlace() {
+  const place = failingClusterPlace(uuid, clusterChecked);
+  return sent ? { ...place, agents: [{ ...sendAgent, namespace: place.namespace, agentType: 'ai', model: 'gpt-5.6-terra', tools: ['web_fetch'], record: null }] } : place;
+}
+function failedStatus(name: FailureScenario) {
+  const { localVmError, workspaceFailure } = workspaceFailures[name];
+  return { selected: 'localVm', localVm: 'failed', localVmError, model: 'locked', modelSupported: true, workspaceFailure, ...(replaced ? { workspaceReplaced: true } : {}) };
+}
+const modelOf = (doc: Doc) => (/^model: (.+)$/m.exec(doc.agent)?.[1] ?? 'gpt-5.6-terra').replace(/^"|"$/g, '');
+const toolsOf = (doc: Doc) => doc.name === 'web-reader' ? ['web_fetch'] : [];
+function sendReport(cancelled: boolean) {
+  const base = { id: 'published-checksum', title: 'Published checksum', question: 'Open the download page and report the SHA-256 checksum it publishes.' };
+  if (cancelled) return { verdict: 'cancelled', cases: [{ ...base, phase: 'Cancelled', answer: null, completedTools: [], assertions: [], verdict: 'cancelled' }] };
+  return { verdict: 'failed', cases: [{
+    ...base, phase: 'Succeeded', answer: "I couldn't fetch that page, so I can't tell you the checksum.", completedTools: [],
+    assertions: [
+      { id: 'checksum-from-page', kind: 'contains', expected: 'cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918', verdict: 'failed' },
+      { id: 'fetched-page', kind: 'toolCalled', expected: 'web_fetch', verdict: 'failed' },
+    ],
+    verdict: 'failed',
+  }] };
+}
+function sendStatus(id: string) {
+  const s = remoteSend;
+  const doc = s && docs.get(s.documentId);
+  if (!s || !doc) return { documentId: id, view: null, busy: null };
+  // sendRunning stays on the cluster until cancelled, so the running state can be studied.
+  const running = !s.cancelled && (scenario === 'sendRunning' || (now() - s.startedAt) / 1000 < runSeconds);
+  const view = {
+    documentId: s.documentId, id: s.id, targetId: clusterTarget.id, providerId: clusterProvider.id, targetName: clusterTarget.context_name,
+    source: source(doc), model: modelOf(doc), agentName: sendAgent.name, state: running ? 'running' : 'complete', stage: running ? 'observe' : 'done',
+    error: null, storageError: false, cancellation: s.cancelled ? 'confirmed' : null, agentAction: s.created ? 'create' : 'unchanged',
+    acknowledged: [{ kind: 'Agent', ...sendAgent }, { kind: 'Task', name: `bridge-task-${digest(`send-task${s.count}`).slice(0, 32)}`, uid: uuid(`send-task${s.count}`) }],
+    pending: null, report: running ? null : sendReport(s.cancelled),
+  };
+  return { documentId: id, view: s.documentId === id ? view : null, busy: running ? { documentId: s.documentId, name: doc.name } : null };
+}
+
+async function scenarioReply(command: string, args?: Record<string, unknown>): Promise<unknown> {
+  switch (command) {
+    case 'setup_preflight':
+      if (scenario !== 'memoryLow') break;
+      return { platform: 'windows', virtualization: 'ready', memory: 'insufficient', installedMemoryBytes: 4 * GiB, requiredMemoryBytes: 6 * GiB };
+    case 'setup_status':
+      if (failed) return failedStatus(failed);
+      if (replaced) return { ...status(), workspaceReplaced: true };
+      break;
+    case 'setup_select_local':
+      // Restart after a stop or a failed start reopens the installed workspace.
+      if (scenario !== 'wsStopped' && scenario !== 'wsCouldntStart') break;
+      await wait(0.3);
+      failed = null; stopped = null; startedAt = now(); reopened = true;
+      return status();
+    case 'overview_agents':
+      if (!failed) break;
+      return { state: 'unavailable', installation: null, agents: [], observedAt: null, observation: null, runActive: false, reason: 'stopped' };
+    case 'workspace_catalog':
+      if (!failed) break;
+      throw 'catalogUnavailable';
+    case 'workspace_upgrade_status':
+      if (!upgrade) break;
+      return upgrade;
+    case 'workspace_upgrade_replace': case 'workspace_upgrade_retry':
+      if (!upgrade) break;
+      await wait(2);
+      upgrade = upgradeStatus('consumed', uuid('upgrade'), credential);
+      failed = null; replaced = true; startedAt = null;
+      return { outcome: 'completed', status: upgrade };
+    case 'workspace_upgrade_restore':
+      if (!upgrade) break;
+      await wait(1);
+      upgrade = upgradeStatus('restored', uuid('upgrade'), credential);
+      failed = 'wsRestore'; replaced = true;
+      return upgrade;
+    case 'workspace_upgrade_transfer': case 'workspace_upgrade_remove':
+      if (!upgrade) break;
+      credential = command === 'workspace_upgrade_transfer' ? 'transferred' : 'removed';
+      upgrade = { ...upgrade, credential };
+      return upgrade;
+    case 'workspace_upgrade_cancel':
+      if (!upgrade) break;
+      return 'notCancellable';
+    case 'setup_connect_key': {
+      if (scenario !== 'keyRejected') break;
+      await wait(2);
+      if (!ready()) throw modelGuest;
+      const vendor = args?.vendor === 'anthropic' ? 'anthropic' : 'openai';
+      const key = String(args?.key ?? '');
+      const prefix = vendor === 'anthropic' ? 'sk-ant-' : 'sk-';
+      if (!key.startsWith(prefix) || key.length <= prefix.length || (vendor === 'openai' && key.startsWith('sk-ant-'))) throw keyInvalid;
+      throw keyRejected(vendor);
+    }
+    case 'setup_connect_model':
+      if (!mismatch) break;
+      await wait(2);
+      if (!ready()) throw modelGuest;
+      throw installationMismatch(installation, uuid('earlier-installation'), uuid('credential-slot'));
+    case 'setup_reset_model':
+      if (scenario !== 'aiMismatch') break;
+      await wait(1);
+      mismatch = false; modelConnected = false;
+      return { ready: false };
+    case 'cluster_places':
+      if (!remoteScenario) break;
+      return { places: clusterKnown ? [clusterPlace()] : [], selectedKey: clusterKnown && clusterChecked ? clusterPlace().key : null, persistenceState: 'complete' };
+    case 'overview_places':
+      if (!remoteScenario) break;
+      return { places: clusterKnown ? [clusterPlace()] : [], historyState: 'complete', unobserved: [] };
+    case 'cluster_reconnect':
+      if (!remoteScenario) break;
+      await wait(1);
+      clusterChecked = false;
+      if (scenario === 'clusterUnreachable') throw unreachableCluster;
+      return clusterTarget;
+    case 'cluster_use':
+      if (!remoteScenario) break;
+      await wait(1);
+      if (scenario === 'clusterDenied') return deniedAccess;
+      if (scenario === 'clusterUnreachable') return { status: 'unavailable', providers: [], failure: unreachableCluster };
+      clusterChecked = true;
+      return { status: 'connected', providers: [clusterProvider], failure: null };
+    case 'cluster_select':
+      if (!remoteScenario) break;
+      if (!clusterChecked) throw { check: 'configuration', result: 'unknown' };
+      return { target: clusterTarget, providers: [clusterProvider] };
+    case 'cluster_catalog':
+      if (!sendScenario) break;
+      return clusterCatalog(scenario === 'sendBlocked' ? [] : ['web_fetch']);
+    case 'cluster_forget':
+      if (!remoteScenario) break;
+      clusterKnown = false; clusterChecked = false;
+      return null;
+    case 'send_preflight': {
+      if (!sendScenario) break;
+      await wait(0.5);
+      const id = documentId(args);
+      const doc = docs.get(id);
+      if (!doc) throw 'missing';
+      const listed = scenario !== 'sendBlocked';
+      return {
+        documentId: id, source: source(doc), targetId: String(args?.targetId), providerId: String(args?.providerId), model: modelOf(doc),
+        rows: sendRows(toolsOf(doc), listed), canSend: listed, action: !listed ? 'blocked' : sent ? 'unchanged' : 'create', canSeparate: false,
+      };
+    }
+    case 'send_start': {
+      if (!sendScenario) break;
+      const id = documentId(args);
+      if (!docs.has(id) || scenario === 'sendBlocked' || sendStatus(id).busy) throw 'busy';
+      remoteSend = { id: uuid(`send${++sendCount}`), documentId: id, startedAt: now(), count: sendCount, created: !sent, cancelled: false };
+      sent = true;
+      return sendStatus(id);
+    }
+    case 'send_status':
+      if (!added) break;
+      return sendStatus(documentId(args));
+    case 'send_cancel':
+      if (!sendScenario || !remoteSend) break;
+      remoteSend.cancelled = true;
+      return sendStatus(documentId(args));
+    case 'send_agent_focus':
+      if (!sendScenario || !sent) break;
+      return { key: clusterPlace().key, name: sendAgent.name, namespace: clusterTarget.watched_namespace, uid: sendAgent.uid };
+    case 'send_agent_check':
+      if (!sendScenario || !sent) break;
+      return 'present';
+    case 'overview_files': {
+      if (scenario !== 'testIncomplete') break;
+      // Native marks an untouched created pair as a draft and skips its declarations.
+      const saved = savedFiles();
+      return { ...saved, files: saved.files.map(file => file.documentId === draftDocument
+        ? { ...file, draft: true, summary: null, reason: 'Add instructions and a test to get started.' } : { ...file, draft: false }) };
+    }
+  }
+  return unscripted;
+}
+
 async function handle(command: string, args?: Record<string, unknown>): Promise<unknown> {
+  const scripted = await scenarioReply(command, args);
+  if (scripted !== unscripted) return scripted;
   switch (command) {
     case 'setup_requirements': return { memoryBytes: 6 * GiB, imageBytes, stateDiskBytes: 32 * GiB, downloadBytes: null };
     case 'setup_preflight': return { platform: 'windows', virtualization: scenario === 'vmFailed' ? 'disabled' : 'ready', memory: 'ready', installedMemoryBytes: 32 * GiB, requiredMemoryBytes: 6 * GiB };
@@ -268,6 +492,16 @@ function toolbar() {
   document.body.append(bar);
 }
 
+// `page=` opens a sidebar page the way a click would, so App keeps owning its page state.
+const pages = ['Home', 'Overview', 'Designer', 'Clusters'];
+function openPage(name: string) {
+  let tries = 0;
+  const timer = setInterval(() => {
+    const tab = document.querySelector<HTMLButtonElement>(`.page-tab[aria-label="${name}"]`);
+    if (tab && !tab.disabled) { clearInterval(timer); tab.click(); } else if (++tries > 100) clearInterval(timer);
+  }, 50);
+}
+
 export function installPreview() {
   try {
     // Each load starts from the scenario, not from the previous walk's browser storage.
@@ -279,4 +513,6 @@ export function installPreview() {
   mockWindows('main');
   mockIPC((command, args) => handle(command, args as Record<string, unknown> | undefined));
   if (!params.has('clean')) toolbar();
+  const page = params.get('page');
+  if (page && pages.includes(page)) openPage(page);
 }
