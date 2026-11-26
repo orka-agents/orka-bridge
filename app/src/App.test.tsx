@@ -318,7 +318,8 @@ test.each([
   render(<App />);
   const footer = screen.getByRole('contentinfo');
   expect(await within(footer).findByText(detail)).toBeTruthy();
-  expect(within(screen.getByRole('navigation')).getByText(tabLine)).toBeTruthy();
+  // The tab keeps its checking line until the launch page is decided, a moment after the footer settles.
+  expect(await within(screen.getByRole('navigation')).findByText(tabLine)).toBeTruthy();
   expect(within(footer).queryByText(/saved|GPT|tests passing|\d+ of \d+ passed/i)).toBeNull();
 });
 
