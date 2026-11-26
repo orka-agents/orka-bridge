@@ -175,7 +175,8 @@ class Apps(unittest.TestCase):
         self.assertTrue(self.release["draft"] and self.release["prerelease"])
         self.assertEqual(self.release["body"], c.APP_RELEASE_PAGE.read_text(encoding="utf-8"))
         # A release body has no repository context, so relative links break.
-        self.assertTrue(all(link.startswith("https://") for link in re.findall(r"\]\(([^)]*)\)", self.release["body"])))
+        links = re.findall(r"\]\(([^)]*)\)|^\s*\[[^\]]+\]:\s*(\S+)", self.release["body"], re.MULTILINE)
+        self.assertTrue(links and all((inline or reference).startswith("https://") for inline, reference in links))
         self.assertEqual(set(self.uploads), PUBLIC_FILES)
         self.assertEqual(set(self.downloads), {1, 2, 3})
         for name in PUBLIC_FILES:
