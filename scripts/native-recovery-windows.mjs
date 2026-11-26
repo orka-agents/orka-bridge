@@ -986,7 +986,8 @@ try {
       await clickAction('Open');
     } else if (name.startsWith('designer') || name.startsWith('local-cancel-') || name.startsWith('chat-') || name.startsWith('new-agent-')) await clickAction('Read its instructions');
     if (sendScene) {
-      // The Send card is always in Designer's right column; bring it into view.
+      // The Send card is always in Designer's right column; wait for Designer to open the agent, then bring it into view.
+      await until(() => evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length`), 'Send card in Designer');
       await evaluate(`document.querySelector('.send-panel').scrollIntoView({ block: 'start' })`);
       await captureSendScene(theme, size, name);
       return;
