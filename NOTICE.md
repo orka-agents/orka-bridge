@@ -86,5 +86,8 @@ complete notices are in `app/public/licenses/` and are included in app
 artifacts. The existing Inter and JetBrains Mono notices remain preserved there.
 These licenses do not replace this project's Microsoft MIT license.
 
-The app's Microsoft MIT notice is shipped as `licenses/Orka-MIT.txt`.
+The app's Microsoft MIT notice is shipped as `licenses/Orka-MIT.txt`. It also
+covers the excerpts of the Orka documentation (github.com/orka-agents/orka,
+Microsoft MIT) that the Navigator's digest in `app/src/home/navigator/digest.md`
+bundles, each marked with its source.
 Third-party trademarks remain subject to their owners' policies.

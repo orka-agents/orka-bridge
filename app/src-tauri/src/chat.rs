@@ -6,7 +6,8 @@ use crate::{
     runtime::types::RuntimeError,
 };
 use bridge_runtime_protocol::{
-    ChatMethod, ChatRequest, ModelConnection, ModelPhase, OrkaReply, Uuid, MAX_ORKA_BODY,
+    ChatFamily, ChatMethod, ChatRequest, ModelConnection, ModelPhase, ModelSelection, OrkaReply,
+    Uuid, CHAT_FAMILY, MAX_ORKA_BODY, NAVIGATOR_FAMILY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -122,6 +123,22 @@ impl Entry {
         self.view.can_send = safe && self.view.state == ChatState::Ready;
     }
 }
+/// What a conversation's Agent is built from. Both are read natively; the renderer
+/// supplies only the message.
+pub enum ChatSource {
+    /// A saved agent file, captured when the message is sent.
+    Document(Arc<AgentFolder>),
+    /// The Navigator's fixed instructions with this summary of the saved agents.
+    Navigator(String),
+}
+impl ChatSource {
+    fn family(&self) -> ChatFamily {
+        match self {
+            Self::Document(_) => CHAT_FAMILY,
+            Self::Navigator(_) => NAVIGATOR_FAMILY,
+        }
+    }
+}
 #[derive(Clone, PartialEq)]
 struct Binding {
     installation: Uuid,
@@ -162,10 +179,21 @@ pub struct ChatOwner(
     Mutex<HashMap<DocumentId, Entry>>,
     tokio::runtime::Handle,
     AtomicU64,
+    /// The model the last admitted turn was bound to, for display only.
+    Mutex<Option<ModelSelection>>,
 );
 impl ChatOwner {
     pub fn new(runtime: tokio::runtime::Handle) -> Arc<Self> {
-        Arc::new(Self(Mutex::default(), runtime, AtomicU64::new(0)))
+        Arc::new(Self(
+            Mutex::default(),
+            runtime,
+            AtomicU64::new(0),
+            Mutex::default(),
+        ))
+    }
+    /// The model the most recent turn was bound to, if any turn was admitted in this run.
+    pub fn thinks_with(&self) -> Option<ModelSelection> {
+        self.3.lock().unwrap().clone()
     }
     /// Forget local conversations without sending cleanup to either workspace.
     pub fn retire_for_workspace_replacement(&self) {
@@ -190,10 +218,34 @@ impl ChatOwner {
         folder: Arc<AgentFolder>,
         message: String,
     ) -> Result<ChatSnapshot, ChatError> {
+        let id = folder.document_id();
+        self.admit(vm, id, ChatSource::Document(folder), message)
+    }
+    /// One message to the Navigator's single conversation, built from the bundled
+    /// instructions and `saved_agents`, a native summary of the saved agents.
+    pub fn send_navigator(
+        self: &Arc<Self>,
+        vm: Arc<LocalVm>,
+        saved_agents: String,
+        message: String,
+    ) -> Result<ChatSnapshot, ChatError> {
+        self.admit(
+            vm,
+            crate::navigator::CONVERSATION,
+            ChatSource::Navigator(saved_agents),
+            message,
+        )
+    }
+    fn admit(
+        self: &Arc<Self>,
+        vm: Arc<LocalVm>,
+        id: DocumentId,
+        source: ChatSource,
+        message: String,
+    ) -> Result<ChatSnapshot, ChatError> {
         if message.trim().is_empty() || message.len() > MAX_ORKA_BODY {
             return Err(ChatError::InvalidMessage);
         }
-        let id = folder.document_id();
         let mut entries = self.0.lock().unwrap();
         // Retirement shares this lock: capture the lease and launch epoch together,
         // and admit nothing in the gap before the replacement VM is ready.
@@ -214,7 +266,7 @@ impl ChatOwner {
         e.view.state = ChatState::Preparing;
         e.view.error = None;
         e.stop = watch::channel(false).0;
-        self.launch(vm, id, e, Some((folder, message)));
+        self.launch(vm, id, e, Some((source, message)));
         Ok(e.view.clone())
     }
     pub fn reconnect(
@@ -283,7 +335,7 @@ impl ChatOwner {
         vm: Arc<LocalVm>,
         id: DocumentId,
         entry: &mut Entry,
-        send: Option<(Arc<AgentFolder>, String)>,
+        send: Option<(ChatSource, String)>,
     ) {
         let owner = self.clone();
         let mut worker = Worker {
@@ -468,14 +520,31 @@ impl Worker {
             _ => Err(ChatError::Response),
         }
     }
-    async fn run(&mut self, send: Option<(Arc<AgentFolder>, String)>) -> Result<(), ChatError> {
+    async fn run(&mut self, send: Option<(ChatSource, String)>) -> Result<(), ChatError> {
         // Identify the boot before sending *any* retained name, including during reconnect.
         let binding = self.binding(send.is_none()).await?;
-        if let Some((folder, message)) = send {
-            let source = tokio::task::spawn_blocking(move || folder.capture_agent())
-                .await
-                .map_err(|_| ChatError::Source)?
-                .map_err(|_| ChatError::Source)?;
+        *self.owner.3.lock().unwrap() = Some(binding.connection.selection.clone());
+        if let Some((origin, message)) = send {
+            let family = origin.family();
+            let source = match origin {
+                ChatSource::Document(folder) => {
+                    tokio::task::spawn_blocking(move || folder.capture_agent())
+                        .await
+                        .map_err(|_| ChatError::Source)?
+                        .map_err(|_| ChatError::Source)?
+                }
+                // A Navigator conversation keeps the instructions it started with, so a newly
+                // saved agent does not cost it its Session. A new model starts a new one.
+                ChatSource::Navigator(saved) => {
+                    match self.context.as_ref().filter(|c| c.binding == binding) {
+                        Some(c) => c.source.clone(),
+                        None => crate::navigator::agent_source(
+                            &binding.connection.selection.model,
+                            &saved,
+                        ),
+                    }
+                }
+            };
             let parsed = ParsedAgent::parse(&source).map_err(|_| ChatError::Source)?;
             if parsed.has_unknown_local_builtin() {
                 return Err(ChatError::Source);
@@ -488,7 +557,7 @@ impl Worker {
                 .as_ref()
                 .is_none_or(|c| c.source != source || c.binding != binding);
             let session = if fresh {
-                format!("bridge-chat-{}", Uuid::new_v4().simple())
+                format!("{}{}", family.session, Uuid::new_v4().simple())
             } else {
                 self.context.as_ref().unwrap().session.clone()
             };
@@ -497,7 +566,7 @@ impl Worker {
             }
             let agent = if fresh {
                 Planned::new(
-                    "bridge-chat-agent-",
+                    family.agent,
                     parsed.spec(&binding.connection.selection.provider),
                 )
             } else {
@@ -515,7 +584,7 @@ impl Worker {
             if fresh {
                 task_spec["sessionRef"]["create"] = json!(true);
             }
-            let task = Planned::new("bridge-chat-task-", task_spec);
+            let task = Planned::new(family.task, task_spec);
             // Validate both *whole* create bodies before the first mutation.
             agent
                 .request("agents")
@@ -1035,7 +1104,12 @@ mod tests {
             let mut entries = owner.0.lock().unwrap();
             let entry = entries.entry(id).or_insert_with(|| Entry::new(id));
             entry.lease = Some(Arc::new(vm.try_authoring().unwrap()));
-            owner.launch(vm.clone(), id, entry, Some((folder, "old message".into())));
+            owner.launch(
+                vm.clone(),
+                id,
+                entry,
+                Some((ChatSource::Document(folder), "old message".into())),
+            );
         }
         owner.retire_for_workspace_replacement();
         owner.new_conversation(id).unwrap();
@@ -1074,6 +1148,40 @@ mod tests {
             1_700_000_004_000u64
         );
         assert!(unix_millis() > 1_700_000_000_000);
+    }
+
+    #[test]
+    fn each_source_creates_only_its_own_family_of_names() {
+        let folder = Arc::new(AgentFolder::new(None));
+        assert_eq!(ChatSource::Document(folder).family(), CHAT_FAMILY);
+        assert_eq!(
+            ChatSource::Navigator(String::new()).family(),
+            NAVIGATOR_FAMILY
+        );
+        let planned = Planned::new(NAVIGATOR_FAMILY.agent, json!({}));
+        assert!(planned.name().starts_with("bridge-nav-agent-"));
+        assert!(planned.request("agents").validate().is_ok());
+    }
+
+    #[tokio::test]
+    async fn navigator_rejects_empty_messages_before_admission_and_starts_unbound() {
+        let owner = ChatOwner::new(tokio::runtime::Handle::current());
+        let vm = LocalVm::unavailable();
+        assert!(owner.thinks_with().is_none());
+        assert_eq!(
+            owner
+                .send_navigator(vm.clone(), "- web-reader".into(), " \n ".into())
+                .unwrap_err(),
+            ChatError::InvalidMessage
+        );
+        assert!(owner.0.lock().unwrap().is_empty());
+        // The Navigator's conversation is a fixed key that never names a saved file.
+        assert_ne!(crate::navigator::CONVERSATION, DocumentId::SAMPLE);
+        assert!(owner
+            .status(crate::navigator::CONVERSATION)
+            .versions
+            .is_empty());
+        assert!(vm.try_authoring().is_some());
     }
 
     #[test]

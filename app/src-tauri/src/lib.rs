@@ -11,6 +11,7 @@ pub mod engine;
 pub mod example_run;
 pub mod local_results;
 pub mod local_vm;
+pub mod navigator;
 pub mod overview;
 #[path = "overview/places.rs"]
 pub mod overview_places;

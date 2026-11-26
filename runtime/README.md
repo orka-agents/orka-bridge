@@ -159,11 +159,14 @@ translated into a kmx command.
 
 Chat creates generated `bridge-chat-agent-<32 lowercase hex>` Agents and
 `bridge-chat-task-<32 lowercase hex>` native AI Tasks in `orka-system`, with
-`bridge-chat-<32 lowercase hex>` conversation references. It reads those named
-Agents, Tasks, Task results/events and Sessions. Only generated Chat Tasks may be
-deleted; lists, arbitrary paths/URLs and Agent/Session deletion are unavailable.
-Task references must name Chat resources; an Agent reference's optional namespace
-must be `orka-system`. Other Agent/Task configuration remains the native caller's
+`bridge-chat-<32 lowercase hex>` conversation references. The Navigator on Home
+uses a second family with the same shape: `bridge-nav-agent-`, `bridge-nav-task-`
+and `bridge-nav-` names. It reads those named Agents, Tasks, Task results/events
+and Sessions. Only generated Tasks of either family may be deleted; lists,
+arbitrary paths/URLs and Agent/Session deletion are unavailable. A Task must
+reference the Agent and Session of its own family, so a Navigator Task can never
+name a Try a task Agent or Session, or the reverse; an Agent reference's optional
+namespace must be `orka-system`. Other Agent/Task configuration remains the native caller's
 responsibility, as with Run.
 
 The lazy guest-owned `bridge-native-chat` identity has separate credentials and

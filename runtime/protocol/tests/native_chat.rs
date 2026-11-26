@@ -20,6 +20,8 @@ pub mod example_run;
 pub mod local_results;
 #[path = "../../../app/src-tauri/src/local_vm.rs"]
 pub mod local_vm;
+#[path = "../../../app/src-tauri/src/navigator.rs"]
+pub mod navigator;
 #[path = "../../../app/src-tauri/src/overview.rs"]
 pub mod overview;
 #[path = "../../../app/src-tauri/src/pair_source.rs"]

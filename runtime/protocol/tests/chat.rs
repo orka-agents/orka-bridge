@@ -185,3 +185,108 @@ fn chat_bounds_and_unknown_fields_fail_closed() {
         assert!(!valid(a));
     }
 }
+const NAV_AGENT: &str = "bridge-nav-agent-0123456789abcdef0123456789abcdef";
+const NAV_TASK: &str = "bridge-nav-task-0123456789abcdef0123456789abcdef";
+const NAV_SESSION: &str = "bridge-nav-0123456789abcdef0123456789abcdef";
+fn nav_task(agent: &str, session: &str) -> Value {
+    create(
+        NAV_TASK,
+        json!({"type":"ai","agentRef":{"name":agent},"prompt":"hello","sessionRef":{"name":session,"create":true,"append":true,"maxMessages":50}}),
+    )
+}
+#[test]
+fn navigator_family_has_the_same_shape_as_chat() {
+    assert_eq!(NAVIGATOR_FAMILY.agent, "bridge-nav-agent-");
+    assert_eq!(NAVIGATOR_FAMILY.task, "bridge-nav-task-");
+    assert_eq!(NAVIGATOR_FAMILY.session, "bridge-nav-");
+    assert_eq!(CHAT_FAMILY.agent, "bridge-chat-agent-");
+    let mut cases = vec![
+        action("post", "agents", json!(null), create(NAV_AGENT, json!({}))),
+        action(
+            "post",
+            "tasks",
+            json!(null),
+            nav_task(NAV_AGENT, NAV_SESSION),
+        ),
+        action(
+            "delete",
+            &format!("tasks/{NAV_TASK}"),
+            json!(null),
+            json!(null),
+        ),
+        action(
+            "get",
+            &format!("tasks/{NAV_TASK}/events"),
+            json!(0),
+            json!(null),
+        ),
+    ];
+    for path in [
+        format!("agents/{NAV_AGENT}"),
+        format!("tasks/{NAV_TASK}"),
+        format!("tasks/{NAV_TASK}/result"),
+        format!("sessions/{NAV_SESSION}"),
+    ] {
+        cases.push(action("get", &path, json!(null), json!(null)));
+    }
+    for value in cases {
+        assert!(valid(value.clone()), "{value}");
+    }
+}
+#[test]
+fn navigator_and_chat_resources_never_reference_each_other() {
+    // A Task binds only the Agent and Session of its own family, in both directions.
+    for body in [
+        nav_task(AGENT, NAV_SESSION),
+        nav_task(NAV_AGENT, SESSION),
+        nav_task(AGENT, SESSION),
+    ] {
+        assert!(
+            !valid(action("post", "tasks", json!(null), body.clone())),
+            "{body}"
+        );
+    }
+    let mut chat = task();
+    chat["spec"]["agentRef"]["name"] = json!(NAV_AGENT);
+    assert!(!valid(action("post", "tasks", json!(null), chat)));
+    let mut chat = task();
+    chat["spec"]["sessionRef"]["name"] = json!(NAV_SESSION);
+    assert!(!valid(action("post", "tasks", json!(null), chat)));
+    // Names must be complete: a family prefix alone or another kind's prefix is not a name.
+    for path in [
+        format!("sessions/{NAV_AGENT}"),
+        format!("agents/{NAV_SESSION}"),
+        format!("agents/{NAV_TASK}"),
+        format!("tasks/{NAV_AGENT}"),
+        "sessions/bridge-nav-".to_owned(),
+        format!("sessions/{}", NAV_SESSION.to_uppercase()),
+        "agents/bridge-nav-agent-0123".to_owned(),
+    ] {
+        assert!(
+            !valid(action("get", &path, json!(null), json!(null))),
+            "{path}"
+        );
+    }
+    assert!(!valid(action(
+        "post",
+        "agents",
+        json!(null),
+        create(NAV_TASK, json!({}))
+    )));
+    assert!(!valid(action(
+        "post",
+        "tasks",
+        json!(null),
+        create(NAV_AGENT, json!({}))
+    )));
+    // Only generated Tasks can be deleted, never Agents or Sessions of either family.
+    for path in [
+        format!("agents/{NAV_AGENT}"),
+        format!("sessions/{NAV_SESSION}"),
+    ] {
+        assert!(
+            !valid(action("delete", &path, json!(null), json!(null))),
+            "{path}"
+        );
+    }
+}

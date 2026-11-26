@@ -5,6 +5,7 @@ use bridge_engine::agents::Agents;
 use bridge_engine::chat::{ChatError, ChatOwner, ChatSnapshot};
 use bridge_engine::engine::{types::*, EngineState};
 use bridge_engine::local_vm::{self, LocalVm, LocalVmStatus};
+use bridge_engine::navigator::{self, NavigatorSnapshot};
 use bridge_engine::send::{SendOwner, SendStatus};
 use bridge_engine::setup::{SetupError, SetupSnapshot, SetupStore};
 use bridge_engine::shutdown::TerminalShutdown;
@@ -470,6 +471,57 @@ fn agent_chat_new(
     state.new_conversation(document_id)
 }
 
+/// The Navigator's conversation owner, apart from Try a task's so neither command set can
+/// read, send to or stop the other's conversation.
+struct NavigatorChat(Arc<ChatOwner>);
+#[tauri::command]
+fn navigator_status(state: tauri::State<'_, NavigatorChat>) -> NavigatorSnapshot {
+    navigator::snapshot(&state.0, state.0.status(navigator::CONVERSATION))
+}
+#[tauri::command]
+async fn navigator_send(
+    message: String,
+    agents: tauri::State<'_, Arc<Agents>>,
+    state: tauri::State<'_, NavigatorChat>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> Result<NavigatorSnapshot, ChatError> {
+    let agents = agents.inner().clone();
+    let saved = tauri::async_runtime::spawn_blocking(move || navigator::saved_agents(&agents))
+        .await
+        .map_err(|_| ChatError::Source)?;
+    let owner = state.0.clone();
+    owner
+        .send_navigator(vm.inner().clone(), saved, message)
+        .map(|chat| navigator::snapshot(&owner, chat))
+}
+#[tauri::command]
+fn navigator_reconnect(
+    state: tauri::State<'_, NavigatorChat>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> Result<NavigatorSnapshot, ChatError> {
+    state
+        .0
+        .reconnect(vm.inner().clone(), navigator::CONVERSATION)
+        .map(|chat| navigator::snapshot(&state.0, chat))
+}
+#[tauri::command]
+fn navigator_stop(
+    state: tauri::State<'_, NavigatorChat>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> Result<NavigatorSnapshot, ChatError> {
+    state
+        .0
+        .stop(vm.inner().clone(), navigator::CONVERSATION)
+        .map(|chat| navigator::snapshot(&state.0, chat))
+}
+#[tauri::command]
+fn navigator_new(state: tauri::State<'_, NavigatorChat>) -> Result<NavigatorSnapshot, ChatError> {
+    state
+        .0
+        .new_conversation(navigator::CONVERSATION)
+        .map(|chat| navigator::snapshot(&state.0, chat))
+}
+
 #[tauri::command]
 fn cluster_places(
     state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
@@ -842,6 +894,8 @@ fn main() {
             app.manage(vm.clone());
             let chat = ChatOwner::new(tauri::async_runtime::handle().inner().clone());
             app.manage(chat.clone());
+            let nav = ChatOwner::new(tauri::async_runtime::handle().inner().clone());
+            app.manage(NavigatorChat(nav.clone()));
             let session = bridge_engine::clusters::commands::ClusterSession::with_storage(
                 app.path().app_local_data_dir().ok(),
             );
@@ -861,10 +915,17 @@ fn main() {
                 app.path().app_local_data_dir().ok(),
             );
             app.manage(run.clone());
-            let (chat, run) = (Arc::downgrade(&chat), Arc::downgrade(&run));
+            let (chat, nav, run) = (
+                Arc::downgrade(&chat),
+                Arc::downgrade(&nav),
+                Arc::downgrade(&run),
+            );
             vm.on_workspace_replaced(Arc::new(move || {
                 if let Some(chat) = chat.upgrade() {
                     chat.retire_for_workspace_replacement();
+                }
+                if let Some(nav) = nav.upgrade() {
+                    nav.retire_for_workspace_replacement();
                 }
                 if let Some(run) = run.upgrade() {
                     run.retire_for_workspace_replacement();
@@ -910,6 +971,11 @@ fn main() {
             agent_chat_reconnect,
             agent_chat_stop,
             agent_chat_new,
+            navigator_status,
+            navigator_send,
+            navigator_reconnect,
+            navigator_stop,
+            navigator_new,
             agents_list,
             overview_files,
             overview_agents,

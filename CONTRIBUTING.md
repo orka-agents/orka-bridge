@@ -55,6 +55,15 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `testIncomplete` | First test is incomplete | Designer, or add `page=Designer` |
 | `runStale` | Local result from before your last edit | Designer, or add `page=Designer` |
 | `overviewEmpty` | No saved agents yet | Overview, or add `page=Overview` |
+| `navThinking` | The Navigator thinking about an answer, with Stop | Opens there |
+| `navReplyFailed` | The Navigator couldn't answer | Opens there |
+| `navNoModel` | No model connected: the message box is disabled | Opens there (the same as `ready`) |
+| `navExplain` | The Navigator explains Orka with a card of terms | Opens there |
+| `navTask` | A proposed task card; Edit, then Create task runs it to Succeeded; Stop task while it runs cancels it | Opens there |
+| `navTaskFails` | As `navTask`, but the task fails | Opens there, then Create task |
+| `navAgent` | A proposed agent card; Create agent writes the file | Opens there |
+
+The Navigator answers in every scenario with the AI connected, with scripted replies chosen by the question: a link or checksum gets a task card, "agent" an agent card, "new to Orka" an explanation, and a repo, monitor or charter question an explanation with no card, as Bridge can't set those up yet. It runs on This computer only: choose `team-dev` in the Orka switcher in `clusterUnreachable` for the can't-reach card, or in `clusterReady` for the card that offers This computer.
 
 In every scenario a local test run can be stopped while it runs, and a finished run is recorded for Overview with its time, as native local results are. A run keeps the files it started from, so editing the agent afterwards shows its result as not run since your edit.
 
@@ -196,6 +205,9 @@ may be blocked by Gatekeeper.
 - `runtime/`: VM protocol, guest endpoint and Windows QEMU build.
 - `images/`: Guest image build, packaging and validation.
 - `docs/`: Roadmap and shared-cluster design.
+- `app/src/home/navigator/`: The Navigator's instructions and the digest of Bridge and Orka docs it answers from.
+  Regenerate the digest with `node scripts/navigator-digest.mjs --orka <path to an orka checkout>` after either set of
+  docs changes; `--check` reports a stale digest. `size.test.ts` keeps both inside one Agent create request.
 - `.github/workflows/checks.yml`: App checks, artifacts and native smoke walk.
 
 Keep renderer input separate from native credentials and VM ownership. Preserve

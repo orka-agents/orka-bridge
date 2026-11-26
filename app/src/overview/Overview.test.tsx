@@ -51,15 +51,18 @@ test('setup status blocks readiness actions even if the last live inventory is c
   expect(within(agent).getByRole('button', { name: 'Open reader' })).toBeTruthy();
 });
 
-test('generated Try a task runtime Agents are hidden without hiding saved, remote or similarly named Agents', async () => {
+test('generated Try a task and Navigator runtime Agents are hidden without hiding saved, remote or similarly named Agents', async () => {
   const generated = `bridge-chat-agent-${'a'.repeat(32)}`;
   const ownFile = named(id2, generated, { localResult: null });
   const runtime = (name: string, uid: string) => ({ name, namespace: 'orka-system', uid });
   const remote = { key: 'team', context: 'team', service: 'control/orka', namespace: 'agents', stale: false, observedAt: 1234567890000,
     agents: [{ ...runtime(generated, 'remote'), namespace: 'agents', agentType: 'runtime', model: null, tools: null, record: null }] };
-  ipc(files([file, ownFile]), live([runtime(generated, 'chat'), runtime('bridge-chat-agent-mine', 'mine')]), { ...none, places: [remote] });
+  const navigator = `bridge-nav-agent-${'b'.repeat(32)}`;
+  ipc(files([file, ownFile]), live([runtime(generated, 'chat'), runtime(navigator, 'nav'), runtime('bridge-chat-agent-mine', 'mine')]), { ...none, places: [remote] });
   const counts = vi.fn(); render(<Overview {...props} onCounts={counts} />);
   await row(/^bridge-chat-agent-mine$/); expect(screen.getAllByRole('heading', { name: generated })).toHaveLength(2);
+  // The Navigator belongs to Bridge and never appears in Overview.
+  expect(screen.queryByRole('heading', { name: navigator })).toBeNull();
   await waitFor(() => expect(counts).toHaveBeenLastCalledWith('4 agents'));
   expect(screen.getAllByRole('article', { name: /^(reader|bridge-chat-agent)/ })).toHaveLength(4);
 });

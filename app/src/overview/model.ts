@@ -113,9 +113,9 @@ export function buildCards(i: Inputs) {
   // installation + namespace + UID in the recorded list (or the live observation).
   const owned = new Set([...(files?.runAgents ?? []).map(a => exact(a.installation, a.namespace, a.agentUid)),
     ...(i.observed?.observation ? [exact(i.observed.installation, i.observed.observation.namespace, i.observed.observation.agentUid)] : [])]);
-  // Try a task's generated Agents are implementation details, not the creator's files. This is display-only;
-  // it must never be used to claim ownership or authorize resource cleanup.
-  const strays: Card[] = !ownershipKnown || !i.observed ? [] : i.observed.agents.filter(a => !/^bridge-chat-agent-[0-9a-f]{32}$/.test(a.name) && !owned.has(exact(i.observed!.installation, a.namespace, a.uid))).map(a => ({
+  // Try a task's and the Navigator's generated Agents are implementation details, not the creator's files. This is
+  // display-only; it must never be used to claim ownership or authorize resource cleanup.
+  const strays: Card[] = !ownershipKnown || !i.observed ? [] : i.observed.agents.filter(a => !/^bridge-(?:chat|nav)-agent-[0-9a-f]{32}$/.test(a.name) && !owned.has(exact(i.observed!.installation, a.namespace, a.uid))).map(a => ({
     key: `local/${exact(a.namespace, a.uid)}`, groupKey: 'local', agentKey: `agent/local/${a.namespace}/${a.uid}`, title: a.name, place: 'This computer', subject: a.name,
     description: 'Running on this computer, not saved here', meta: {}, remote: false, actions: [],
     details: [{ label: 'Name on the cluster', value: a.name }, { label: 'Namespace', value: a.namespace }, { label: 'Agent ID', value: a.uid, copy: true }, { label: 'Last seen', value: absolute(i.observed!.observedAt) }],

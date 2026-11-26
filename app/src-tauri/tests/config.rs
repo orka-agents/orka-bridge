@@ -20,7 +20,7 @@ fn native_window_uses_local_assets_and_fits_a_laptop() {
             "identifier": "engine",
             "description": "Typed engine and setup access from the main window only.",
             "windows": ["main"],
-            "permissions": ["engine", "setup", "core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize", "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-is-maximized", "core:window:allow-close"],
+            "permissions": ["engine", "setup", "navigator", "core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize", "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-is-maximized", "core:window:allow-close"],
             "local": true
         }])
     );
@@ -111,6 +111,11 @@ fn agent_commands_are_granted_only_to_local_main_window() {
         "agent_chat_reconnect",
         "agent_chat_stop",
         "agent_chat_new",
+        "navigator_status",
+        "navigator_send",
+        "navigator_reconnect",
+        "navigator_stop",
+        "navigator_new",
         "agents_list",
         "agent_selected",
         "agent_create",

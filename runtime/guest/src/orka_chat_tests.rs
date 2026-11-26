@@ -190,3 +190,40 @@ fn chat_operations_replay_results_without_repeating_delete_and_withhold_unsafe_r
     }
     assert_eq!(s.seen.lock().unwrap().len(), 4);
 }
+#[test]
+fn navigator_requests_use_the_chat_identity_and_its_exact_paths() {
+    let agent = "bridge-nav-agent-0123456789abcdef0123456789abcdef";
+    let task = "bridge-nav-task-0123456789abcdef0123456789abcdef";
+    let session = "bridge-nav-0123456789abcdef0123456789abcdef";
+    let s = server(vec![
+        http("201 Created", "{}"),
+        http("204 No Content", ""),
+        http("200 OK", r#"{"activeTask":"","transcript":""}"#),
+    ]);
+    let (dir, mut chat) = chat_kube(s.port);
+    let mut post = chat_request(ChatMethod::Post, "agents".into());
+    post.body = Some(json!({"name":agent,"namespace":"orka-system","spec":{}}));
+    assert_eq!(reply(chat.execute_chat(&post).unwrap()).status, 201);
+    let delete = chat_request(ChatMethod::Delete, format!("tasks/{task}"));
+    assert_eq!(reply(chat.execute_chat(&delete).unwrap()).status, 204);
+    let read = chat_request(ChatMethod::Get, format!("sessions/{session}"));
+    assert_eq!(reply(chat.execute_chat(&read).unwrap()).status, 200);
+    assert!(log(dir.path())
+        .iter()
+        .any(|l| l.contains("create token bridge-native-chat --duration=10m")));
+    let seen = s.seen.lock().unwrap();
+    for (request, first) in seen.iter().zip([
+        "POST /api/v1/agents?namespace=orka-system HTTP/1.1\r\n".to_owned(),
+        format!("DELETE /api/v1/tasks/{task}?namespace=orka-system HTTP/1.1\r\n"),
+        format!("GET /api/v1/sessions/{session}?namespace=orka-system HTTP/1.1\r\n"),
+    ]) {
+        assert!(request.starts_with(&first), "{request}");
+    }
+    assert_eq!(seen.len(), 3);
+    // A Navigator Task that names a Try a task Agent is refused before any request.
+    let mut cross = chat_request(ChatMethod::Post, "tasks".into());
+    cross.body = Some(json!({"name":task,"namespace":"orka-system","spec":{"type":"ai","agentRef":{"name":CHAT_AGENT},"sessionRef":{"name":session}}}));
+    drop(seen);
+    assert!(chat.execute_chat(&cross).is_err());
+    assert_eq!(s.seen.lock().unwrap().len(), 3);
+}

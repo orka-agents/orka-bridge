@@ -14,6 +14,8 @@ import { workspaceRequirements } from '../setup/requirements';
 import { selectLocal, setupStatus } from '../setup/state';
 import { upgradeCall } from '../setup/upgrade-api';
 import { previewRequested } from './gate';
+import { parseReply } from '../home/cards';
+import { navigatorCall } from '../home/navigator-api';
 
 async function preview(query: string) {
   window.history.replaceState(null, '', `/?${query}&clean`);
@@ -302,6 +304,40 @@ describe('preview backend replies', () => {
     const pair = await agentCall('agent_open', undefined, draft!.documentId);
     expect(isTestDraft(pair.tests)).toBe(true);
     expect(await sendCall('send_status', { documentId: draft!.documentId })).toMatchObject({ view: null });
+  });
+
+  it('passes the Navigator validator in every Navigator scenario, with valid cards', async () => {
+    const expected = { navThinking: undefined, navReplyFailed: undefined, navExplain: 'explain', navTask: 'task', navTaskFails: 'task', navAgent: 'agent' } as const;
+    for (const [name, kind] of Object.entries(expected)) {
+      await preview(`scenario=${name}`);
+      const status = await navigatorCall('agent_chat_status', '');
+      expect(status).toMatchObject({ ok: true, thinksWith: { kind: 'copilot', model: 'gpt-5.6-terra' } });
+      const turn = status.ok ? status.snapshot.versions.at(-1)!.turns[0] : undefined;
+      expect(turn?.answer ? parseReply(turn.answer).card?.kind : undefined).toBe(kind);
+    }
+    await preview('scenario=navThinking');
+    expect(await navigatorCall('agent_chat_status', '')).toMatchObject({ ok: true, snapshot: { busy: true, canSend: false } });
+    await preview('scenario=navReplyFailed');
+    expect(await navigatorCall('agent_chat_status', '')).toMatchObject({ ok: true, snapshot: { busy: false, versions: [{ turns: [{ phase: 'Failed', answer: null }] }] } });
+    await preview('scenario=navNoModel');
+    expect(await navigatorCall('agent_chat_status', '')).toMatchObject({ ok: true, thinksWith: null, snapshot: { canSend: false } });
+  });
+
+  it('answers the Navigator with scripted replies and admits one turn at a time', async () => {
+    await preview('scenario=connected&speed=1000');
+    expect(await navigatorCall('agent_chat_send', '', 'Review new pull requests on my repo automatically.')).toMatchObject({ ok: true, snapshot: { busy: true } });
+    // While the Navigator answers, a task cannot start, as native authoring admits one turn.
+    expect(await chatCall('agent_chat_send', SAMPLE_DOCUMENT_ID, 'Read https://example.com')).toMatchObject({ ok: false });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const done = await navigatorCall('agent_chat_status', '');
+    const answer = done.ok ? done.snapshot.versions[0].turns[0].answer! : '';
+    expect(parseReply(answer)).toMatchObject({ card: undefined, sources: ['orka:guides/repository-monitors.md'] });
+    expect(await navigatorCall('agent_chat_new', '')).toMatchObject({ ok: true });
+    expect(await navigatorCall('agent_chat_send', '', 'Read https://example.com')).toMatchObject({ ok: true });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const proposal = await navigatorCall('agent_chat_status', '');
+    expect(proposal.ok && proposal.snapshot.versions).toHaveLength(2);
+    expect(proposal.ok && parseReply(proposal.snapshot.versions[1].turns[0].answer!).card).toEqual({ kind: 'task', agent: 'web-reader', task: 'Read https://example.com' });
   });
 
   it('reports the signed-out GitHub CLI as a sign-in failure', async () => {
