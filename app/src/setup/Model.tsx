@@ -258,7 +258,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
           {(['openai', 'anthropic'] as const).map(item => <button key={item} type="button" aria-pressed={vendor === item} disabled={!!busy || hasSignIn} onClick={() => { clearKey(); setVendor(item); setError(undefined); }}>{companies[item].name}</button>)}
         </fieldset>
         <label htmlFor="model-api-key">API key</label>
-        <input ref={keyField} onChange={event => setHasKey(!!event.currentTarget.value.trim())} id="model-api-key" type="password" autoComplete="off" spellCheck={false} autoCapitalize="none" disabled={!enabled || paused || !!busy} aria-describedby="model-key-help" aria-invalid={error?.category === 'modelKeyInvalid' || error?.category === 'modelCredentialRejected'} />
+        <input ref={keyField} className="field" onChange={event => setHasKey(!!event.currentTarget.value.trim())} id="model-api-key" type="password" autoComplete="off" spellCheck={false} autoCapitalize="none" disabled={!enabled || paused || !!busy} aria-describedby="model-key-help" aria-invalid={error?.category === 'modelKeyInvalid' || error?.category === 'modelCredentialRejected'} />
         <p id="model-key-help" className="muted">Stored on this computer, never in your agent files.</p>
         <a href={`https://${company.site}`} onClick={event => { event.preventDefault(); void help(vendor === 'openai' ? 'openaiKey' : 'anthropicKey'); }}>Where do I get a key?</a>
       </div> : <p className="muted">Use GitHub Copilot. GitHub CLI must be installed and signed in to github.com.</p>}
