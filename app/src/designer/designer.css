@@ -8,7 +8,7 @@
 .agent-heading-copy h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
 .agent-heading-copy h1.agent-name { font: var(--type-display-object); letter-spacing: var(--tracking-display-section); }
 .agent-heading-copy p { margin-top: var(--space-2); max-width: 65ch; }
-.agent-selector { width: 220px; max-width: 100%; }
+.agent-selector { width: 170px; max-width: 100%; }
 .agent-selector select { width: 100%; font-family: var(--font-mono); }
 
 /* New agent: one 560px card under a page title. */
@@ -16,12 +16,13 @@
 .new-agent-form { display: grid; gap: var(--space-2); max-width: 560px; margin-top: var(--space-5); padding: var(--space-5); }
 .new-agent-form > label, .new-agent-form legend { font-weight: 600; }
 .new-agent-form > label { margin-bottom: calc(-1 * var(--space-1)); }
-.new-agent-form > input { width: 100%; height: var(--height-control-large); padding-inline: var(--space-3); font: 400 15px/20px var(--font-mono); font-variant-ligatures: none; }
+.new-agent-form > input { width: 100%; height: 40px; padding-inline: var(--space-3); font: 500 15px/20px var(--font-mono); font-variant-ligatures: none; }
 .new-agent-form p { margin: 0; }
 .new-agent-form > .muted, .new-agent-form > p { font: var(--type-caption); color: var(--color-text-secondary); }
 .new-agent-form > [role="alert"] { font: var(--type-body); color: var(--color-status-failed); }
 .new-agent-form fieldset { border: 0; padding: 0; margin: var(--space-2) 0 0; }
-.new-agent-form fieldset label { display: flex; align-items: center; gap: var(--space-2); padding-top: var(--space-2); }
+.new-agent-form fieldset label { display: flex; align-items: center; gap: var(--space-2-5); padding-top: var(--space-2); font-size: 15px; }
+.new-agent-form fieldset input[type="radio"] { width: 17px; height: 17px; margin: 0; accent-color: var(--color-text); }
 .new-agent-path { padding: var(--space-3); border-radius: var(--radius-control); background: var(--color-chrome); font-family: var(--font-mono); font-size: 0.92em; font-variant-ligatures: none; overflow-wrap: anywhere; }
 .new-agent-path ul { padding-left: var(--space-4); margin: var(--space-1) 0 0; list-style: none; }
 .new-agent-form .heading-actions { margin-top: var(--space-2); }
@@ -29,9 +30,9 @@
 /* Two columns: the editor on the left, This computer above Team cluster on the right, each under its section label. */
 .designer-file, .designer-checks, .designer-tests { margin-top: var(--space-4); display: grid; gap: var(--space-3); }
 .designer > :is(.designer-file, .designer-checks) { max-width: 640px; }
-.designer-work { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--space-6); align-items: start; margin-top: var(--space-6); }
+.designer-work { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); gap: var(--space-5); align-items: start; margin-top: var(--space-6); }
 /* One right-hand stack: This computer above Team cluster. Neither moves when the other's card grows. */
-.designer-side { grid-column: 2; grid-row: 1; min-width: 0; display: grid; gap: var(--space-6); }
+.designer-side { grid-column: 2; grid-row: 1; min-width: 0; display: grid; gap: var(--space-4); }
 .designer-side > section > h2 { margin-bottom: var(--space-2); }
 .designer-work[hidden] { display: none; }
 /* Try a task takes the right-hand column; the instructions stay on the left so a change can be tried at once. */
@@ -49,13 +50,13 @@
 
 /* File view: the path in a well with its actions, the hint, then the editor. */
 .file-editor { position: relative; min-width: 0; background: var(--color-card); border-radius: var(--radius-control); }
-.agent-editor, .file-highlight { width: 100%; min-height: 23rem; padding: var(--space-3) var(--space-4) var(--space-3) 52px; border: var(--border-control) solid transparent; margin: 0; font: 400 13px/20px var(--font-mono); font-variant-ligatures: none; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-editor, .file-highlight { width: 100%; min-height: 23rem; padding: var(--space-3) var(--space-4) var(--space-3) 52px; border: var(--border-control) solid transparent; margin: 0; font: 400 12.5px/21px var(--font-mono); font-variant-ligatures: none; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-editor { position: relative; display: block; resize: none; overflow: hidden; border-color: var(--color-text); border-radius: var(--radius-control); background: transparent; color: transparent; caret-color: var(--color-text); }
 .agent-editor.file-plain { color: var(--color-text); }
 .file-highlight { position: absolute; inset: 0; pointer-events: none; color: var(--color-text); }
-.file-line { display: block; position: relative; min-height: 20px; }
+.file-line { display: block; position: relative; min-height: 21px; }
 .file-line::before { content: attr(data-line); position: absolute; right: calc(100% + 12px); width: 28px; text-align: right; color: var(--color-text-secondary); }
-.file-key { color: var(--color-text); font-weight: 600; }
+.file-key { color: var(--color-text); }
 .file-delimiter { color: var(--color-text-secondary); }
 .file-comment { color: var(--color-text-secondary); }
 .file-location { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-3); min-width: 0; }
@@ -67,7 +68,7 @@
 @media (forced-colors: active) { .file-highlight { display: none; } .agent-editor { color: CanvasText; background: Canvas; caret-color: auto; } }
 
 /* Agent view: each part is a bold label, an optional hint and its control. */
-.agent-parts { display: grid; gap: var(--space-4); max-width: 520px; }
+.agent-parts { display: grid; gap: var(--space-4); }
 .agent-part { display: grid; gap: var(--space-2); min-width: 0; }
 .agent-part label, .agent-part h3 { font: var(--type-body); font-weight: 600; color: var(--color-text); margin: 0; }
 .agent-part p { margin: 0; }
@@ -76,26 +77,29 @@
 .instructions-editor.field, .description-editor.field { padding: var(--space-3); line-height: 1.7; }
 .instructions-heading { display: grid; gap: var(--space-1); }
 .instructions-heading p { font: var(--type-caption); }
-.instructions-editor.field { min-height: 120px; resize: none; overflow: hidden; font: var(--type-reading); line-height: 22px; }
+.instructions-editor.field { min-height: 178px; resize: none; overflow: hidden; font: 400 14.5px/1.6 var(--font-ui); padding: var(--space-2-5) var(--space-3); }
 .description-editor.field { min-height: 5rem; resize: vertical; }
+.description-line.field { width: 100%; height: var(--height-control); }
 .agent-part > .alert { max-width: none; }
 .agent-tool-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
-.agent-part .model-select { font-family: var(--font-mono); font-variant-ligatures: none; }
+.agent-part .model-select { width: 300px; max-width: 100%; font-family: var(--font-mono); font-variant-ligatures: none; }
+/* Add a tool matches the 32px tool chips beside it. */
+.agent-tool-row > .button-small, .agent-tool-row > .coming-control > .button-small { min-height: 32px; height: 32px; }
 /* A tool is a well chip: its label, its id in mono and a remove button. */
-.tool-pill { overflow-wrap: anywhere; min-width: 0; min-height: var(--height-control-small); padding: var(--space-0-5) var(--space-1) var(--space-0-5) var(--space-2-5); gap: var(--space-1-5); border-radius: var(--radius-control); color: var(--color-text); }
-.tool-pill > span:first-child { font-weight: 500; }
+.tool-pill { overflow-wrap: anywhere; min-width: 0; min-height: 32px; padding: var(--space-0-5) var(--space-1-5) var(--space-0-5) 11px; gap: var(--space-2); border-radius: var(--radius-control); color: var(--color-text); font: var(--type-body); }
+.tool-pill > span:first-child { font-weight: 500; color: var(--color-text); }
 .tool-pill > .muted { font: var(--type-caption); }
 .tool-pill > .button-icon { width: 22px; height: 22px; min-height: 22px; }
 .tool-pill > .button-icon .icon { width: 12px; height: 12px; }
 .tool-pill:not(:has(> .button-icon)) { padding-right: var(--space-2-5); }
 .tool-pill code, .tool-picker code { color: var(--color-text-secondary); font-family: var(--font-mono); font-size: .92em; overflow-wrap: anywhere; }
 
-/* Tool picker: a popover over the page, closed with its X, Escape or a click outside. */
-.tool-picker { position: fixed; inset: 96px 24px auto; width: min(520px, calc(100vw - 48px)); max-height: calc(100dvh - 144px); overflow: auto; margin: 0 auto; border: var(--border-control) solid var(--color-text); border-radius: var(--radius-overlay); padding: var(--space-4); background: var(--color-card); color: var(--color-text); box-shadow: var(--shadow-popover); }
-.tool-picker::backdrop { background: var(--color-backdrop); }
-.tool-picker > .picker-close { margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-2)) calc(-1 * var(--space-3)) 0; }
-.tool-picker > label { font-weight: 600; }
-.tool-picker > .muted { font: var(--type-caption); }
+/* Tool picker: a card in the page under the tools, closed with its X, Escape, a choice or a press outside it. */
+.tool-picker { display: grid; gap: var(--space-1-5); max-height: 360px; overflow: auto; border: var(--border-editing) solid var(--color-text); border-radius: var(--radius-control); padding: var(--space-3); background: var(--color-card); color: var(--color-text); box-shadow: var(--shadow-popover); }
+.tool-picker-title { font-weight: 700; }
+.tool-picker-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.tool-picker-head > .picker-close { margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-1)) calc(-1 * var(--space-1)) 0; }
+.tool-picker input { height: var(--height-control); }
 .tool-picker ul { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-0-5); }
 .tool-picker li button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); text-align: left; overflow-wrap: anywhere; padding: var(--space-2) var(--space-2-5); border: 0; border-radius: var(--radius-row); background: transparent; color: var(--color-text); font: inherit; }
 .tool-picker li button:not(:disabled):hover { background: var(--color-hover); }
@@ -103,7 +107,8 @@
 .tool-picker li button:disabled :is(.muted, code, .tool-description) { color: inherit; }
 .tool-picker .tool-unavailable-reason { margin: var(--space-2) 0 var(--space-3); padding: var(--space-2-5) var(--space-3); border-radius: var(--radius-control); background: var(--color-tint-pending); color: var(--color-status-pending); font: var(--type-body); font-weight: 600; }
 .tool-option-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
-.tool-option-heading > span:first-child { font-weight: 600; }
+.tool-option-heading > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.tool-option-name { font-weight: 600; }
 .tool-option-heading > .muted { font: var(--type-label); letter-spacing: var(--tracking-label); text-transform: uppercase; }
 .tool-picker .tool-description { color: var(--color-text-secondary); overflow-wrap: anywhere; }
 
@@ -113,7 +118,9 @@
 .agent-settings .agent-part { margin-top: var(--space-4); }
 .agent-settings .coming-control { display: block; }
 .agent-path { display: block; min-width: 0; padding: var(--space-1-5) var(--space-2); border-radius: var(--radius-small); background: var(--color-chrome); overflow-wrap: anywhere; font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
-.save-error { display: grid; justify-items: start; }
+.save-error { display: grid; justify-items: start; gap: var(--space-2); }
+.save-error-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.save-error-actions > .save-state { font: 500 12px/16px var(--font-mono); color: var(--color-text-secondary); }
 .save-error > .alert { justify-self: stretch; max-width: none; }
 
 /* This computer: the tests card is the strong card while it holds the next action. */
@@ -123,10 +130,19 @@
 .check-source { border-top: 1px solid var(--color-border); padding-top: var(--space-3); }
 .check-source pre { margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-control); background: var(--color-chrome); }
 .designer-tests h3 { font: var(--type-card); margin: 0; }
+/* Tests on this computer: the head, the model line, then one row per test. */
+.designer-tests .example-run .long-card-summary { margin-top: var(--space-2); }
+.designer-tests .run-body { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+.designer-tests .run-body > :is(p, .alert) { margin: 0; }
+.designer-tests .run-body .test-results { border-top: 1px solid var(--color-border-strong); }
+.designer-tests .run-body .card-details { margin-top: 0; padding-top: var(--space-2); }
+.designer-tests .example-run .test-result:first-child { border-top: 0; }
+.designer-tests .run-collapsed { margin-top: var(--space-2); }
+.designer-tests .long-card-action > .workspace-step-actions { margin-top: 0; }
 .designer-tests .example-run > p { margin-top: var(--space-2); max-width: 70ch; }
 .designer-tests .example-run .alert { margin-block: var(--space-2); }
 .designer-tests .test-file-source { display: grid; gap: var(--space-2); }
-.designer-tests .test-file-source pre { padding: var(--space-3); border-radius: var(--radius-control); background: var(--color-chrome); }
+.designer-tests .test-file-source pre { padding: var(--space-2-5) var(--space-3); border-radius: var(--radius-control); background: var(--color-chrome); font: 400 12px/1.6 var(--font-mono); }
 .designer-tests .test-next-step { display: grid; justify-items: start; gap: var(--space-2); padding-block: var(--space-2); }
 .designer-tests .test-next-step p { margin: 0; }
 
