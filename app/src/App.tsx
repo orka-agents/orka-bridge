@@ -324,7 +324,7 @@ export default function App() {
     : cases ? 'tests passing' : 'ready to edit';
   const agentStateWord = agentStatus.match(/\b(passing|failing|running|cancelled|cancelling|unknown|unavailable|unconfirmed|not confirmed|ready)\b/);
   const tabStatus: Record<Page, string> = {
-    Home: 'Give an agent a task',
+    Home: 'Navigator',
     Overview: welcome ? '' : overviewCounts,
     Designer: agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? exampleReadOnly ? 'Ready after setup' : 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
@@ -433,9 +433,14 @@ export default function App() {
           <Setup ref={localCluster} place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onLaunch={observeLaunch}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
-        {page === 'Home' && <Home active revision={agentsRevision} onOpenAgent={id => openDesigner(id)} onChooseWorkspace={() => setPage('Clusters')}
-          blocked={remote ? 'Try a task runs on the workspace. Choose This computer in Clusters.' : !workspaceReady || workspaceBusy ? 'Waiting for the workspace to start.'
-            : setup?.model !== 'available' || aiObserved === false ? 'Connect the AI in Clusters before trying a task.' : undefined}
+        {page === 'Home' && <Home active revision={agentsRevision}
+          gate={remote ? place.target ? { kind: 'elsewhere', name: place.target.context_name } : { kind: 'unreachable' }
+            : !workspaceReady || workspaceBusy ? { kind: 'waiting' } : setup?.model !== 'available' || aiObserved === false ? { kind: 'noModel' } : { kind: 'ready' }}
+          onOpenPage={next => next === 'Designer' ? openDesigner() : setPage(next)}
+          // The task card's results are the agent's Try a task results, so Designer opens on that view.
+          onOpenAgent={id => { openDesigner(id); setDocumentAction({ id: ++actionSequence.current, documentId: id, action: 'chat' }); }}
+          onAgentCreated={() => setAgentsRevision(value => value + 1)}
+          onThisComputer={() => choosePlace({ kind: 'thisComputer' })}
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
           blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}
         {page === 'Designer' && overviewNotice && <p className="muted" role="status">{overviewNotice}</p>}

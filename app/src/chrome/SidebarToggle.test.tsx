@@ -55,7 +55,7 @@ test('folded tabs keep their page names and status descriptions for assistive te
     expect(description?.textContent).not.toBe('');
   }
   expect(screen.getByRole('button', { name: 'Home' }).getAttribute('aria-describedby')).toBe('tab-status-Home');
-  expect(document.getElementById('tab-status-Home')?.textContent).toBe('Give an agent a task');
+  expect(document.getElementById('tab-status-Home')?.textContent).toBe('Navigator');
   // The status card keeps its words in the page; only its dot is drawn.
   const footer = screen.getByRole('contentinfo');
   expect(footer.querySelector('.host-label')?.textContent).not.toBe('');
