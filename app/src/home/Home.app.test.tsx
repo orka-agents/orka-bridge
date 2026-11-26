@@ -64,3 +64,11 @@ test('Home applies Designer\'s chat gate for the agent Designer has open', async
   expect((await within(home).findAllByText('Write instructions in Agent view before chatting.', { exact: false })).length).toBeGreaterThan(0);
   expect(within(home).getByRole('button', { name: 'Send message' }).matches(':disabled')).toBe(true);
 });
+
+test('a finished workspace opens on Home', async () => {
+  localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  native({ runStatus: 'connected' });
+  render(<App />);
+  expect(await screen.findByRole('textbox', { name: 'Message' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Home' }).getAttribute('aria-current')).toBe('page');
+});

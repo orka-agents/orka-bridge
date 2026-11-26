@@ -1,8 +1,8 @@
 import { firstTestPreference } from '../setup/first-test';
 import { welcomePreference } from '../setup/Welcome';
 
-// The guided first run adds a steps header until a new person leaves setup. Someone who
-// already dismissed Welcome before this existed never enters it.
+// The guided first run adds a steps header until a new person leaves setup. On a first launch it
+// starts here; later launches with nothing set up resume it alongside Welcome (resumeGuidedFirstRun).
 export const guidedPreference = 'bridge.firstRun.v1';
 export function guidedFirstRun() {
   try {
@@ -13,6 +13,9 @@ export function guidedFirstRun() {
     localStorage.setItem(guidedPreference, 'active');
     return true;
   } catch { return false; }
+}
+export function resumeGuidedFirstRun() {
+  try { localStorage.setItem(guidedPreference, 'active'); } catch { /* A presentation preference must not block Bridge. */ }
 }
 export function finishGuidedFirstRun() {
   try { localStorage.setItem(guidedPreference, 'done'); } catch { /* A presentation preference must not block Bridge. */ }

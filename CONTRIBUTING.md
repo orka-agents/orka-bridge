@@ -28,9 +28,9 @@ globally to install dependencies.
 
 ## Preview the UI in a browser
 
-For quick UI work without a VM, start the dev server from `app/` with `npm run dev` and open `http://127.0.0.1:1420/?scenario=fresh`. In development builds only, a `scenario` query loads a scripted stand-in for the native commands (`app/src/preview/backend.ts`), so screens can be walked and captured in any browser. Scenarios are `fresh`, `ready`, `connected`, `restart`, `ghMissing`, `ghSignedOut`, `runFails` and `vmFailed`. Add `speed=20` to shorten waits, `clean` to hide the scenario toolbar and `page=Home`, `Overview`, `Designer` or `Clusters` to open that page. The preview is not native verification: it never runs a VM, an agent or a model.
+For quick UI work without a VM, start the dev server from `app/` with `npm run dev` and open `http://127.0.0.1:1420/?scenario=fresh`. In development builds only, a `scenario` query loads a scripted stand-in for the native commands (`app/src/preview/backend.ts`), so screens can be walked and captured in any browser. Scenarios are `fresh`, `ready`, `connected`, `restart`, `ghMissing`, `ghSignedOut`, `runFails` and `vmFailed`. Add `speed=20` to shorten waits, `clean` to hide the scenario toolbar and `page=Home`, `Overview`, `Designer` or `Clusters` to open that page. Like the app, the preview opens on Welcome while nothing is set up (`fresh`, `ghMissing`, `ghSignedOut`, `vmFailed`), on Clusters while setup is in progress (`restart`), and on Home once a workspace is ready (`ready`, `connected`, `runFails`, `clusterReady`). The preview is not native verification: it never runs a VM, an agent or a model.
 
-These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer; the rest open on Clusters, and the steps say where the state appears.
+These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer, `memoryLow` opens on Welcome, and the rest open on Home; the steps say where the state appears, starting from Clusters unless they name another page.
 
 | Scenario | State | Where it appears |
 | --- | --- | --- |
@@ -109,7 +109,7 @@ See [the helper build instructions](app/src-tauri/native/macos/README.md).
 Intel Macs can build the app but cannot run its local VM. Both pinned images
 support model Connect, the workspace catalog and the example agent.
 
-In Clusters, dismiss the one-time welcome with Get started, then press Set up
+In Clusters, dismiss the welcome with Get started (it returns at each launch until a workspace or cluster is set up), then press Set up
 on This computer's place and Continue after its computer checks. On Windows and
 Apple-silicon Mac, the running VM unlocks Use GitHub sign-in, which needs GitHub CLI already installed and signed
 in to github.com. Bridge does not install it or open browser sign-in. Starting

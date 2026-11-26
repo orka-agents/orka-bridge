@@ -93,3 +93,29 @@ test('the status card stays during guidance and at narrow widths keeps its text 
   expect(compact).not.toMatch(/\.status-lines[^{]*\{[^}]*display:\s*none/);
   expect(compact).not.toMatch(/clip-path/);
 });
+
+test('a computer with nothing set up is guided again alongside Welcome, and leaving is kept for the run', async () => {
+  localStorage.setItem('bridge.welcomeSeen.v1', '1');
+  localStorage.setItem('bridge.firstRun.v1', 'done');
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
+    if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
+    if (command === 'setup_requirements') return null;
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByRole('button', { name: 'Get started' });
+  await waitFor(() => expect(shell().classList.contains('guided')).toBe(true));
+  expect(localStorage.getItem('bridge.firstRun.v1')).toBe('active');
+  await user.click(screen.getByRole('button', { name: 'Get started' }));
+  await user.click(await screen.findByRole('button', { name: 'Show all of Bridge' }));
+  expect(shell().classList.contains('guided')).toBe(false);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
+  expect(shell().classList.contains('guided')).toBe(false);
+  expect(localStorage.getItem('bridge.firstRun.v1')).toBe('done');
+});
