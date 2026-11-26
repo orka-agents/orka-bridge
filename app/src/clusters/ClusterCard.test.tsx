@@ -247,7 +247,7 @@ test('v6_cluster_card_keyboard and Use confirms access only after discovery', as
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toEqual([['cluster_use', { targetId: target.id, saName: null }]]);
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.getByText('ghcr.io/orka:0.9.4')).toBeTruthy();
-  expect(screen.getByText('control / orka', { selector: 'dd' })).toBeTruthy(); expect(screen.getByText('agents', { selector: 'dd' })).toBeTruthy();
+  expect(screen.getByText('control / orka', { selector: 'dd code' })).toBeTruthy(); expect(screen.getByText('agents', { selector: 'dd code' })).toBeTruthy();
   expect(screen.getByText('team-model')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Open your agent' }).matches(':disabled')).toBe(false);
 });
@@ -264,7 +264,10 @@ test.each(['unsupportedCredential', 'denied', 'unavailable'])('unsupported_acces
   native(undefined, { status, providers: [], failure: { check: status === 'unsupportedCredential' ? 'credentials' : 'providers', result: status === 'denied' ? 'permissionDenied' : status === 'unsupportedCredential' ? 'unsupportedCredential' : 'unknown' } }); const user = await open(); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   const alert = await screen.findByRole('alert');
-  expect(alert).toBeTruthy(); expect(screen.getByText('Cluster found')).toBeTruthy();
+  expect(alert).toBeTruthy();
+  // The found installation is kept in Details, which a denied check opens.
+  if (status !== 'denied') await user.click(screen.getByRole('button', { name: 'Details' }));
+  expect(document.querySelector('.cluster-found-line')?.textContent).toBe('Cluster found: agents · control / orka');
   if (status === 'unsupportedCredential') expect(alert.textContent).toMatch(/credential plugin outside Bridge/);
   if (status === 'unavailable') {
     expect(alert.textContent).toMatch(/read AI connections/);
@@ -275,7 +278,11 @@ test.each(['unsupportedCredential', 'denied', 'unavailable'])('unsupported_acces
 test('failure alternative does not stop or reset a local VM', async () => {
   const ipc = native({ selected: 'localVm', localVm: 'failed', localVmError: 'vmStart: unavailable', model: 'locked' });
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use a cluster you already have instead' }));
+  // A launch that finds a workspace leaves the guided first run, which redraws the recovery row; press the settled button.
+  await waitFor(() => expect(document.querySelector('.app-shell')?.classList.contains('guided')).toBe(false));
+  const fallback = await screen.findByRole('button', { name: 'Use a cluster you already have instead' });
+  await waitFor(() => expect(fallback.matches(':disabled')).toBe(false));
+  await user.click(fallback);
   await screen.findByRole('button', { name: 'kubectl context' });
   await waitFor(() => expect(ipc.mock.calls.some(([c]) => c === 'setup_status')).toBe(true));
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_change_local');
