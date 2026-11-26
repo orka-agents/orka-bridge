@@ -487,7 +487,9 @@ try {
     // Only a starting workspace shows its progress bar.
     const starting = state === 'starting-after-quit-synthetic';
     if (probe.heading !== 'This computer' || probe.bar !== starting || probe.choices || probe.runs || probe.firstTest !== 'attempted' || !probe.grid) fail('invalid returning workspace');
-    if (!probe.text.includes('Agents') || !probe.text.includes('Files') || probe.detailsOpen) fail('facts or folded diagnostics missing');
+    // A failed start opens its diagnostics as the board shows; every other state, a stop's failure included, starts folded.
+    const opensDetails = ['failed', 'stopped-unexpectedly'].includes(state);
+    if (!probe.text.includes('Agents') || !probe.text.includes('Files') || probe.detailsOpen !== opensDetails) fail(opensDetails ? 'facts or open start-failure diagnostics missing' : 'facts or folded diagnostics missing');
     if (probe.buttons.some(label => ['Start', 'Stop', 'Stop the workspace'].includes(label)) || !starting && probe.buttons.includes('Cancel')) fail('obsolete workspace action');
     if (size === 'compact' && (probe.width !== 540 || probe.height !== 640)) fail('minimum viewport is not 540x640');
     if (state === 'ready' && (probe.pill !== 'Ready' || probe.primary.length)) fail('Ready must have no primary action');
@@ -518,12 +520,13 @@ try {
       await writeFile(join(output, `${theme}-${size}-local-workspace-${state}.png`), Buffer.from(image.data, 'base64'));
       await compareDesigner(image.data, theme, size, 'local-workspace-' + state, true);
       if (['failed', 'stopped-unexpectedly', 'stop-failed'].includes(state)) {
-        await evaluate(`document.querySelector('.returning-workspace summary[aria-controls="returning-workspace-error"]').click()`);
+        const wasOpen = await evaluate(`!!document.querySelector('#returning-workspace-error')`);
+        if (!wasOpen) await evaluate(`document.querySelector('.returning-workspace summary[aria-controls="returning-workspace-error"]').click()`);
         await until(() => evaluate(`!!document.querySelector('#returning-workspace-error')`), 'expanded workspace diagnostics');
         await checkLayout(theme, size, 'local-workspace-' + state + '-details');
         const details = await call('Page.captureScreenshot', { format: 'png' });
         await writeFile(join(output, `${theme}-${size}-local-workspace-${state}-details.png`), Buffer.from(details.data, 'base64'));
-        await evaluate(`document.querySelector('.returning-workspace summary[aria-controls="returning-workspace-error"]').click()`);
+        if (!wasOpen) await evaluate(`document.querySelector('.returning-workspace summary[aria-controls="returning-workspace-error"]').click()`);
       }
     };
     if (name === 'local-stop-failed') {
