@@ -147,14 +147,14 @@ function runSnapshot(documentId: string) {
   const acknowledged = [{ kind: 'Agent', name: doc?.name ?? 'agent', uid: uuid(`agent${run.count}`) }, { kind: 'Task', name: `${doc?.name ?? 'agent'}-test-${run.count}`, uid: uuid(`task${run.count}`) }];
   const captured = { ...base, source: run.source, model: runModel, attemptId: run.attemptId, acknowledged };
   if (run.cancelledAt !== null) return { ...captured, state: 'complete', stage: 'done', canRun, cancellation: 'cancelled', report: { verdict: 'cancelled', cases: [{
-    id: 'published-checksum', title: 'Published checksum', phase: 'Cancelled', question: 'Open the download page and report the SHA-256 checksum it publishes.', answer: null, completedTools: [], assertions: [], verdict: 'cancelled',
+    id: 'published-checksum', title: 'Copies the checksum from the page', phase: 'Cancelled', question: kubectlQuestion, answer: null, completedTools: [], assertions: [], verdict: 'cancelled',
   }] } };
   if (elapsed < runSeconds) return { ...captured, busy: { documentId, name: doc?.name ?? 'agent' }, state: 'running', stage: 'observe', canRun: false, canCancel: true, report: null };
   const pass = scenario !== 'runFails' && scenario !== 'sendLocalFailed';
   const checksum = 'cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918';
   return { ...captured, state: 'complete', stage: 'done', canRun, report: { verdict: pass ? 'passed' : 'failed', cases: [{
-    id: 'published-checksum', title: 'Published checksum', phase: 'Succeeded',
-    question: 'Open the download page and report the SHA-256 checksum it publishes.',
+    id: 'published-checksum', title: 'Copies the checksum from the page', phase: 'Succeeded',
+    question: kubectlQuestion,
     answer: pass ? `The page publishes this SHA-256 checksum:\n\n${checksum}` : "I couldn't fetch that page, so I can't tell you the checksum.",
     completedTools: pass ? ['web_fetch'] : [],
     assertions: [
@@ -181,7 +181,8 @@ function chatSnapshot(documentId: string) {
   for (const turn of turns) {
     if (turn.answer !== null || turn.stopped || turn.phase === 'Failed') continue;
     const progress = turn.hold ? 0.6 : (now() - turn.sentAt) / 1000 / chatSeconds;
-    const fetches = docs.get(documentId)?.name === 'web-reader' && /https?:\/\//.test(turn.message);
+    // web-reader fetches the page a task names, by URL or by host ("dl.k8s.io").
+    const fetches = docs.get(documentId)?.name === 'web-reader' && /https?:\/\/|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b/i.test(turn.message);
     if (navigator) {
       if (progress < 1) { turn.phase = [...chatPhases].reverse().find(([at]) => progress >= at)?.[1] ?? ''; continue; }
       const failed = scenario === 'navReplyFailed';
@@ -363,9 +364,20 @@ if (scenario === 'testIncomplete') {
 const clusterTarget = failingClusterTarget(uuid);
 const clusterProvider = failingClusterProvider(uuid);
 const sendAgent = { name: `bridge-run-${digest('send-agent').slice(0, 32)}`, uid: uuid('send-agent') };
+// A settled Send is recorded against its file, as native history does, so Overview shows the cluster under that agent.
+function sendRecord(namespace: string) {
+  const s = remoteSend; const doc = s && docs.get(s.documentId);
+  if (!s || !doc || s.cancelled || scenario === 'sendRunning' || (now() - s.startedAt) / 1000 < runSeconds) return null;
+  const report = sendReport(false); const passed = report.cases.filter(c => c.verdict === 'passed').length;
+  return {
+    id: s.id, source: source(doc), targetDisplay: clusterTarget.context_name, provider: clusterProvider.name, plannedAgentName: sendAgent.name, agentUid: sendAgent.uid,
+    targetUids: { serviceNamespace: clusterTarget.service_namespace, serviceUid: uuid('cluster-service'), deploymentNamespace: clusterTarget.service_namespace, deploymentUid: uuid('cluster-deployment'), watchedNamespace: namespace },
+    verdict: report.verdict, time: Math.floor(Date.now() / 1000), documentId: s.documentId, detailState: 'saved', report: { verdict: report.verdict, passed, total: report.cases.length },
+  };
+}
 function clusterPlace() {
   const place = failingClusterPlace(uuid, clusterChecked);
-  return sent ? { ...place, agents: [{ ...sendAgent, namespace: place.namespace, agentType: 'ai', model: 'gpt-5.6-terra', tools: ['web_fetch'], record: null }] } : place;
+  return sent ? { ...place, agents: [{ ...sendAgent, namespace: place.namespace, agentType: 'ai', model: 'gpt-5.6-terra', tools: ['web_fetch'], record: sendRecord(place.namespace) }] } : place;
 }
 function failedStatus(name: FailureScenario) {
   const { localVmError, workspaceFailure } = workspaceFailures[name];
@@ -374,7 +386,7 @@ function failedStatus(name: FailureScenario) {
 const modelOf = (doc: Doc) => (/^model: (.+)$/m.exec(doc.agent)?.[1] ?? 'gpt-5.6-terra').replace(/^"|"$/g, '');
 const toolsOf = (doc: Doc) => doc.name === 'web-reader' ? ['web_fetch'] : [];
 function sendReport(cancelled: boolean) {
-  const base = { id: 'published-checksum', title: 'Published checksum', question: 'Open the download page and report the SHA-256 checksum it publishes.' };
+  const base = { id: 'published-checksum', title: 'Copies the checksum from the page', question: kubectlQuestion };
   if (cancelled) return { verdict: 'cancelled', cases: [{ ...base, phase: 'Cancelled', answer: null, completedTools: [], assertions: [], verdict: 'cancelled' }] };
   if (scenario === 'sendPassed') {
     const checksum = 'cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918';
