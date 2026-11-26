@@ -1661,13 +1661,16 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let failureReason = "The answer did not include “2099-12-31”."
     let visibleFailure: ([VNRecognizedTextObservation]) -> Bool = { seen in
         let root = nativeRegion("Send and cluster tests")
-        return seen.contains { ($0.topCandidates(1).first?.string ?? "").contains("Failed") }
+        // The verdict pill is drawn in CSS capitals.
+        return seen.contains { showsText($0.topCandidates(1).first?.string ?? "", "Failed") }
             && nativeButtons("has-a-date", root: root).compactMap { nativeBounds($0) }.contains { bodyBounds().contains($0) }
             && nativeTextBounds(failureReason, exact: true, root: root).contains { bodyBounds().contains($0) }
     }
     // The Send card starts every test closed under its headline (TestResults collapsed); open the failed one.
     try clickSendControl("has-a-date", scrolling: -250)
-    try capturePreflight("send-failed-wide", "Finds the publication date", anchor: failureReason, requiring: visibleFailure)
+    // The open test shows its question, answer and hashes before the reason; anchor its title row so the title,
+    // verdict and reason share the frame (anchoring the reason pushed the title above it).
+    try capturePreflight("send-failed-wide", "Finds the publication date", anchor: "has-a-date", requiring: visibleFailure)
     require(nativeStrings().contains { showsText($0, "has-a-date") }, "Captured test title must retain its code ID")
     try resultSize(540, 640)
     try capturePreflight("send-failed-minimum", "Finds the publication date", anchor: "has-a-date", requiring: visibleFailure)
@@ -1828,7 +1831,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try focusSend()
     try capturePreflight("send-cancel-race-result", "1 of 2 tests passed")
     try clickSendControl("has-a-date", scrolling: -250) // a new result starts its tests closed again
-    try capturePreflight("send-cancel-race-failure", "Finds the publication date", anchor: failureReason, requiring: visibleFailure)
+    try capturePreflight("send-cancel-race-failure", "Finds the publication date", anchor: "has-a-date", requiring: visibleFailure)
     // Restore and actually Send the common file version on the primary cluster
     // before comparing it with the secondary. Merely restoring local bytes does
     // not undo the live spec updates exercised above.
