@@ -251,20 +251,54 @@ func guidedTitleRow() -> CGRect? {
     }
     return nil
 }
-// Show all of Bridge, in the guided title bar after Welcome, is the only way to the sidebar during a guided run.
+// The guided first run has no side door on a healthy setup screen: it ends when a cluster is in use (or at Set up
+// later, offered only where setup has stopped, which this runner's unknown virtualization check never reaches).
+// Continue on this computer would download and start a real workspace, so connect the CI fixture cluster instead,
+// then forget it and return to this computer, leaving the walk's state as it was: nothing set up, nothing
+// remembered, guidance over for this run.
 func leaveGuidedFirstRun() {
     guard nativeButtons("Home").isEmpty else { return }
-    let rect = window()!.1
-    let exits = nativeButtons("Show all of Bridge").filter { attribute($0, "AXEnabled") as? Bool == true }
-        .compactMap { nativeBounds($0) }.filter { rect.contains($0) }
-    require(exits.count == 1, "The guided first run must offer one visible Show all of Bridge")
-    mouse(.leftMouseDown, CGPoint(x: exits[0].midX, y: exits[0].midY)); mouse(.leftMouseUp, CGPoint(x: exits[0].midX, y: exits[0].midY))
-    for _ in 0..<30 {
-        if !nativeButtons("Home").isEmpty && !nativeButtons("Clusters").isEmpty { break }
-        Thread.sleep(forTimeInterval: 0.1)
+    require(ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil,
+            "The guided first run ends only through a connected cluster here; the walk needs its fixture kubeconfig")
+    scrollMain(4000)
+    if visibleButtons("Add a cluster").count == 1 {
+        clickButton("Add a cluster")
+    } else {
+        // The where-to-run step: choose the cluster option, then Continue, which opens Add a cluster.
+        let rect = window()!.1
+        let choices = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXRadioButton"
+                && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.hasPrefix("On a cluster you already have") == true }
+        }.compactMap { nativeBounds($0) }.filter { rect.contains($0) }
+        require(choices.count == 1, "The guided where-to-run step must offer one visible cluster choice")
+        mouse(.leftMouseDown, CGPoint(x: choices[0].midX, y: choices[0].midY)); mouse(.leftMouseUp, CGPoint(x: choices[0].midX, y: choices[0].midY))
+        Thread.sleep(forTimeInterval: 0.3)
+        clickButton("Continue")
+    }
+    Thread.sleep(forTimeInterval: 1)
+    clickButton("kubectl context")
+    clickButton("fixture-cluster")
+    for _ in 0..<50 where nativeButtons("Use this cluster").isEmpty { Thread.sleep(forTimeInterval: 0.2) }
+    clickButton("Use this cluster")
+    for _ in 0..<50 {
+        if !nativeButtons("Home").isEmpty && !nativeButtons("Clusters").isEmpty && !nativeButtons("Done").isEmpty { break }
+        Thread.sleep(forTimeInterval: 0.2)
     }
     require(!nativeButtons("Home").isEmpty && !nativeButtons("Clusters").isEmpty && guidedTitleRow() == nil,
-            "Show all of Bridge did not end the guided first run and bring back the sidebar")
+            "Using the fixture cluster did not end the guided first run and bring back the sidebar")
+    requireNoLocalWorkspace()
+    // Forget the cluster again and choose this computer, as the rest of the walk expects.
+    clickButton("Done")
+    clickButton("Manage")
+    clickButton("Show details")
+    clickButton("Remove")
+    clickButton("Remove cluster")
+    for _ in 0..<30 where !nativeButtons("Manage").isEmpty { Thread.sleep(forTimeInterval: 0.1) }
+    require(nativeButtons("Manage").isEmpty && nativeTextIsVisible("No other clusters added yet"), "The fixture cluster used to leave guidance was not forgotten")
+    clickButton("Set up")
+    clickButton("Use this computer")
+    requireNoLocalWorkspace()
+    require(nativeButtons("Use this computer").isEmpty && guidedTitleRow() == nil, "This computer was not chosen again after leaving guidance")
 }
 // A point in the page panel's bare left padding: page content starts 16-24pt in from the panel's left edge, so
 // no control, text or scrollbar is under it. Just under the title bar it is also above every fixed picker (80pt

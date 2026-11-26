@@ -719,12 +719,15 @@ assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_status', args: {
 // Old isolated-world React pollers may still retire their own first-test intent;
 // their synthetic preferences must not change a later scene's identity.
 // Guided first-run screens have no sidebar: the smoke walk anchors the page under the guided title-bar row, finds
-// Get started as the native button (its arrow is CSS content) and leaves guidance only through Show all of Bridge.
+// Get started as the native button (its arrow is CSS content) and leaves guidance through the fixture cluster.
 assert.ok(smoke.includes('guard let row = guidedTitleRow() else { fail("Cannot locate the native sidebar or the guided title bar for the page viewport") }')
   && smoke.includes('return CGRect(x: rect.minX, y: row.maxY, width: rect.width, height: max(0, rect.maxY - row.maxY))')
   && smoke.includes('== "Setup progress" }') && smoke.includes('bounds.width >= rect.width * 0.9, bounds.height < 100'), 'guided pages must be anchored under the actual guided title-bar row');
-assert.ok(smoke.includes('nativeButtons("Show all of Bridge")') && smoke.includes('"Show all of Bridge did not end the guided first run and bring back the sidebar"')
-  && (smoke.match(/leaveGuidedFirstRun\(\)\n\s*clickTab\(/g) ?? []).length >= 2, 'the walk must leave the guided first run before using the sidebar');
+assert.ok(!smoke.includes('Show all of Bridge') && smoke.includes('"Using the fixture cluster did not end the guided first run and bring back the sidebar"')
+  && smoke.indexOf('clickButton("Use this cluster")', smoke.indexOf('func leaveGuidedFirstRun()')) < smoke.indexOf('clickButton("Remove cluster")', smoke.indexOf('func leaveGuidedFirstRun()'))
+  && smoke.includes('require(nativeButtons("Manage").isEmpty && nativeTextIsVisible("No other clusters added yet"), "The fixture cluster used to leave guidance was not forgotten")')
+  && !smoke.slice(smoke.indexOf('func leaveGuidedFirstRun()'), smoke.indexOf("// A point in the page panel's bare left padding:")).includes('"On this computer"')
+  && (smoke.match(/leaveGuidedFirstRun\(\)\n\s*clickTab\(/g) ?? []).length >= 2, 'the walk must leave guidance through the fixture cluster, forget it, and use the sidebar only afterwards');
 assert.ok(!/topCandidates\(1\)\.first\?\.string == "Get started"/.test(smoke) && !smoke.includes('clickText("Get started"'), 'Get started carries a CSS arrow, so it is found as a native button, not an exact OCR line');
 // The walk reads visible text in its authored case: capitals drawn by CSS map back to the app's words, nothing else.
 {
