@@ -85,7 +85,7 @@ export default function Run({ tests, documentId = SAMPLE_DOCUMENT_ID, onSnapshot
       <div className="workspace-step-actions">
         {snapshot?.canRetryCancellation && <Button type="button" kind="primary" onClick={() => { void act('agent_run_cancel'); }}>Retry cancellation</Button>}
         {snapshot?.canCheckCancellation && <Button type="button" kind="quiet" onClick={() => { void act('agent_run_check_cancellation'); }}>Check again</Button>}
-        <Button type="button" kind="quiet" onClick={() => { void invoke('quit_bridge').catch(() => setActionMessage("Couldn't quit Bridge. Use Quit Bridge from its menu.")); }}>Quit Bridge</Button>
+        <Button type="button" kind="quiet" onClick={() => { void invoke('quit_bridge').catch(() => setActionMessage("Couldn't quit Bridge. Use Quit Bridge from the Bridge icon in the tray or menu bar.")); }}>Quit Bridge</Button>
       </div>
     </>}
     {actionMessage && <p role="status">{actionMessage}</p>}

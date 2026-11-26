@@ -8,7 +8,6 @@ import { agentInfo, SAMPLE_DOCUMENT_ID, type SaveState, type SourceId, sameSourc
 import { selectedDocument } from './designer/documents-api';
 import Example, { type DocumentAction } from './designer/Example';
 import { type RunSnapshot, runCall } from './designer/run-api';
-import FileMenu from './chrome/FileMenu';
 import ThemeButton from './chrome/ThemeButton';
 import SidebarToggle from './chrome/SidebarToggle';
 import { narrowWindow, readSidebarCollapsed, useNarrowWindow, writeSidebarCollapsed } from './chrome/sidebar';
@@ -395,7 +394,6 @@ export default function App() {
         <div className="title-bar-start">
           {!guided && <SidebarToggle collapsed={narrow ? !overlay : sidebarCollapsed} onToggle={toggleSidebar} />}
           <span className="brand"><img src={mark} width="22" height="22" alt="Orka" /><b>Bridge</b></span>
-          <FileMenu />
         </div>
         <div className="title-bar-centre">{guided && <GuidedSteps current={guidedStep(view.step, view.done)} />}</div>
         <div className="title-bar-end">

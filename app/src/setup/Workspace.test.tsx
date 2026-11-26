@@ -100,7 +100,7 @@ test('stop failure offers Quit Bridge through native cleanup and keeps a rejecte
   const quit = within(card).getByRole('button', { name: 'Quit Bridge' });
   expect(quit.classList.contains('button-primary')).toBe(true);
   await user.click(quit);
-  expect(await within(card).findByRole('alert')).toBeTruthy();
+  expect((await within(card).findByRole('alert')).textContent).toBe("Couldn't quit Bridge. Try again or use Quit Bridge from the Bridge icon in the tray or menu bar.");
   expect((quit as HTMLButtonElement).disabled).toBe(false);
   expect(ipc.mock.calls.filter(([command]) => command === 'quit_bridge')).toHaveLength(1);
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
