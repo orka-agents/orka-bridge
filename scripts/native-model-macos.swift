@@ -901,7 +901,12 @@ func localSize(_ width: CGFloat, _ height: CGFloat) {
     let before = nativeBounds(native)
     let result = AXUIElementSetAttributeValue(native, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!)
     require(result == .success, "Cannot resize fixture window: AX=\(result.rawValue), title=\(attribute(native, "AXTitle") as? String ?? "unnamed"), windows=\((windows as! [AXUIElement]).count), before=\(String(describing: before)), requested=\(size)")
-    Thread.sleep(forTimeInterval: 0.3)
+    // The window server can take longer than one short sleep to apply a resize on a busy runner (CI once missed it at
+    // the very first resize); poll for the same tolerance instead of failing on the first look.
+    for _ in 0..<30 {
+        Thread.sleep(forTimeInterval: 0.1)
+        if abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3 { break }
+    }
     require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Fixture content size not applied")
 }
 // Key entry stays in the real password control; these actions never use a store or VM.
