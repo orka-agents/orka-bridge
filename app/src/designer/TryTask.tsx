@@ -198,5 +198,14 @@ export default function TryTask({ documentId, agentName, model, blocked, active 
     {!!earlier.length && <Disclosure className="try-earlier" label={`Earlier tasks: ${earlier.length}`}>
       <div className="try-earlier-list">{earlier.map(({ turn, index }) => <Result key={index} label="Earlier task" turn={turn} model={models.current.get(index)} />)}</div>
     </Disclosure>}
+    {/* What Try a task keeps and what Stop can promise, from the native conversation path. */}
+    <Disclosure className="try-about" label="About tasks here">
+      <div className="try-about-copy muted">
+        <p>Earlier tasks are kept only while Bridge is open.</p>
+        <p>Each task starts fresh and doesn’t remember earlier ones.</p>
+        <p>Stop asks the task to stop. A tool that already started may finish, and what it did isn’t undone.</p>
+        <p>If a task can’t be stopped, restart the workspace.</p>
+      </div>
+    </Disclosure>
   </section>;
 }

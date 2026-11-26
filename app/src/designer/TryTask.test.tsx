@@ -41,6 +41,22 @@ test('names this computer and keeps earlier tasks folded, newest first, without 
   const tasks = within(earlier).getAllByRole('article', { name: /^Earlier task/, hidden: true }).map(card => card.querySelector('.try-result-task')?.textContent);
   expect(tasks).toEqual(['Second task', 'First task']);
 });
+test('About tasks here says, folded, what is kept, that each task starts fresh, what Stop can promise and the way out', async () => {
+  await open();
+  const about = screen.getByText('About tasks here').closest('details')!;
+  expect(about.open).toBe(false);
+  expect(about.closest('.try-task')).toBe(screen.getByRole('region', { name: 'Try a task on this computer' }));
+  expect([...about.querySelectorAll('p')].map(p => p.textContent)).toEqual([
+    'Earlier tasks are kept only while Bridge is open.',
+    'Each task starts fresh and doesn’t remember earlier ones.',
+    'Stop asks the task to stop. A tool that already started may finish, and what it did isn’t undone.',
+    'If a task can’t be stopped, restart the workspace.',
+  ]);
+  // One task is one new conversation, so the conversation's message limit never applies here.
+  expect(about.textContent).not.toMatch(/\d/);
+  fireEvent.click(within(about).getByRole('button', { name: 'About tasks here' }));
+  expect(about.open).toBe(true);
+});
 test('an empty Try a task shows its labelled composer and where the result will appear, without routine status clutter', async () => {
   await open();
   expect(field().placeholder).toBe('Describe the task');
@@ -52,7 +68,7 @@ test('an empty Try a task shows its labelled composer and where the result will 
   expect(document.getElementById(field().getAttribute('aria-describedby')!)?.textContent).toContain('Enter runs the task · Shift+Enter for a new line');
   expect(runButton().closest('form')).toBe(field().closest('form'));
   expect(runButton().hasAttribute('disabled')).toBe(true);
-  expect(screen.queryByText('Earlier tasks', { exact: false })).toBeNull();
+  expect(screen.queryByText(/^Earlier tasks:/)).toBeNull();
 });
 test('one task is one fresh conversation: Enter starts clean, then runs exactly once, and the appended turn consumes the composer', async () => {
   send = () => (snapshot = { ...idle, state: 'preparing', busy: true, canSend: false });
