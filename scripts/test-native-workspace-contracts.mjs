@@ -123,6 +123,8 @@ for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps
     && windows.includes('$bitmap.GetPixel([int]($row.Left + 8 - $r.X), [int]($row.Bottom + 12 - $r.Y))'), 'Windows lifecycle must leave guidance through the fixture cluster, forget it, sample guided pages, and never select a workspace');
 }
 const windowsLifecycle = await read('./native-lifecycle-windows.ps1');
+// Disclosures and radios act through their UIA patterns before any pointer fallback.
+assert.ok(windowsLifecycle.includes('[System.Windows.Automation.ExpandCollapsePattern]::Pattern') && windowsLifecycle.includes('[System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) { $pattern.Select(); return }'), 'Windows lifecycle must expand disclosures and select radios through UIA patterns');
 const clickPoint = windowsLifecycle.slice(windowsLifecycle.indexOf('function Get-ClickPoint('), windowsLifecycle.indexOf('function Press('));
 // A coordinate click without UIA's clickable point must still prove, by hit test, that it lands on the control.
 assert.ok(clickPoint.includes('$Element.TryGetClickablePoint([ref]$point)') && clickPoint.includes('[System.Windows.Automation.AutomationElement]::FromPoint($centre)')

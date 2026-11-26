@@ -140,6 +140,13 @@ function Get-ClickPoint($Element) {
 function Press($Element) {
     $pattern = $null
     if ($Element -isnot [Drawing.Point] -and $Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { $pattern.Invoke(); return }
+    # Chromium exposes a <summary> disclosure through ExpandCollapse and a radio through SelectionItem, not Invoke.
+    # Use those semantic actions rather than a pointer click, whose hit test the window's resize child can intercept.
+    if ($Element -isnot [Drawing.Point] -and $Element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
+        if ($pattern.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Collapsed) { $pattern.Expand() } else { $pattern.Collapse() }
+        return
+    }
+    if ($Element -isnot [Drawing.Point] -and $Element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) { $pattern.Select(); return }
     $point = if ($Element -is [Drawing.Point]) { $Element } else { Get-ClickPoint $Element }
     [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y) | Out-Null
     [NativeWalk]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
