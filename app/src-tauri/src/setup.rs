@@ -77,7 +77,6 @@ impl SetupSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct SetupRequirements {
     memory_bytes: u64,
-    image_bytes: u64,
     state_disk_bytes: u64,
     download_bytes: Option<u64>,
     setup_disk_bytes: Option<u64>,
@@ -89,9 +88,10 @@ fn requirements_from(
     download_bytes: Option<u64>,
     first_run: Option<crate::catalog::FirstRun>,
 ) -> Option<SetupRequirements> {
+    // A build without a pinned image has no requirements to show.
+    image_bytes?;
     Some(SetupRequirements {
         memory_bytes: bridge_runtime_protocol::MEMORY_BYTES,
-        image_bytes: image_bytes?,
         state_disk_bytes: bridge_runtime_protocol::STATE_BYTES,
         download_bytes,
         setup_disk_bytes: first_run.map(|run| run.disk_bytes),
@@ -136,7 +136,6 @@ mod requirements_tests {
             serde_json::to_value(r).unwrap(),
             serde_json::json!({
                 "memoryBytes": bridge_runtime_protocol::MEMORY_BYTES,
-                "imageBytes": 7,
                 "stateDiskBytes": bridge_runtime_protocol::STATE_BYTES,
                 "downloadBytes": 5,
                 "setupDiskBytes": 11,
@@ -201,8 +200,8 @@ mod requirements_tests {
     #[test]
     fn release_reports_selected_platform_requirements() {
         assert_eq!(
-            setup_requirements().map(|r| r.image_bytes),
-            crate::catalog::IMAGE_BYTES
+            setup_requirements().is_some(),
+            crate::catalog::IMAGE_BYTES.is_some()
         );
         assert_eq!(
             setup_requirements()
@@ -220,7 +219,7 @@ mod requirements_tests {
     ))]
     #[test]
     fn debug_supported_target_reports_pinned_bytes() {
-        assert!(setup_requirements().unwrap().image_bytes > 0);
+        assert!(setup_requirements().is_some());
         assert_eq!(setup_requirements().unwrap().download_bytes, None);
     }
 }

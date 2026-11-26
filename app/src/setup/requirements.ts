@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 
 // Disk and time come from measured first runs of the pinned image; null where not measured.
 export type WorkspaceRequirements = {
-  memoryBytes: number; imageBytes: number; stateDiskBytes: number; downloadBytes: number | null;
+  memoryBytes: number; stateDiskBytes: number; downloadBytes: number | null;
   setupDiskBytes: number | null; freeDiskBytes: number | null; readySeconds: number | null;
 };
 const measured = ['downloadBytes', 'freeDiskBytes', 'readySeconds', 'setupDiskBytes'];
@@ -11,7 +11,7 @@ export async function workspaceRequirements(): Promise<WorkspaceRequirements | n
   try {
     const value = await invoke<unknown>('setup_requirements');
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-    if (Object.keys(value).sort().join(',') !== 'downloadBytes,freeDiskBytes,imageBytes,memoryBytes,readySeconds,setupDiskBytes,stateDiskBytes') return null;
+    if (Object.keys(value).sort().join(',') !== 'downloadBytes,freeDiskBytes,memoryBytes,readySeconds,setupDiskBytes,stateDiskBytes') return null;
     const positive = (size: unknown) => typeof size === 'number' && Number.isSafeInteger(size) && size > 0;
     if (!Object.entries(value).every(([key, size]) => positive(size) || measured.includes(key) && size === null)) return null;
     return value as WorkspaceRequirements;

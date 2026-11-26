@@ -9,7 +9,7 @@ import { armFirstTest, firstTestAttempted, firstTestPending, retireFirstTest } f
 import Model, { type ModelState } from './Model';
 import Preflight from './Preflight';
 import { canQueueModel, setupView } from './progress';
-import { formatRequirementGB, setupNeeds, type WorkspaceRequirements, workspaceRequirements } from './requirements';
+import { setupNeeds, type WorkspaceRequirements, workspaceRequirements } from './requirements';
 import { type CheckStepState, Meet, SetupProgress } from './Steps';
 import { cancelLocal, type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
@@ -365,7 +365,6 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                   <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
                     <div id="workspace-inside" hidden={!inside}>
                       <p>The workspace includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>
-                      {requirements && <p>{`This build's image size is ${formatRequirementGB(requirements.imageBytes)} after installation, not the amount downloaded.`}</p>}
                     </div>
                   </Disclosure>
                 </div>

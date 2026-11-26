@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import { setupNeeds, setupTime, type WorkspaceRequirements } from './requirements';
 
-const base: WorkspaceRequirements = { memoryBytes: 6442450944, imageBytes: 3765960704, stateDiskBytes: 34359738368, downloadBytes: 1967572914, setupDiskBytes: 9453699072, freeDiskBytes: 13250830695, readySeconds: null };
+const base: WorkspaceRequirements = { memoryBytes: 6442450944, stateDiskBytes: 34359738368, downloadBytes: 1967572914, setupDiskBytes: 9453699072, freeDiskBytes: 13250830695, readySeconds: null };
 
 test('setup time names the download and adds a start time only where one was measured', () => {
   expect(setupTime(base)).toBe('Mostly a 2.0 GB download');
