@@ -17,6 +17,9 @@ export const chatErrors = {
   permission: 'Your access to this cluster doesn’t allow this task. Ask the cluster’s administrator for access.',
   sessionsUnsupported: 'This cluster’s Orka is too old for Try a task. It needs Orka v0.4.0 or later.',
   clusterUnavailable: 'Bridge couldn’t reach the selected cluster. Reconnect it in Clusters, then try again.',
+  workspaceOutdated: 'The workspace on this computer is older than this Bridge and can’t run this yet. Nothing was sent to it.',
+  workspaceUnavailable: 'The workspace on this computer stopped answering. Quit Bridge and open it again to restart the workspace. Your agents and files are kept.',
+  placeChanged: 'This conversation was started with another AI connection. Start a new conversation to continue.',
 } as const;
 // The Orka permission a cluster refused (chat_cluster.rs ChatPermission), as the person's administrator grants it.
 export const chatPermissions = {
@@ -38,6 +41,8 @@ export type ChatSnapshot = {
   documentId: string; state: typeof chatStates[number]; busy: boolean; canSend: boolean; versions: { turns: ChatTurn[] }[]; error: keyof typeof chatErrors | null;
   // With error `permission` on a cluster: what it refused. `keptOnCluster` latches once a cluster refused to delete a replaced conversation.
   denied: ChatPermission | null; keptOnCluster: boolean;
+  // A cluster conversation started on another AI connection: shown, never continued, until New.
+  readOnly: boolean;
 };
 // A connected cluster and AI connection, by the opaque ids native already confirmed. Absent means this computer.
 export type ChatPlace = { targetId: string; providerId: string };
@@ -49,7 +54,7 @@ export function isChatSnapshot(value: unknown): value is ChatSnapshot {
   return object(value) && isDocumentId(value.documentId) && chatStates.includes(value.state as ChatSnapshot['state'])
     && typeof value.busy === 'boolean' && typeof value.canSend === 'boolean'
     && (value.error === null || typeof value.error === 'string' && Object.hasOwn(chatErrors, value.error))
-    && (value.denied === null || typeof value.denied === 'string' && Object.hasOwn(chatPermissions, value.denied)) && typeof value.keptOnCluster === 'boolean'
+    && (value.denied === null || typeof value.denied === 'string' && Object.hasOwn(chatPermissions, value.denied)) && typeof value.keptOnCluster === 'boolean' && typeof value.readOnly === 'boolean'
     && Array.isArray(value.versions) && value.versions.every(version => object(version) && Array.isArray(version.turns) && version.turns.every(turn =>
       object(turn) && typeof turn.message === 'string' && (turn.answer === null || typeof turn.answer === 'string') && typeof turn.phase === 'string'
       && ['contextRetained', 'terminationUnconfirmed', 'stopUnconfirmed'].every(key => typeof turn[key] === 'boolean')
@@ -58,11 +63,11 @@ export function isChatSnapshot(value: unknown): value is ChatSnapshot {
 }
 export type ChatResult = { ok: true; snapshot: ChatSnapshot } | { ok: false; message: string; uncertain?: true };
 export type ChatCall = (command: ChatCommand, documentId: string, message?: string, place?: ChatPlace) => Promise<ChatResult>;
-// Only a send names the place; Reconnect, Stop and New act where that conversation was started.
+// Every command names the selected place, so each place answers with its own conversation.
 export async function chatCall(command: ChatCommand, documentId: string, message?: string, place?: ChatPlace): Promise<ChatResult> {
   if (!isTauri()) return { ok: false, message: 'Try a task is available only in the native app.' };
   try {
-    const value = await invoke<unknown>(command, { documentId, ...(command === 'agent_chat_send' ? { message, ...place } : {}) });
+    const value = await invoke<unknown>(command, { documentId, ...(command === 'agent_chat_send' ? { message } : {}), ...place });
     if (isChatSnapshot(value) && value.documentId === documentId) return { ok: true, snapshot: value };
   } catch (error) {
     if (typeof error === 'string' && Object.hasOwn(chatErrors, error)) return { ok: false, message: chatErrors[error as keyof typeof chatErrors] };

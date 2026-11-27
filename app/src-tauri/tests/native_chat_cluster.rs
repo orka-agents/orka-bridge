@@ -21,20 +21,28 @@ async fn place() -> (Arc<Mutex<Orka>>, Channel) {
 }
 async fn until(
     owner: &ChatOwner,
+    channel: &Channel,
     id: bridge_engine::agent_folder::DocumentId,
     what: impl Fn(&ChatSnapshot) -> bool,
 ) -> ChatSnapshot {
     for _ in 0..2000 {
-        let s = owner.status(id);
+        let s = owner.status_on(id, channel);
         if what(&s) {
             return s;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    panic!("never reached the expected state: {:?}", owner.status(id));
+    panic!(
+        "never reached the expected state: {:?}",
+        owner.status_on(id, channel)
+    );
 }
-async fn settled(owner: &ChatOwner, id: bridge_engine::agent_folder::DocumentId) -> ChatSnapshot {
-    until(owner, id, |s| !s.busy).await
+async fn settled(
+    owner: &ChatOwner,
+    channel: &Channel,
+    id: bridge_engine::agent_folder::DocumentId,
+) -> ChatSnapshot {
+    until(owner, channel, id, |s| !s.busy).await
 }
 fn folder() -> (tempfile::TempDir, Arc<AgentFolder>) {
     let home = tempfile::tempdir().unwrap();
@@ -57,12 +65,16 @@ async fn navigator_turns_on_a_cluster_share_one_session_and_the_default_model() 
             "What is a Task?".into(),
         )
         .unwrap();
-    let first = settled(&owner, navigator()).await;
+    let first = settled(&owner, &channel, navigator()).await;
     assert_eq!(first.state, ChatState::Ready, "{first:?}");
     owner
-        .send_navigator_on(channel, "- web-reader".into(), "And a Session?".into())
+        .send_navigator_on(
+            channel.clone(),
+            "- web-reader".into(),
+            "And a Session?".into(),
+        )
         .unwrap();
-    let second = settled(&owner, navigator()).await;
+    let second = settled(&owner, &channel, navigator()).await;
     assert_eq!(second.state, ChatState::Ready, "{second:?}");
     assert_eq!(second.versions.len(), 1);
     let turns = &second.versions[0].turns;
@@ -75,8 +87,10 @@ async fn navigator_turns_on_a_cluster_share_one_session_and_the_default_model() 
         .as_deref()
         .unwrap()
         .starts_with("Answer for bridge-nav-task-"));
-    assert!(owner.thinks_on_cluster());
-    assert_eq!(owner.thinks_with().unwrap().model, "fixture-model");
+    let place = bridge_engine::chat::Place::Cluster("place-key".into());
+    let (thinks, cluster) = owner.thinks_with_on(navigator(), &place).unwrap();
+    assert!(cluster);
+    assert_eq!(thinks.model, "fixture-model");
     let o = orka.lock().unwrap();
     let agents: Vec<_> = o
         .bodies
@@ -116,10 +130,12 @@ async fn new_conversation_deletes_the_previous_conversations_resources() {
     owner
         .send_on(channel.clone(), folder.clone(), "First".into())
         .unwrap();
-    assert_eq!(settled(&owner, id).await.state, ChatState::Ready);
-    owner.send_on(channel, folder, "Second".into()).unwrap();
-    assert_eq!(settled(&owner, id).await.state, ChatState::Ready);
-    owner.new_conversation(id).unwrap();
+    assert_eq!(settled(&owner, &channel, id).await.state, ChatState::Ready);
+    owner
+        .send_on(channel.clone(), folder, "Second".into())
+        .unwrap();
+    assert_eq!(settled(&owner, &channel, id).await.state, ChatState::Ready);
+    owner.new_conversation_on(&channel, id).unwrap();
     for _ in 0..400 {
         if orka.lock().unwrap().requests("DELETE").len() == 4 {
             break;
@@ -137,7 +153,7 @@ async fn new_conversation_deletes_the_previous_conversations_resources() {
     assert!(deletes[1].starts_with("DELETE /api/v1/tasks/bridge-chat-task-"));
     assert!(deletes[2].starts_with("DELETE /api/v1/sessions/bridge-chat-"));
     assert!(deletes[3].starts_with("DELETE /api/v1/agents/bridge-chat-agent-"));
-    assert!(!owner.status(id).kept_on_cluster);
+    assert!(!owner.status_on(id, &channel).kept_on_cluster);
 }
 
 // A role without delete leaves everything and says so once.
@@ -148,10 +164,12 @@ async fn refused_cleanup_keeps_resources_and_latches_one_notice() {
     let (_home, folder) = folder();
     let id = folder.document_id();
     let owner = ChatOwner::new(tokio::runtime::Handle::current());
-    owner.send_on(channel, folder, "First".into()).unwrap();
-    assert_eq!(settled(&owner, id).await.state, ChatState::Ready);
-    owner.new_conversation(id).unwrap();
-    let s = until(&owner, id, |s| s.kept_on_cluster).await;
+    owner
+        .send_on(channel.clone(), folder, "First".into())
+        .unwrap();
+    assert_eq!(settled(&owner, &channel, id).await.state, ChatState::Ready);
+    owner.new_conversation_on(&channel, id).unwrap();
+    let s = until(&owner, &channel, id, |s| s.kept_on_cluster).await;
     assert!(s.error.is_none() && s.can_send);
 }
 
@@ -163,8 +181,10 @@ async fn a_refused_task_create_names_the_missing_permission() {
     let (_home, folder) = folder();
     let id = folder.document_id();
     let owner = ChatOwner::new(tokio::runtime::Handle::current());
-    owner.send_on(channel, folder, "First".into()).unwrap();
-    let s = settled(&owner, id).await;
+    owner
+        .send_on(channel.clone(), folder, "First".into())
+        .unwrap();
+    let s = settled(&owner, &channel, id).await;
     assert_eq!(s.error, Some(ChatError::Permission));
     assert_eq!(s.denied, Some(ChatPermission::CreateTasks));
     let o = orka.lock().unwrap();
@@ -184,12 +204,12 @@ async fn stop_deletes_the_running_task() {
     let (_home, folder) = folder();
     let id = folder.document_id();
     let owner = ChatOwner::new(tokio::runtime::Handle::current());
-    owner.send_on(channel, folder, "Long task".into()).unwrap();
-    until(&owner, id, |s| s.state == ChatState::Working).await;
     owner
-        .stop(bridge_engine::local_vm::LocalVm::unavailable(), id)
+        .send_on(channel.clone(), folder, "Long task".into())
         .unwrap();
-    let s = settled(&owner, id).await;
+    until(&owner, &channel, id, |s| s.state == ChatState::Working).await;
+    owner.stop_on(channel.clone(), id).unwrap();
+    let s = settled(&owner, &channel, id).await;
     assert!(s.versions[0].turns[0].termination_unconfirmed, "{s:?}");
     let o = orka.lock().unwrap();
     assert_eq!(o.requests("DELETE").len(), 1);
@@ -204,8 +224,10 @@ async fn an_orka_without_sessions_is_named_and_its_task_deleted() {
     let (_home, folder) = folder();
     let id = folder.document_id();
     let owner = ChatOwner::new(tokio::runtime::Handle::current());
-    owner.send_on(channel, folder, "First".into()).unwrap();
-    let s = settled(&owner, id).await;
+    owner
+        .send_on(channel.clone(), folder, "First".into())
+        .unwrap();
+    let s = settled(&owner, &channel, id).await;
     assert_eq!(s.error, Some(ChatError::SessionsUnsupported));
     let o = orka.lock().unwrap();
     assert_eq!(o.requests("DELETE").len(), 1);
@@ -219,8 +241,10 @@ async fn a_briefly_refused_open_is_retried_before_the_message_fails() {
     let (_home, folder) = folder();
     let id = folder.document_id();
     let owner = ChatOwner::new(tokio::runtime::Handle::current());
-    owner.send_on(channel, folder, "First".into()).unwrap();
-    let s = settled(&owner, id).await;
+    owner
+        .send_on(channel.clone(), folder, "First".into())
+        .unwrap();
+    let s = settled(&owner, &channel, id).await;
     assert_eq!(s.state, ChatState::Ready, "{s:?}");
     assert!(s.error.is_none());
 }

@@ -57,6 +57,24 @@ pub fn dns_label(s: &str) -> bool {
         && !s.ends_with('-')
 }
 impl ChatRequest {
+    /// Whether this names the Navigator's family, which older guests do not accept.
+    pub fn navigator(&self) -> bool {
+        let named = |name: &str| {
+            [
+                NAVIGATOR_FAMILY.agent,
+                NAVIGATOR_FAMILY.task,
+                NAVIGATOR_FAMILY.session,
+            ]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        };
+        self.path.split('/').any(named)
+            || self
+                .body
+                .as_ref()
+                .and_then(|b| b["name"].as_str())
+                .is_some_and(named)
+    }
     /// The local workspace's contract: the fixed namespace, and no cleanup authority.
     pub fn validate(&self) -> Result<(), ProtocolError> {
         self.check(ORKA_NAMESPACE, None)

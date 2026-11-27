@@ -59,6 +59,12 @@ pub enum ChatError {
     SessionsUnsupported,
     /// The selected cluster is not connected in this run, or its access could not be rechecked.
     ClusterUnavailable,
+    /// This computer's workspace image predates the Navigator; nothing was sent to it.
+    WorkspaceOutdated,
+    /// This computer's workspace stopped serving its channel; it needs a restart.
+    WorkspaceUnavailable,
+    /// This place's conversation was started on another AI connection; start a new one.
+    PlaceChanged,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,12 +106,17 @@ pub struct ChatSnapshot {
     pub denied: Option<ChatPermission>,
     /// Latched once a cluster refused to delete a replaced conversation's resources.
     pub kept_on_cluster: bool,
+    /// The conversation was started on another AI connection of this cluster: shown, not continued.
+    pub read_only: bool,
 }
 struct Entry {
     view: ChatSnapshot,
     context: Option<Context>,
     lease: Option<Arc<OwnedMutexGuard<()>>>,
     stop: watch::Sender<bool>,
+    /// The model this conversation last thought with, and whether on a cluster. Display only.
+    thinks: Option<(ModelSelection, bool)>,
+    used: u64,
 }
 impl Entry {
     fn new(id: DocumentId) -> Self {
@@ -119,11 +130,28 @@ impl Entry {
                 error: None,
                 denied: None,
                 kept_on_cluster: false,
+                read_only: false,
             },
             context: None,
             lease: None,
             stop: watch::channel(false).0,
+            thinks: None,
+            used: 0,
         }
+    }
+    /// The view for a selected AI connection: a cluster conversation started on another one is
+    /// read-only until New.
+    fn snapshot(&self, provider: Option<&str>) -> ChatSnapshot {
+        let mut view = self.view.clone();
+        view.read_only = !view.busy
+            && matches!(
+                (provider, self.context.as_ref().map(|c| &c.binding)),
+                (Some(selected), Some(Binding::Cluster { provider, .. })) if provider != selected
+            );
+        if view.read_only {
+            view.can_send = false;
+        }
+        view
     }
 }
 impl Entry {
@@ -214,13 +242,42 @@ struct Context {
     cluster: Option<Arc<ClusterChannel>>,
     /// This conversation's earlier acknowledged Tasks, for cleanup on a cluster.
     earlier: Vec<ResourceId>,
+    /// A refusal ended it before it held a turn: the next message starts a fresh one.
+    broken: bool,
+}
+/// Where a conversation lives. Each place keeps its own conversation per source, so switching
+/// the selected place never shows, continues or confirms another place's turns.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Place {
+    ThisComputer,
+    /// A remembered cluster, by its place key.
+    Cluster(String),
+}
+type Key = (DocumentId, Place);
+/// Conversations kept in memory per owner. Beyond it, the least recently used one that is idle
+/// and holds nothing to settle is dropped, its cluster resources following the rule for New.
+pub const MAX_CONVERSATIONS: usize = 8;
+impl Channel {
+    pub fn place(&self) -> Place {
+        match self {
+            Self::Local(_) => Place::ThisComputer,
+            Self::Cluster(cluster) => Place::Cluster(cluster.key.clone()),
+        }
+    }
+    fn provider(&self) -> Option<&str> {
+        match self {
+            Self::Local(_) => None,
+            Self::Cluster(cluster) => Some(&cluster.provider),
+        }
+    }
 }
 pub struct ChatOwner(
-    Mutex<HashMap<DocumentId, Entry>>,
+    Mutex<HashMap<Key, Entry>>,
     tokio::runtime::Handle,
+    /// The local workspace's epoch; replacing the workspace retires only local conversations.
     AtomicU64,
-    /// The model the last admitted turn was bound to, and whether on a cluster. Display only.
-    Mutex<Option<(ModelSelection, bool)>>,
+    /// Recency for the in-memory cap.
+    AtomicU64,
 );
 impl ChatOwner {
     pub fn new(runtime: tokio::runtime::Handle) -> Arc<Self> {
@@ -228,40 +285,55 @@ impl ChatOwner {
             Mutex::default(),
             runtime,
             AtomicU64::new(0),
-            Mutex::default(),
+            AtomicU64::new(0),
         ))
     }
-    /// The model the most recent turn was bound to, if any turn was admitted in this run.
-    pub fn thinks_with(&self) -> Option<ModelSelection> {
-        self.3
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|(selection, _)| selection.clone())
-    }
-    /// Whether the most recent turn was bound to a cluster's AI connection.
-    pub fn thinks_on_cluster(&self) -> bool {
-        self.3
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|(_, cluster)| *cluster)
-    }
-    /// Forget local conversations without sending cleanup to either workspace.
-    pub fn retire_for_workspace_replacement(&self) {
-        let mut entries = self.0.lock().unwrap();
-        for entry in entries.values() {
-            entry.stop.send_replace(true);
-        }
-        self.2.fetch_add(1, Ordering::Relaxed);
-        entries.clear();
-    }
-    pub fn status(&self, id: DocumentId) -> ChatSnapshot {
+    /// The model this place's conversation last thought with, and whether on a cluster.
+    pub fn thinks_with_on(&self, id: DocumentId, place: &Place) -> Option<(ModelSelection, bool)> {
         self.0
             .lock()
             .unwrap()
-            .get(&id)
-            .map(|e| e.view.clone())
+            .get(&(id, place.clone()))
+            .and_then(|e| e.thinks.clone())
+    }
+    /// The model the local conversation last thought with (this computer).
+    pub fn thinks_with(&self) -> Option<ModelSelection> {
+        self.thinks_with_on(crate::navigator::CONVERSATION, &Place::ThisComputer)
+            .map(|(selection, _)| selection)
+    }
+    /// Forget local conversations without sending cleanup to either workspace. Cluster
+    /// conversations do not depend on the workspace and are kept.
+    pub fn retire_for_workspace_replacement(&self) {
+        let mut entries = self.0.lock().unwrap();
+        for ((_, place), entry) in entries.iter() {
+            if *place == Place::ThisComputer {
+                entry.stop.send_replace(true);
+            }
+        }
+        self.2.fetch_add(1, Ordering::Relaxed);
+        entries.retain(|(_, place), _| *place != Place::ThisComputer);
+    }
+    /// An empty conversation for a place that can't be read now, saying why.
+    pub fn unavailable(id: DocumentId, error: ChatError) -> ChatSnapshot {
+        let mut view = Entry::new(id).view;
+        view.can_send = false;
+        view.error = Some(error);
+        view
+    }
+    pub fn status(&self, id: DocumentId) -> ChatSnapshot {
+        self.status_at(id, &Place::ThisComputer, None)
+    }
+    /// The conversation of `channel`'s place. A cluster conversation started on another AI
+    /// connection is shown read-only until New.
+    pub fn status_on(&self, id: DocumentId, channel: &Channel) -> ChatSnapshot {
+        self.status_at(id, &channel.place(), channel.provider())
+    }
+    fn status_at(&self, id: DocumentId, place: &Place, provider: Option<&str>) -> ChatSnapshot {
+        self.0
+            .lock()
+            .unwrap()
+            .get(&(id, place.clone()))
+            .map(|e| e.snapshot(provider))
             .unwrap_or_else(|| Entry::new(id).view)
     }
     pub fn send(
@@ -316,6 +388,13 @@ impl ChatOwner {
             return Err(ChatError::InvalidMessage);
         }
         let mut entries = self.0.lock().unwrap();
+        let key = (id, channel.place());
+        if entries
+            .get(&key)
+            .is_some_and(|e| e.snapshot(channel.provider()).read_only)
+        {
+            return Err(ChatError::PlaceChanged);
+        }
         let lease = match &channel {
             // Retirement shares this lock: capture the lease and launch epoch together,
             // and admit nothing in the gap before the replacement VM is ready.
@@ -332,13 +411,17 @@ impl ChatOwner {
                 .try_lock_owned()
                 .map_err(|_| ChatError::Busy)?,
         };
-        let e = entries.entry(id).or_insert_with(|| Entry::new(id));
+        if !entries.contains_key(&key) {
+            self.make_room(&mut entries, &key);
+        }
+        let e = entries.entry(key.clone()).or_insert_with(|| Entry::new(id));
         if e.view.busy || e.lease.is_some() {
             return Err(ChatError::Busy);
         }
         if e.view.state == ChatState::ContextUnavailable {
             return Err(ChatError::ContextUnavailable);
         }
+        e.used = self.3.fetch_add(1, Ordering::Relaxed);
         e.lease = Some(Arc::new(lease));
         e.view.busy = true;
         e.view.can_send = false;
@@ -346,31 +429,66 @@ impl ChatOwner {
         e.view.error = None;
         e.view.denied = None;
         e.stop = watch::channel(false).0;
-        self.launch(channel, id, e, Some((source, message)));
+        self.launch(channel, key, e, Some((source, message)));
         Ok(e.view.clone())
+    }
+    /// Drops the least recently used idle conversation with nothing to settle when the cap is
+    /// reached. Its cluster resources are deleted or kept exactly as New would.
+    fn make_room(self: &Arc<Self>, entries: &mut HashMap<Key, Entry>, incoming: &Key) {
+        if entries.len() < MAX_CONVERSATIONS {
+            return;
+        }
+        let oldest = entries
+            .iter()
+            .filter(|(key, e)| *key != incoming && !e.view.busy && e.lease.is_none())
+            .min_by_key(|(_, e)| e.used)
+            .map(|(key, _)| key.clone());
+        if let Some(key) = oldest {
+            if let Some(mut dropped) = entries.remove(&key) {
+                if let Some(context) = dropped.context.take() {
+                    self.clean_up(key, context);
+                }
+            }
+        }
     }
     pub fn reconnect(
         self: &Arc<Self>,
         vm: Arc<LocalVm>,
         id: DocumentId,
     ) -> Result<ChatSnapshot, ChatError> {
-        self.resume(vm, id, false)
+        self.resume(Channel::Local(vm), id, false)
     }
     pub fn stop(
         self: &Arc<Self>,
         vm: Arc<LocalVm>,
         id: DocumentId,
     ) -> Result<ChatSnapshot, ChatError> {
-        self.resume(vm, id, true)
+        self.resume(Channel::Local(vm), id, true)
+    }
+    /// Reconnect or Stop the conversation of `channel`'s place, wherever its turn runs.
+    pub fn reconnect_on(
+        self: &Arc<Self>,
+        channel: Channel,
+        id: DocumentId,
+    ) -> Result<ChatSnapshot, ChatError> {
+        self.resume(channel, id, false)
+    }
+    pub fn stop_on(
+        self: &Arc<Self>,
+        channel: Channel,
+        id: DocumentId,
+    ) -> Result<ChatSnapshot, ChatError> {
+        self.resume(channel, id, true)
     }
     fn resume(
         self: &Arc<Self>,
-        vm: Arc<LocalVm>,
+        channel: Channel,
         id: DocumentId,
         stop: bool,
     ) -> Result<ChatSnapshot, ChatError> {
         let mut entries = self.0.lock().unwrap();
-        let e = entries.get_mut(&id).ok_or(ChatError::ContextUnavailable)?;
+        let key = (id, channel.place());
+        let e = entries.get_mut(&key).ok_or(ChatError::ContextUnavailable)?;
         if e.view.busy {
             if stop {
                 e.stop.send_replace(true);
@@ -381,6 +499,7 @@ impl ChatOwner {
         if e.lease.is_none() {
             return Err(ChatError::ContextUnavailable);
         }
+        e.used = self.3.fetch_add(1, Ordering::Relaxed);
         e.stop = watch::channel(stop).0;
         e.view.busy = true;
         e.view.error = None;
@@ -391,20 +510,37 @@ impl ChatOwner {
         // A retained cluster conversation keeps the channel it was admitted on.
         let channel = match e.context.as_ref().and_then(|c| c.cluster.clone()) {
             Some(cluster) => Channel::Cluster(cluster),
-            None => Channel::Local(vm),
+            None => channel,
         };
-        self.launch(channel, id, e, None);
+        self.launch(channel, key, e, None);
         Ok(e.view.clone())
     }
     pub fn new_conversation(self: &Arc<Self>, id: DocumentId) -> Result<ChatSnapshot, ChatError> {
+        self.new_at(id, Place::ThisComputer)
+    }
+    /// New on `channel`'s place only; other places' conversations are untouched.
+    pub fn new_conversation_on(
+        self: &Arc<Self>,
+        channel: &Channel,
+        id: DocumentId,
+    ) -> Result<ChatSnapshot, ChatError> {
+        self.new_at(id, channel.place())
+    }
+    fn new_at(self: &Arc<Self>, id: DocumentId, place: Place) -> Result<ChatSnapshot, ChatError> {
         let mut entries = self.0.lock().unwrap();
-        let e = entries.entry(id).or_insert_with(|| Entry::new(id));
+        let key = (id, place);
+        if !entries.contains_key(&key) {
+            self.make_room(&mut entries, &key);
+        }
+        let e = entries.entry(key.clone()).or_insert_with(|| Entry::new(id));
         if e.view.busy || e.lease.is_some() {
             return Err(ChatError::Busy);
         }
+        e.used = self.3.fetch_add(1, Ordering::Relaxed);
         if let Some(previous) = e.context.take() {
-            self.clean_up(id, previous);
+            self.clean_up(key, previous);
         }
+        e.thinks = None;
         e.view.state = ChatState::Ready;
         e.view.can_send = true;
         e.view.error = None;
@@ -415,7 +551,7 @@ impl ChatOwner {
     /// resource is identified by its generated name and, for the Task and Agent, the UID
     /// acknowledged at creation; a refusal leaves everything and is said once. Local
     /// conversations are only forgotten, as before.
-    fn clean_up(self: &Arc<Self>, id: DocumentId, context: Context) {
+    fn clean_up(self: &Arc<Self>, key: Key, context: Context) {
         let Some(cluster) = context.cluster.clone() else {
             return;
         };
@@ -424,22 +560,34 @@ impl ChatOwner {
         self.1.spawn(async move {
             let kept = clean_up_on(&cluster, &context).await;
             if kept {
-                owner.edit(id, epoch, |s| s.kept_on_cluster = true);
+                owner.edit(&key, epoch, |s| s.kept_on_cluster = true);
             }
         });
     }
-    fn edit(&self, id: DocumentId, epoch: u64, f: impl FnOnce(&mut ChatSnapshot)) {
+    /// Local edits are fenced by the workspace epoch; cluster conversations outlive it.
+    fn edit(&self, key: &Key, epoch: u64, f: impl FnOnce(&mut ChatSnapshot)) {
         let mut entries = self.0.lock().unwrap();
-        if self.2.load(Ordering::Relaxed) == epoch {
-            if let Some(entry) = entries.get_mut(&id) {
+        if key.1 != Place::ThisComputer || self.2.load(Ordering::Relaxed) == epoch {
+            if let Some(entry) = entries.get_mut(key) {
                 f(&mut entry.view);
             }
         }
     }
+    fn set_thinks(&self, key: &Key, epoch: u64, thinks: (ModelSelection, bool)) {
+        let mut entries = self.0.lock().unwrap();
+        if key.1 != Place::ThisComputer || self.2.load(Ordering::Relaxed) == epoch {
+            if let Some(entry) = entries.get_mut(key) {
+                entry.thinks = Some(thinks);
+            }
+        }
+    }
+    fn current(&self, key: &Key, epoch: u64) -> bool {
+        key.1 != Place::ThisComputer || self.2.load(Ordering::Relaxed) == epoch
+    }
     fn launch(
         self: &Arc<Self>,
         channel: Channel,
-        id: DocumentId,
+        id: Key,
         entry: &mut Entry,
         send: Option<(ChatSource, String)>,
     ) {
@@ -448,7 +596,7 @@ impl ChatOwner {
             owner: owner.clone(),
             channel,
             wire: None,
-            id,
+            id: id.clone(),
             epoch: self.2.load(Ordering::Relaxed),
             context: entry.context.take(),
             lease: entry.lease.take().unwrap(),
@@ -472,27 +620,49 @@ impl ChatOwner {
             let mut entries = owner.0.lock().unwrap();
             // Retirement can remove and recreate the same document while this
             // detached worker is awaiting a response. Never restore its old lease.
-            if owner.2.load(Ordering::Relaxed) != worker.epoch {
+            if !owner.current(&id, worker.epoch) {
                 return;
             }
             let Some(e) = entries.get_mut(&id) else {
                 return;
             };
+            // A refusal that created nothing ends the turn plainly, never as unconfirmed; the
+            // next message starts a fresh conversation instead of resuming this one.
+            let refused = worker.safe
+                && result.as_ref().err().is_some_and(|error| {
+                    matches!(
+                        error,
+                        ChatError::Permission
+                            | ChatError::SessionsUnsupported
+                            | ChatError::WorkspaceOutdated
+                            | ChatError::WorkspaceUnavailable
+                            | ChatError::ClusterUnavailable
+                    )
+                });
+            // Before preflight passes, the previous conversation is still the one held.
+            if refused && !worker.preflight {
+                if let Some(context) = worker.context.as_mut() {
+                    context.broken = true;
+                }
+            }
             if let Err(error) = result {
                 e.view.error = Some(error);
-                e.view.state = if worker.preflight
-                    && matches!(
-                        error,
-                        ChatError::InvalidMessage
-                            | ChatError::Source
-                            | ChatError::UnsupportedTool
-                            | ChatError::Model
-                            | ChatError::Connection
-                            | ChatError::Interrupted
-                            | ChatError::Permission
-                            | ChatError::SessionsUnsupported
-                            | ChatError::ClusterUnavailable
-                    ) {
+                e.view.state = if refused
+                    || worker.preflight
+                        && matches!(
+                            error,
+                            ChatError::InvalidMessage
+                                | ChatError::Source
+                                | ChatError::UnsupportedTool
+                                | ChatError::Model
+                                | ChatError::Connection
+                                | ChatError::Interrupted
+                                | ChatError::Permission
+                                | ChatError::SessionsUnsupported
+                                | ChatError::ClusterUnavailable
+                                | ChatError::WorkspaceOutdated
+                                | ChatError::WorkspaceUnavailable
+                        ) {
                     ChatState::Ready
                 } else if worker.safe || error == ChatError::WorkspaceChanged {
                     ChatState::ContextUnavailable
@@ -512,7 +682,7 @@ impl ChatOwner {
             } else {
                 Some(worker.lease)
             };
-            e.finish(worker.safe, result.is_ok());
+            e.finish(worker.safe, result.is_ok() || refused);
         });
     }
 }
@@ -521,7 +691,7 @@ struct Worker {
     channel: Channel,
     /// A cluster conversation's connection for this one worker run.
     wire: Option<Arc<dyn ClusterWire>>,
-    id: DocumentId,
+    id: Key,
     epoch: u64,
     context: Option<Context>,
     lease: Arc<OwnedMutexGuard<()>>,
@@ -533,10 +703,10 @@ struct Worker {
 }
 impl Worker {
     fn state(&self, state: ChatState) {
-        self.owner.edit(self.id, self.epoch, |s| s.state = state);
+        self.owner.edit(&self.id, self.epoch, |s| s.state = state);
     }
     fn turn(&self, f: impl FnOnce(&mut ChatTurn)) {
-        self.owner.edit(self.id, self.epoch, |s| {
+        self.owner.edit(&self.id, self.epoch, |s| {
             if let Some(t) = s.versions.last_mut().and_then(|v| v.turns.last_mut()) {
                 f(t);
             }
@@ -619,7 +789,7 @@ impl Worker {
             Channel::Cluster(cluster) => Some(cluster),
         }
     }
-    async fn binding(&self, retained: bool) -> Result<Binding, ChatError> {
+    async fn binding(&self, retained: bool, navigator: bool) -> Result<Binding, ChatError> {
         let previous = self
             .context
             .as_ref()
@@ -641,7 +811,12 @@ impl Worker {
             if let Some(binding) = &previous {
                 return Ok(binding.clone());
             }
-            let model = client.model_status().map_err(|_| ChatError::Connection)?;
+            // A guest that predates the Navigator's names stops serving its channel on the
+            // first such request, so none is ever sent to it.
+            if navigator && !client.navigator_chat() {
+                return Err(ChatError::WorkspaceOutdated);
+            }
+            let model = client.model_status().map_err(|_| lost(client))?;
             if model.phase != ModelPhase::Ready {
                 return Err(ChatError::Model);
             }
@@ -657,9 +832,10 @@ impl Worker {
         let Some(cluster) = self.cluster() else {
             return self
                 .borrow(true, move |_, client| {
-                    client
-                        .chat_request(r.clone())
-                        .map_err(|_| ChatError::Connection)
+                    if r.navigator() && !client.navigator_chat() {
+                        return Err(ChatError::WorkspaceOutdated);
+                    }
+                    client.chat_request(r.clone()).map_err(|_| lost(client))
                 })
                 .await;
         };
@@ -670,9 +846,6 @@ impl Worker {
         if Instant::now() >= self.deadline {
             return Err(ChatError::Connection);
         }
-        if self.owner.2.load(Ordering::Relaxed) != self.epoch {
-            return Err(ChatError::WorkspaceChanged);
-        }
         let wire = self.wire.as_ref().ok_or(ChatError::ClusterUnavailable)?;
         let sent = crate::chat_cluster::send(&**wire, &cluster.namespace, &cluster.provider, &r);
         match tokio::time::timeout_at(self.deadline, sent).await {
@@ -681,7 +854,7 @@ impl Worker {
             Ok(Err(Refusal::Failed(error))) => Err(error),
             Ok(Err(Refusal::Denied(permission))) => {
                 self.owner
-                    .edit(self.id, self.epoch, |s| s.denied = Some(permission));
+                    .edit(&self.id, self.epoch, |s| s.denied = Some(permission));
                 Err(ChatError::Permission)
             }
         }
@@ -709,9 +882,11 @@ impl Worker {
     }
     async fn run(&mut self, send: Option<(ChatSource, String)>) -> Result<(), ChatError> {
         // Identify the boot before sending *any* retained name, including during reconnect.
-        let binding = self.binding(send.is_none()).await?;
+        let navigator = matches!(send, Some((ChatSource::Navigator(_), _)));
+        let binding = self.binding(send.is_none(), navigator).await?;
         if let Binding::Local { connection, .. } = &binding {
-            *self.owner.3.lock().unwrap() = Some((connection.selection.clone(), false));
+            self.owner
+                .set_thinks(&self.id, self.epoch, (connection.selection.clone(), false));
         }
         if let Some((origin, message)) = send {
             let family = origin.family();
@@ -751,12 +926,13 @@ impl Worker {
                     provider: provider.clone(),
                     model: parsed.model().to_owned(),
                 };
-                *self.owner.3.lock().unwrap() = Some((selection, true));
+                self.owner
+                    .set_thinks(&self.id, self.epoch, (selection, true));
             }
             let fresh = self
                 .context
                 .as_ref()
-                .is_none_or(|c| c.source != source || c.binding != binding);
+                .is_none_or(|c| c.broken || c.source != source || c.binding != binding);
             let session = if fresh {
                 format!("{}{}", family.session, Uuid::new_v4().simple())
             } else {
@@ -800,7 +976,7 @@ impl Worker {
             if fresh {
                 // A replaced cluster conversation's resources are deleted when the role allows.
                 if let Some(previous) = self.context.take() {
-                    self.owner.clean_up(self.id, previous);
+                    self.owner.clean_up(self.id.clone(), previous);
                 }
             } else if let Some(previous) = self.context.take() {
                 earlier = previous.earlier;
@@ -817,8 +993,9 @@ impl Worker {
                 stopping: false,
                 cluster: self.cluster().cloned(),
                 earlier,
+                broken: false,
             });
-            self.owner.edit(self.id, self.epoch, |s| {
+            self.owner.edit(&self.id, self.epoch, |s| {
                 if fresh {
                     s.versions.push(ChatVersion::default());
                 }
@@ -1220,7 +1397,7 @@ impl Worker {
             .map(|m| m.content.as_str());
         let turn = {
             let entries = self.owner.0.lock().unwrap();
-            if self.owner.2.load(Ordering::Relaxed) != self.epoch {
+            if !self.owner.current(&self.id, self.epoch) {
                 return Err(ChatError::WorkspaceChanged);
             }
             entries
@@ -1307,6 +1484,14 @@ async fn finish(wire: &dyn ClusterWire, kept: bool) -> bool {
     wire.close().await;
     kept
 }
+/// A failed local request is a lost connection, or a workspace that stopped serving entirely.
+fn lost(client: &crate::runtime::client::VmClient) -> ChatError {
+    if client.closed() {
+        ChatError::WorkspaceUnavailable
+    } else {
+        ChatError::Connection
+    }
+}
 fn unix_millis() -> u64 {
     u64::try_from(
         SystemTime::now()
@@ -1348,7 +1533,11 @@ mod tests {
             }],
         });
         let stop = entry.stop.subscribe();
-        owner.0.lock().unwrap().insert(id, entry);
+        owner
+            .0
+            .lock()
+            .unwrap()
+            .insert((id, Place::ThisComputer), entry);
         assert!(vm.try_authoring().is_none());
         owner.retire_for_workspace_replacement();
         assert!(*stop.borrow());
@@ -1366,7 +1555,7 @@ mod tests {
             owner: owner.clone(),
             channel: Channel::Local(vm.clone()),
             wire: None,
-            id,
+            id: (id, Place::ThisComputer),
             epoch: owner.2.load(std::sync::atomic::Ordering::Relaxed),
             context: None,
             lease: Arc::new(vm.try_authoring().unwrap()),
@@ -1376,7 +1565,11 @@ mod tests {
             safe: true,
             preflight: true,
         };
-        owner.0.lock().unwrap().insert(id, Entry::new(id));
+        owner
+            .0
+            .lock()
+            .unwrap()
+            .insert((id, Place::ThisComputer), Entry::new(id));
         owner.retire_for_workspace_replacement();
         // Missing entries as well as a recreated document must reject old edits.
         worker.state(ChatState::Working);
@@ -1388,7 +1581,7 @@ mod tests {
         assert!(fresh.versions.is_empty());
         // Current-epoch edits retain their original semantics.
         owner.edit(
-            id,
+            &(id, Place::ThisComputer),
             owner.2.load(std::sync::atomic::Ordering::Relaxed),
             |s| s.state = ChatState::Working,
         );
@@ -1404,11 +1597,13 @@ mod tests {
         // Exercise detached finalization without requiring a running VM.
         {
             let mut entries = owner.0.lock().unwrap();
-            let entry = entries.entry(id).or_insert_with(|| Entry::new(id));
+            let entry = entries
+                .entry((id, Place::ThisComputer))
+                .or_insert_with(|| Entry::new(id));
             entry.lease = Some(Arc::new(vm.try_authoring().unwrap()));
             owner.launch(
                 Channel::Local(vm.clone()),
-                id,
+                (id, Place::ThisComputer),
                 entry,
                 Some((ChatSource::Document(folder), "old message".into())),
             );

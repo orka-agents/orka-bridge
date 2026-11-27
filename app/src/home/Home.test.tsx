@@ -14,10 +14,11 @@ const turn = (message: string, answer: string | null, extra: Partial<Turn> = {})
 const card = (value: unknown) => '```navigator-card\n' + JSON.stringify(value) + '\n```';
 const webReader = '---\nname: web-reader\ndescription: Answers from the web page named in the request\nmodel: gpt-5.6-terra\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools: []\n---\nRead pages.';
 
-let nav: { turns: Turn[]; busy: boolean; state: string; error: string | null; cluster?: boolean };
+// `refuse`: navigator_send throws this native error. `settle`: it is accepted, then ends with this error and no turn.
+let nav: { turns: Turn[]; busy: boolean; state: string; error: string | null; cluster?: boolean; tooOld?: boolean; refuse?: string; settle?: string; denied?: string | null };
 let task: { turns: Turn[]; busy: boolean };
 const calls: { command: string; args: Record<string, unknown> }[] = [];
-const navSnapshot = () => ({ chat: { documentId: NAVIGATOR_ID, state: nav.state, busy: nav.busy, canSend: !nav.busy, versions: [{ turns: nav.turns }], error: nav.error, denied: null, keptOnCluster: false }, thinksWith: nav.cluster ? { kind: 'cluster', model: 'fixture-model' } : { kind: 'copilot', model: 'gpt-5.6-terra' } });
+const navSnapshot = () => ({ chat: { documentId: NAVIGATOR_ID, state: nav.state, busy: nav.busy, canSend: !nav.busy, versions: [{ turns: nav.turns }], error: nav.error, denied: nav.denied ?? null, keptOnCluster: false, readOnly: false }, thinksWith: nav.cluster ? { kind: 'cluster', model: 'fixture-model' } : { kind: 'copilot', model: 'gpt-5.6-terra' }, workspaceTooOld: !!nav.tooOld });
 beforeEach(() => {
   resetConversation(); calls.length = 0;
   nav = { turns: [], busy: false, state: 'ready', error: null }; task = { turns: [], busy: false };
@@ -29,13 +30,23 @@ beforeEach(() => {
       case 'agents_list': return [{ id: SAMPLE_DOCUMENT_ID, name: 'web-reader', path: null, available: true }];
       case 'agent_open': return { documentId: SAMPLE_DOCUMENT_ID, name: 'web-reader', agent: webReader, tests, source: { agent: 'a'.repeat(64), tests: 'b'.repeat(64) } };
       case 'navigator_status': case 'navigator_reconnect': return navSnapshot();
-      case 'navigator_send': nav.turns.push(turn(String(args.message), null)); nav.busy = true; nav.state = 'working'; nav.cluster = 'targetId' in args; return navSnapshot();
+      case 'navigator_send': {
+        if (nav.refuse) throw nav.refuse;
+        nav.cluster = 'targetId' in args;
+        if (nav.settle) {
+          const error = nav.settle; nav.busy = true; nav.state = 'preparing';
+          const reply = navSnapshot();
+          setTimeout(() => { nav.busy = false; nav.state = 'ready'; nav.error = error; nav.denied = error === 'permission' ? 'createAgents' : null; }, 0);
+          return reply;
+        }
+        nav.turns.push(turn(String(args.message), null)); nav.busy = true; nav.state = 'working'; return navSnapshot();
+      }
       case 'navigator_stop': nav.turns.at(-1)!.terminationUnconfirmed = true; nav.busy = false; nav.state = 'ready'; return navSnapshot();
       case 'navigator_new': return navSnapshot();
-      case 'agent_chat_status': case 'agent_chat_new': return { documentId: args.documentId, state: task.busy ? 'working' : 'ready', busy: task.busy, canSend: !task.busy, versions: [{ turns: task.turns }], error: null, denied: null, keptOnCluster: false };
+      case 'agent_chat_status': case 'agent_chat_new': return { documentId: args.documentId, state: task.busy ? 'working' : 'ready', busy: task.busy, canSend: !task.busy, versions: [{ turns: task.turns }], error: null, denied: null, keptOnCluster: false, readOnly: false };
       case 'agent_chat_send':
         task.turns.push(turn(String(args.message), null, { phase: 'Pending', startedAt: Date.now() })); task.busy = true;
-        return { documentId: args.documentId, state: 'working', busy: true, canSend: false, versions: [{ turns: task.turns }], error: null, denied: null, keptOnCluster: false };
+        return { documentId: args.documentId, state: 'working', busy: true, canSend: false, versions: [{ turns: task.turns }], error: null, denied: null, keptOnCluster: false, readOnly: false };
       default: throw Error(`unexpected ${command}`);
     }
   });
@@ -232,4 +243,109 @@ test('a conversation forgotten by a replaced workspace starts over instead of hi
   home();
   expect(await screen.findByText('A new answer.')).toBeTruthy();
   expect(conversationState()).toEqual({ startVersion: 0, cards: {} });
+});
+
+// A message that fails, for any reason, stays on screen with why; nothing silently resets to the start.
+const failures: { kind: string; refuse?: string; settle?: string; says: string }[] = [
+  { kind: 'connection', refuse: 'connection', says: 'The Navigator couldn’t be reached. Nothing was created or changed. Try again.' },
+  { kind: 'lost workspace', settle: 'workspaceUnavailable', says: 'The workspace on this computer stopped answering. Quit Bridge and open it again to restart the workspace. Your agents and files are kept.' },
+  { kind: 'permission', settle: 'permission', says: 'Your access to this cluster doesn’t allow “create agents” in its namespace. Ask the cluster’s administrator to add it.' },
+  { kind: 'model', refuse: 'model', says: 'Connect the AI in Clusters, then try again.' },
+  { kind: 'unsupported', settle: 'workspaceOutdated', says: 'The workspace on this computer is older than this Bridge and can’t run the Navigator yet. Nothing was sent to it.' },
+  { kind: 'storage', refuse: 'source', says: 'Bridge could not prepare the Navigator. Try again.' },
+];
+for (const failure of failures) test(`a ${failure.kind} failure keeps the message and says why`, async () => {
+  nav.refuse = failure.refuse; nav.settle = failure.settle;
+  const user = userEvent.setup(); home();
+  const field = await screen.findByRole('textbox', { name: 'Message' });
+  await screen.findByText('gpt-5.6-terra', { exact: false });
+  await user.type(field, 'whats going on');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  const turn = await screen.findByRole('article', { name: 'Not sent' });
+  expect(within(turn).getByRole('alert').textContent).toBe(`Not sent.${failure.says}`);
+  expect(screen.getByText('whats going on', { selector: '.nav-user' })).toBeTruthy();
+  expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).value).toBe('whats going on');
+  // Home did not go back to its start.
+  expect(document.querySelector('.home-start')).toBeNull();
+});
+
+test('an uncertain send keeps the message waiting and says to check again', async () => {
+  nav.refuse = 'not a native error';
+  const user = userEvent.setup(); home();
+  await user.type(await screen.findByRole('textbox', { name: 'Message' }), 'whats going on');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  expect((await screen.findByRole('alert')).textContent).toBe('The Navigator’s reply could not be confirmed. Reconnect to check again without sending it again.');
+  expect(screen.getByText('whats going on', { selector: '.nav-user' })).toBeTruthy();
+});
+
+test('a starter that fails behaves exactly as typing its text and sending', async () => {
+  nav.refuse = 'connection';
+  const user = userEvent.setup(); home();
+  const starter = await screen.findByRole('button', { name: 'Create a task' });
+  await waitFor(() => expect(starter.matches(':disabled')).toBe(false));
+  await user.click(starter);
+  expect(await screen.findByRole('article', { name: 'Not sent' })).toBeTruthy();
+  expect(screen.getByText('I want to give one of my agents a task.', { selector: '.nav-user' })).toBeTruthy();
+  expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).value).toBe('I want to give one of my agents a task.');
+  nav.refuse = undefined;
+  await user.click(screen.getByRole('button', { name: 'Try again' }));
+  await waitFor(() => expect(calls.filter(call => call.command === 'navigator_send').map(call => call.args.message)).toEqual(['I want to give one of my agents a task.', 'I want to give one of my agents a task.']));
+  expect(screen.queryByRole('article', { name: 'Not sent' })).toBeNull();
+});
+
+test('a workspace too old for the Navigator says so before anything is sent, and lists the routes that work', async () => {
+  nav.tooOld = true;
+  const user = userEvent.setup(); const choose = vi.fn();
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn(), onThisComputer: vi.fn() };
+  render(<main aria-labelledby="page-title"><Home active revision={0} gate={ready} {...handlers} switchTo={{ name: 'team-dev', choose }} /></main>);
+  expect(await screen.findByRole('heading', { name: 'The workspace on this computer is older than this Bridge.' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Send' }).matches(':disabled')).toBe(true);
+  for (const starter of within(screen.getByRole('group', { name: 'Or start with' })).getAllByRole('button')) expect(starter.matches(':disabled')).toBe(true);
+  expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+  expect(screen.queryByText(/Start a fresh workspace/)).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Switch to team-dev' }));
+  await user.click(screen.getByRole('button', { name: 'Open Designer' }));
+  expect(choose).toHaveBeenCalledOnce();
+  expect(handlers.onOpenPage).toHaveBeenCalledWith('Designer');
+  expect(calls.some(call => call.command === 'navigator_send')).toBe(false);
+});
+
+test('each place has its own conversation: switching shows that place\'s turns and sends there', async () => {
+  const places: Record<string, Turn[]> = { '': [turn('Here first', 'An answer here.')], [cluster.targetId]: [] };
+  mockIPC((command, raw) => {
+    const args = (raw ?? {}) as Record<string, unknown>;
+    calls.push({ command, args });
+    const key = typeof args.targetId === 'string' ? args.targetId : '';
+    const reply = () => ({ chat: { documentId: NAVIGATOR_ID, state: 'ready', busy: false, canSend: true, versions: [{ turns: places[key] }], error: null, denied: null, keptOnCluster: false, readOnly: false },
+      thinksWith: !key ? { kind: 'copilot', model: 'gpt-5.6-terra' } : places[key].length ? { kind: 'cluster', model: 'fixture-model' } : null, workspaceTooOld: false });
+    if (command === 'navigator_send') places[key].push(turn(String(args.message), 'Answered on ' + (key ? 'team-dev.' : 'this computer.')));
+    if (command.startsWith('navigator_')) return reply();
+    if (command === 'agents_list') return [];
+    throw Error(`unexpected ${command}`);
+  });
+  const user = userEvent.setup();
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn(), onThisComputer: vi.fn() };
+  const view = (gate: NavigatorGate) => <main aria-labelledby="page-title"><Home active revision={0} gate={gate} {...handlers} /></main>;
+  const { rerender } = render(view(ready));
+  expect(await screen.findByText('An answer here.')).toBeTruthy();
+  await waitFor(() => expect(document.querySelector('.nav-line')?.textContent).toBe('Navigator · runs on this computer · thinks with GitHub Copilot · gpt-5.6-terra'));
+  rerender(view({ kind: 'ready', place: cluster }));
+  expect(await screen.findByRole('heading', { name: 'What do you want done?' })).toBeTruthy();
+  expect(screen.queryByText('An answer here.')).toBeNull();
+  expect(document.querySelector('.nav-line')?.textContent).toBe('Navigator · runs on team-dev');
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'On the cluster');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send' }).matches(':disabled')).toBe(false));
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  expect(await screen.findByText('Answered on team-dev.')).toBeTruthy();
+  expect(calls.find(call => call.command === 'navigator_send')?.args).toEqual({ message: 'On the cluster', targetId: cluster.targetId, providerId: cluster.providerId });
+  rerender(view(ready));
+  expect(await screen.findByText('An answer here.')).toBeTruthy();
+  expect(screen.queryByText('Answered on team-dev.')).toBeNull();
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Back here');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send' }).matches(':disabled')).toBe(false));
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  expect(await screen.findByText('Answered on this computer.')).toBeTruthy();
+  expect(calls.filter(call => call.command === 'navigator_send').at(-1)?.args).toEqual({ message: 'Back here' });
+  expect(places[cluster.targetId].map(t => t.message)).toEqual(['On the cluster']);
+  expect(calls.some(call => call.command === 'navigator_new')).toBe(false);
 });

@@ -63,6 +63,11 @@ pub struct StageHello {
     pub accepted_boot_nonce: Option<Uuid>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub run_cleanup: bool,
+    /// The guest accepts the Navigator's `bridge-nav-*` Chat family. A guest that predates the
+    /// family never sends it, so it reads as false: such a guest treats a Navigator request as
+    /// an invalid frame and stops serving its channel.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub navigator_chat: bool,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
@@ -244,7 +249,9 @@ pub fn validate_hello(hello: &StageHello, stage: Stage, nonce: Uuid) -> Result<(
     if hello.version != VERSION {
         return Err(ProtocolError::Version);
     }
-    if hello.stage != stage || (stage == Stage::Early && hello.run_cleanup) {
+    if hello.stage != stage
+        || (stage == Stage::Early && (hello.run_cleanup || hello.navigator_chat))
+    {
         return Err(ProtocolError::Stage);
     }
     if hello.guest_nonce.is_nil()

@@ -186,6 +186,22 @@ leaves the earlier conversation's resources on the cluster, and Bridge says so
 once. Quitting Bridge deletes nothing: the last conversation's Agent, Tasks and
 Session stay in the namespace.
 
+Each place keeps its own conversation, for Try a task and for the Navigator:
+this computer has one, and each cluster has one by its remembered place.
+Switching the selected place shows that place's conversation, or an empty one,
+and never continues or confirms another place's turns; nothing is deleted on a
+switch. A turn on a place that is no longer selected keeps running, and Stop
+reaches it when you return. A cluster conversation started on another AI
+connection is shown read-only until New conversation. Bridge keeps up to eight
+conversations while it is open; beyond that it drops the least recently used
+idle one, and a dropped cluster conversation's resources are deleted, or kept
+and said, exactly as New conversation would.
+
+The Navigator runs on this computer only when the installed workspace says it
+accepts the Navigator's `bridge-nav-*` names. A workspace from an earlier
+release does not, so Bridge sends it nothing and Home says the workspace is too
+old, offering a cluster connected in this run and Designer instead.
+
 ### Observer
 
 An observer can read Agents, Tasks and Sessions in each explicitly enrolled

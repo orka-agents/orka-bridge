@@ -18,18 +18,27 @@ export type ConversationState = {
   cards: Record<string, CardRecord>;
 };
 
-let state: ConversationState = { startVersion: 0, cards: {} };
+// One conversation per place, like the native ones: '' is this computer, otherwise the cluster target and AI connection.
+const empty: ConversationState = { startVersion: 0, cards: {} };
+let places: Record<string, ConversationState> = {};
+let selected = '';
 const listeners = new Set<() => void>();
-export function conversationState() { return state; }
+const notify = () => { for (const listener of listeners) listener(); };
+export function conversationState() { return places[selected] ?? empty; }
+// Home shows the conversation of the selected place; switching never changes another place's record.
+export function selectConversationPlace(key: string) {
+  if (key === selected) return;
+  selected = key; notify();
+}
 export function updateConversation(change: (current: ConversationState) => ConversationState) {
-  state = change(state);
-  for (const listener of listeners) listener();
+  places = { ...places, [selected]: change(conversationState()) };
+  notify();
 }
 export function updateCard(key: string, change: (current: CardRecord) => CardRecord) {
   updateConversation(current => ({ ...current, cards: { ...current.cards, [key]: change(current.cards[key] ?? { status: 'proposed' }) } }));
 }
-// Tests start each case from an empty conversation.
-export function resetConversation() { state = { startVersion: 0, cards: {} }; for (const listener of listeners) listener(); }
+// Tests start each case from an empty conversation on this computer.
+export function resetConversation() { places = {}; selected = ''; notify(); }
 export function useConversation() {
   return useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, conversationState);
 }

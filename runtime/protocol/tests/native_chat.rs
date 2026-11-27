@@ -32,6 +32,8 @@ pub mod navigator;
 pub mod overview;
 #[path = "../../../app/src-tauri/src/pair_source.rs"]
 pub mod pair_source;
+#[path = "../../../app/src-tauri/tests/native_chat_places.rs"]
+mod place_tests;
 #[path = "../../../app/src-tauri/src/runtime/mod.rs"]
 pub mod runtime;
 #[path = "../../../app/src-tauri/src/setup.rs"]

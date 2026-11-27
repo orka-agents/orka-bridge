@@ -90,6 +90,7 @@ fn buffered_handoff(cleanup: bool) {
                 stage,
                 guest_nonce: guest,
                 run_cleanup: cleanup && stage == Stage::Serve,
+                navigator_chat: false,
                 accepted_boot_nonce: if stage == Stage::Serve {
                     Some(nonce)
                 } else {
@@ -616,6 +617,7 @@ fn hello(stage: Stage, nonce: Uuid, guest: u128) -> StageHello {
         stage,
         guest_nonce: Uuid::from_u128(guest),
         run_cleanup: false,
+        navigator_chat: false,
         accepted_boot_nonce: if stage == Stage::Serve {
             Some(nonce)
         } else {

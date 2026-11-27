@@ -37,6 +37,7 @@ impl ChatFixture {
                 error: None,
                 denied: None,
                 kept_on_cluster: false,
+                read_only: false,
             },
             started: None,
             fresh: true,

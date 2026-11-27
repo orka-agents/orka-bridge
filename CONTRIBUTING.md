@@ -71,6 +71,7 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `navTask` | A proposed task card; Edit, then Create task runs it to Succeeded; Stop task while it runs cancels it | Opens there |
 | `navTaskFails` | As `navTask`, but the task fails | Opens there, then Create task |
 | `navAgent` | A proposed agent card; Create agent writes the file | Opens there |
+| `navTooOld` | The workspace on this computer is too old for the Navigator: the message box and starters are disabled, with Open Designer (and Switch to a cluster connected in this run) | Opens there |
 
 The Navigator answers in every scenario with the AI connected, with scripted replies chosen by the question: a link or checksum gets a task card, "agent" an agent card, "new to Orka" an explanation, and a repo, monitor or charter question an explanation with no card, as Bridge can't set those up yet. It runs on the selected place: in `clusterReady`, choose `team-dev` in the Orka switcher and the Navigator and Try a task run there; in `clusterUnreachable` it shows the can't-reach card.
 

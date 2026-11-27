@@ -951,6 +951,7 @@ async fn fixture_with_model(
             guest_nonce: Uuid::new_v4(),
             accepted_boot_nonce: Some(id),
             run_cleanup: cleanup_reply.is_some(),
+            navigator_chat: false,
         },
     )
     .unwrap();

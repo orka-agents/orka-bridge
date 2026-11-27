@@ -26,9 +26,9 @@ function native(options: { runStatus: 'connected' | 'disconnected' | 'unreadable
       const connected = options.runStatus === 'connected';
       return { documentId, busy: null, state: 'idle', canRun: connected, modelConnected: connected, report: null, acknowledged: [], pending: null, error: null };
     }
-    if (command === 'agent_chat_status') return { documentId, state: 'ready', busy: false, canSend: true, versions: [{ turns: [] }], error: null, denied: null, keptOnCluster: false };
-    if (command === 'navigator_status') return { chat: { documentId: NAVIGATOR_ID, state: 'ready', busy: false, canSend: true, error: null, denied: null, keptOnCluster: false,
-      versions: [{ turns: options.navigator ? [{ message: 'Read it', answer: options.navigator, phase: 'Succeeded', tools: [], contextRetained: true, terminationUnconfirmed: false, stopUnconfirmed: false, startedAt: 1_700_000_000_000, finishedAt: 1_700_000_003_000 }] : [] }] }, thinksWith: null };
+    if (command === 'agent_chat_status') return { documentId, state: 'ready', busy: false, canSend: true, versions: [{ turns: [] }], error: null, denied: null, keptOnCluster: false, readOnly: false };
+    if (command === 'navigator_status') return { chat: { documentId: NAVIGATOR_ID, state: 'ready', busy: false, canSend: true, error: null, denied: null, keptOnCluster: false, readOnly: false,
+      versions: [{ turns: options.navigator ? [{ message: 'Read it', answer: options.navigator, phase: 'Succeeded', tools: [], contextRetained: true, terminationUnconfirmed: false, stopUnconfirmed: false, startedAt: 1_700_000_000_000, finishedAt: 1_700_000_003_000 }] : [] }] }, thinksWith: null, workspaceTooOld: false };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
 }

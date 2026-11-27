@@ -5,7 +5,7 @@ import TryTask, { duration } from './TryTask';
 import { readFileSync } from 'node:fs';
 import type { ChatSnapshot, ChatTurn } from './chat-api';
 const id = '9b2b93c4-375c-4815-9717-39852a96e411';
-const idle: ChatSnapshot = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
+const idle: ChatSnapshot = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false, readOnly: false };
 const turn: ChatTurn = { message: 'Hello', answer: 'Hello back', phase: 'Succeeded', tools: [], contextRetained: true, terminationUnconfirmed: false, stopUnconfirmed: false, startedAt: 1_700_000_000_000, finishedAt: 1_700_000_012_000 };
 let snapshot: ChatSnapshot; let calls: { command: string; args: Record<string, unknown> }[];
 let send: (() => unknown) | undefined; let renew: (() => unknown) | undefined;
@@ -163,7 +163,7 @@ test('a pre-turn observation loss keeps acknowledgement through native reconnect
 test('ready-state connection preflight failure offers a safe retry, not an impossible reconnect', async () => {
   snapshot = { ...idle, error: 'connection' }; await open();
   expect(screen.queryByText(/do not run the task again/i)).toBeNull();
-  expect(screen.getByRole('alert').textContent).toContain('try running the task again');
+  expect(screen.getByRole('alert').textContent).toBe('The workspace on this computer didn’t answer. Run the task again. If it keeps happening, quit Bridge and open it again to restart the workspace.');
   expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
 });
 test('background status polling does not immediately erase an actionable admission error', async () => {
@@ -564,7 +564,7 @@ test('on a cluster a task is sent there by its ids and the composer says where i
   await enter('Read it');
   expect(sends().map(c => c.args)).toEqual([{ documentId: id, message: 'Read it', targetId: place.targetId, providerId: place.providerId }]);
   // Stop and New act on the conversation where it started: they name no place.
-  expect(calls.find(c => c.command === 'agent_chat_new')?.args).toEqual({ documentId: id });
+  expect(calls.find(c => c.command === 'agent_chat_new')?.args).toEqual({ documentId: id, targetId: place.targetId, providerId: place.providerId });
 });
 test.each([
   [{ error: 'permission', denied: 'deleteTasks' }, 'Your access to this cluster doesn’t allow “delete tasks” in its namespace. Ask the cluster’s administrator to add it.'],
@@ -582,4 +582,30 @@ test('a cluster that kept earlier tasks says so once, and About names what Quit 
   expect(screen.getAllByText('Earlier tasks stay on team-dev: your access there doesn’t allow Bridge to delete them.')).toHaveLength(1);
   const about = screen.getByText('About tasks here').closest('details')!;
   expect(about.textContent).toContain('Quitting Bridge leaves the last task there.');
+});
+
+// A task that fails, for any reason, stays in the field with why; nothing silently resets.
+const taskFailures: { kind: string; refuse?: string; settle?: ChatSnapshot['error']; says: string }[] = [
+  { kind: 'connection', settle: 'connection', says: 'The workspace on this computer didn’t answer. Run the task again. If it keeps happening, quit Bridge and open it again to restart the workspace.' },
+  { kind: 'lost workspace', settle: 'workspaceUnavailable', says: 'The workspace on this computer stopped answering. Quit Bridge and open it again to restart the workspace. Your agents and files are kept.' },
+  { kind: 'permission', settle: 'permission', says: 'Your access to this cluster doesn’t allow “create tasks” in its namespace. Ask the cluster’s administrator to add it.' },
+  { kind: 'model', refuse: 'model', says: 'Connect the AI in Clusters and check the model in your agent file.' },
+  { kind: 'unsupported', settle: 'sessionsUnsupported', says: 'This cluster’s Orka is too old for Try a task. It needs Orka v0.4.0 or later.' },
+  { kind: 'storage', refuse: 'source', says: 'Check your saved agent file before trying again.' },
+  { kind: 'uncertain', refuse: 'not a native error', says: 'Task information could not be confirmed. Reconnect to check again without running it again.' },
+];
+for (const failure of taskFailures) test(`a ${failure.kind} failure keeps the task and says why`, async () => {
+  if (failure.refuse) { const refuse = failure.refuse; send = () => Promise.reject(refuse); }
+  else send = () => { snapshot = { ...idle, state: 'preparing', busy: true, canSend: false }; return structuredClone(snapshot); };
+  await open(); await enter('whats going on');
+  if (failure.settle) { snapshot = { ...idle, error: failure.settle, denied: failure.settle === 'permission' ? 'createTasks' : null }; await poll(); }
+  expect(field().value).toBe('whats going on');
+  expect(screen.getByRole('alert').textContent).toBe(failure.says);
+});
+test('another AI connection\'s conversation is shown read-only, and the next task starts fresh', async () => {
+  snapshot = { ...idle, canSend: false, readOnly: true, versions: [{ turns: [turn] }] };
+  render(<TryTask documentId={id} agentName="web-reader" place={{ name: 'team-dev', targetId: 'a', providerId: 'b' }} />); await settle();
+  expect(screen.getByText('This task ran with another AI connection on team-dev. The next task starts fresh with the one chosen now.')).toBeTruthy();
+  await enter('Next');
+  expect(commands().slice(0, 2)).toEqual(['agent_chat_new', 'agent_chat_send']);
 });

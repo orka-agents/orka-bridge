@@ -22,7 +22,7 @@ function native(extra?: (command: string) => unknown) {
     if (command === 'agent_run_status') return { ...idle, documentId: args.documentId };
     if (command === 'send_status') return { documentId: args.documentId, view: null, busy: null };
     if (command === 'send_history') return [];
-    if (command === 'agent_chat_status') return { documentId: args.documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
+    if (command === 'agent_chat_status') return { documentId: args.documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false, readOnly: false };
     throw Error(`Unexpected ${command}`);
   });
 }

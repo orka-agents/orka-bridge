@@ -15,6 +15,7 @@ pub struct VmClient {
     nonce: Uuid,
     next: u64,
     run_cleanup: bool,
+    navigator_chat: bool,
 }
 fn invalid() -> io::Error {
     io::Error::from(io::ErrorKind::InvalidData)
@@ -38,6 +39,7 @@ impl VmClient {
             nonce,
             next: 3,
             run_cleanup: false,
+            navigator_chat: false,
         })
     }
     /// Capabilities come from the validated serving hello, never a probe that
@@ -50,7 +52,17 @@ impl VmClient {
         validate_hello(hello, Stage::Serve, nonce).map_err(|_| invalid())?;
         let mut client = Self::established(channel, nonce)?;
         client.run_cleanup = hello.run_cleanup;
+        client.navigator_chat = hello.navigator_chat;
         Ok(client)
+    }
+    /// Whether this guest's serving hello advertised the Navigator's Chat family. Never sent
+    /// otherwise: a guest without it stops serving on the first such request.
+    pub fn navigator_chat(&self) -> bool {
+        self.navigator_chat
+    }
+    /// The serving channel is gone; nothing more can be sent until the workspace restarts.
+    pub fn closed(&self) -> bool {
+        self.channel.is_none()
     }
     pub fn cleanup_run_agent(&mut self, uid: &str) -> io::Result<CleanupRunReply> {
         if !self.run_cleanup {
@@ -384,6 +396,10 @@ impl VmClient {
     pub fn chat_request(&mut self, request: ChatRequest) -> io::Result<OrkaReply> {
         if request.validate().is_err() || self.channel.is_none() {
             return Err(invalid());
+        }
+        // An older guest rejects the whole frame and stops serving this channel.
+        if request.navigator() && !self.navigator_chat {
+            return Err(io::ErrorKind::Unsupported.into());
         }
         let operation = Uuid::new_v4();
         match self.call(RequestBody::Execute {
