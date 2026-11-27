@@ -22,6 +22,8 @@ type Props = {
   modelUnavailable?: boolean;
   firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void; onChooseProvider?: () => void;
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onOpenExample: () => void;
+  // Start a fresh workspace, offered on a failure the ordinary recovery can't get past.
+  onFresh?: () => void; helpLines?: string[];
   // During the guided first run: the agent's instructions open in place, and stuck screens offer Set up later.
   guided?: boolean; onSetUpLater?: () => void;
   // Outside the guided first run, a workspace that is getting ready is one card beside the AI card, without the steps.
@@ -137,7 +139,7 @@ export function SetupProgress(props: Props) {
   </section>;
 }
 
-export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster' | 'upgrade' | 'updating' | 'updateBlocked' | 'ordinaryRecovery' | 'onSetUpLater'> & { workspaceDetails?: ReactNode }) {
+export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster' | 'upgrade' | 'updating' | 'updateBlocked' | 'ordinaryRecovery' | 'onSetUpLater' | 'onFresh' | 'helpLines'> & { workspaceDetails?: ReactNode }) {
   const { status, busy, error, onRestart, onCluster, onSetUpLater } = props;
   const { view, failed, rows } = stepRows(props);
   const aiFailed = ['failed', 'resetFailed', 'removalFailed'].includes(props.modelState ?? 'idle');
@@ -148,7 +150,7 @@ export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | '
         {index === 1 && props.workspaceDetails && <div className="step-more">{props.workspaceDetails}</div>}
         {index === 2 && onSetUpLater && aiFailed && <div className="step-more workspace-step-actions guided-later-row"><SetUpLater onClick={onSetUpLater} /></div>}
         {failed && (props.ordinaryRecovery ?? !props.upgrade) && index === 1 && <div className="step-more">
-          <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} onSetUpLater={onSetUpLater} /></div>}
+          <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} onSetUpLater={onSetUpLater} onFresh={props.onFresh} helpLines={props.helpLines} /></div>}
       </li>; })}
     </ol>;
 }
