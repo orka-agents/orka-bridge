@@ -34,6 +34,29 @@ select.field:disabled { --chevron: url('../assets/chevron/secondary.svg'); }
 }
 :root[data-theme="dark"] select.field { --chevron: url('../assets/chevron/ink-dark.svg'); }
 :root[data-theme="dark"] select.field:disabled { --chevron: url('../assets/chevron/secondary-dark.svg'); }
+/* Where the engine lets the page draw a select's list (Chromium and WebView2 from 135), the list is a Bridge popover
+   like the Orka switcher: line edge, 8px radius, the popover shadow, 34px rows, the chosen row on the well. The
+   control stays a native select, so its role, keyboard and value are unchanged; other engines keep the system list,
+   which color-scheme in app.css draws in the theme. */
+@supports (appearance: base-select) {
+  select.field, select.field::picker(select) { appearance: base-select; }
+  select.field { display: flex; align-items: center; }
+  select.field::picker-icon { display: none; }
+  select.field::picker(select) {
+    max-width: calc(100vw - 32px); margin-block: var(--space-1); position-try-order: normal;
+    padding: var(--space-1-5); border: 1px solid var(--color-border-strong); border-radius: var(--radius-overlay);
+    background: var(--color-page); color: var(--color-text); box-shadow: var(--shadow-popover); font: inherit;
+  }
+  select.field option { display: flex; align-items: center; gap: var(--space-2); min-height: 34px; padding: 7px var(--space-2); border-radius: var(--radius-row); background: transparent; color: var(--color-text); white-space: normal; overflow-wrap: anywhere; }
+  select.field option:not(:disabled):hover { background: var(--color-hover); }
+  select.field option:checked { background: var(--color-well); font-weight: 600; }
+  select.field option:disabled { color: var(--color-text-tertiary); }
+  select.field option:focus-visible { outline-offset: -2px; }
+  /* Opened by a click, the row under the keyboard cursor is shown by the hover fill rather than a ring. */
+  :root[data-focus="pointer"] select.field option:focus-visible { outline: none; background: var(--color-hover); }
+  :root[data-focus="pointer"] select.field option:checked:focus-visible { background: var(--color-well); }
+  select.field option::checkmark { order: 1; margin-left: auto; }
+}
 @media (forced-colors: active) { select.field { appearance: auto; background-image: none; padding-right: 12px; } }
 /* Focus. Every control shows the 2px focus ring 2px out when focused from the keyboard (app.css). A control or card
    that already has an ink edge shows focus on that edge instead of a second ring around it: the edge turns focus blue

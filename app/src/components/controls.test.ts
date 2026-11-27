@@ -42,6 +42,7 @@ describe('shared control styles', () => {
       .flatMap(file => [...readFileSync(`src/${file}`, 'utf8').matchAll(/([^{}]+)\{[^}]*outline: (?:none|0)\b/g)].map(([, selector]) => `${file}: ${selector.replace(/\/\*[\s\S]*?\*\//g, '').trim()}`));
     expect(removals).toEqual([
       'chrome/switcher.css: .switcher-filter input:focus-visible', // the filter's underline turns ink, or the focus blue from the keyboard
+      'components/controls.css: :root[data-focus="pointer"] select.field option:focus-visible', // the hover fill marks the row, in the same rule
       'components/controls.css: :is(.nav-composer, .try-composer) textarea:focus-visible', // the card's edge turns blue
       'components/controls.css: .status-bar .host-chip:focus-visible', // the status card's edge turns blue
       'components/controls.css: h1[tabindex="-1"]:focus', // a heading focused on navigation shows no ring (DESIGN.md)
@@ -49,6 +50,16 @@ describe('shared control styles', () => {
     ]);
     const pairs = { 'chrome/switcher.css': ':root:not([data-focus="pointer"]) .switcher-filter:has(input:focus-visible) { border-bottom-color: var(--color-focus);' };
     for (const [file, replacement] of Object.entries(pairs)) expect(readFileSync(`src/${file}`, 'utf8')).toContain(replacement);
+  });
+  it('draws the select list as a Bridge popover where the engine allows it, and keeps the system list elsewhere', () => {
+    const block = css.match(/@supports \(appearance: base-select\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(block).toContain('select.field, select.field::picker(select) { appearance: base-select; }');
+    expect(block).toMatch(/select\.field::picker\(select\) \{[^}]*border: 1px solid var\(--color-border-strong\);[^}]*border-radius: var\(--radius-overlay\);[^}]*box-shadow: var\(--shadow-popover\);/s);
+    expect(block).toMatch(/max-width: calc\(100vw - 32px\);/);
+    expect(block).toMatch(/select\.field option \{[^}]*min-height: 34px;[^}]*white-space: normal;/);
+    expect(block).toContain('select.field option:checked { background: var(--color-well);');
+    // High contrast keeps the system control, after the enhancement so it wins.
+    expect(css.indexOf('@media (forced-colors: active) { select.field { appearance: auto;')).toBeGreaterThan(css.indexOf('@supports (appearance: base-select)'));
   });
   it('removes the six competing action style families', () => {
     for (const path of ['app.css', 'shell.css', 'setup/welcome.css', 'setup/steps.css', 'components/design-system.css']) {

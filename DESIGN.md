@@ -70,7 +70,8 @@ Fields:
 
 - Inputs and selects have card fill and a line-2 ring in both themes. Placeholder text uses ink-2. The page tone is
   for read-only code only.
-- Selects are drawn by Bridge (chevron at the right), never the system control, so they match the theme.
+- Selects are drawn by Bridge (chevron at the right), never the system control, so they match the theme. Where the
+  engine allows it, the open list is a Bridge popover too: line edge, 8 px radius, 34 px rows, the chosen row on well.
 - Radios and checkboxes use ink, not the operating system accent colour. Links use ink and an underline.
 - A form is one column 520 px wide. Fields, help text and errors share that width. A short field (a name, a model)
   may be narrower, never wider.
