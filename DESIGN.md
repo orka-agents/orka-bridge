@@ -131,7 +131,12 @@ The colour values are the tokens `--color-status-*` and `--color-tint-*`.
 
 ## Focus
 
-- Every control shows a 2 px ink ring, 2 px out, when focused from the keyboard. Never remove it.
+- Every control shows a 2 px ring in the focus blue (`--color-focus`), 2 px out, when focused from the keyboard. Never
+  remove it. Rows in a list, menu or the sidebar draw it 2 px inside instead, clear of the popover edge.
+- A field or card that already has an ink edge shows focus on that edge, not with a second ring: from the keyboard
+  the edge turns focus blue and grows 1 px outward, with no gap. A field that is a strong card's writing area (the
+  message box, Try a task) and the status card carry it on the card.
+- A click into a text field is quiet: the caret, and a 1.5 px field's edge going to 2 px ink.
 - A heading that takes focus after navigation (so screen readers announce the page) shows no ring.
 - Focus moves to the page heading on navigation, and back to the control that opened a popover when it closes.
 
