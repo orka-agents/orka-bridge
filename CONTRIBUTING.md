@@ -41,6 +41,7 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `wsUpdate` | This version needs a new workspace | Opens there |
 | `wsRestore` | Interrupted update, restore offered | Opens there |
 | `wsRecovery` | Interrupted update, setup incomplete | Opens there |
+| `wsVersionUnsupported` | The workspace uses different cluster files; Start a fresh workspace sits beside Open the matching Bridge version | Opens there |
 | `wsStarting` | First setup, the workspace starting with its progress; Connect the AI checks the GitHub sign-in at once and waits with the account and model | Opens there |
 | `firstDownloadFails` | First run: the workspace download fails partway, then Try again finishes it | Get started → Set up → Continue |
 | `firstTestFails` | First run: the first agent's test fails | Get started → Set up → Continue, then Connect the AI |
@@ -53,6 +54,9 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `copilotChoiceGone` | First run: a saved model choice is no longer offered, so the card asks for another | Get started → Set up → Continue, wait for the workspace, then Connect the AI |
 | `keyRejected` | API key not accepted | This computer → Manage → Your own API key, enter a key starting `sk-`, Connect the AI |
 | `aiMismatch` | Saved AI connection from an earlier setup | This computer → Manage → Connect the AI |
+| `aiStuck` | The workspace refuses to remove the previous AI connection: Check again once, then Start a fresh workspace, its confirmation, the replacement and the first-setup screen it lands on | This computer → Manage → Connect the AI, Check again, then Start a fresh workspace twice |
+| `freshStopUnconfirmed` | Start a fresh workspace refused because the workspace's stop can't be confirmed | This computer → Manage → What's inside → Start a fresh workspace…, then Start a fresh workspace |
+| `freshReclaimable` | Start a fresh workspace can't delete the previous workspace, and names its folder as space to reclaim | As `freshStopUnconfirmed`, then wait for the deletion |
 | `clusterDenied` | Cluster access denied | `team-dev` → Use this cluster |
 | `clusterUnreachable` | Can't reach the cluster | `team-dev` |
 | `clusterContexts` | kubectl contexts with one Orka installation (`team-dev`), two (`team-shared`), none (`kind-scratch`) and one that needs a ServiceAccount (`team-restricted`) | Add a cluster → kubectl context, then choose one; `team-restricted` asks for a ServiceAccount after Use this cluster |

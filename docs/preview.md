@@ -134,13 +134,16 @@ its workspace and starts it automatically; **Use GitHub sign-in** reuses Bridge'
    section. Wait there for **Bridge no longer has a saved sign-in. GitHub CLI
    stays signed in.** This stops the model connection and clears the VM and
    OS-store copies. If it fails, retry the same button. If it still fails,
-   ask for help before deleting the VM or its metadata.
+   ask for help before deleting the VM or its metadata. If the workspace
+   keeps refusing, choose **Start a fresh workspace** there instead: Bridge
+   replaces the workspace and removes its saved sign-in, then you can quit.
 2. Choose **Quit Bridge**; closing a running workspace's window isn't enough.
 3. Delete the extracted Windows app folder, or move `Bridge.app` to Trash.
    Remove the downloaded archive too if you no longer need it.
 4. Open the following folder in File Explorer's address bar, or Finder's
-   **Go > Go to Folder**. Delete `local-vm-v1` and `image-cache-v1` inside it
-   to permanently remove the workspace disks and cached images:
+   **Go > Go to Folder**. Delete `local-vm-v1`, any `discarded-…` folders
+   left by **Start a fresh workspace**, and `image-cache-v1` inside it to
+   permanently remove the workspace disks and cached images:
 
    - Windows: `%LOCALAPPDATA%\ai.orka.bridge`
    - Mac: `~/Library/Application Support/ai.orka.bridge`

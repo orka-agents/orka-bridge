@@ -12,7 +12,7 @@ import { sidebarPreference } from '../chrome/sidebar';
 import { themePreference } from '../chrome/theme';
 import {
   clusterCatalog, type Credential, contextTargets, createdSeed, deniedAccess, kubeContexts, failingClusterPlace, failingClusterProvider, failingClusterTarget, type FailureScenario,
-  installationMismatch, keyInvalid, keyRejected, modelGuest, sendRows, unreachableCluster, upgradeStatus, workspaceFailures,
+  installationMismatch, keyInvalid, keyRejected, modelGuest, reconnectRefused, sendRows, unreachableCluster, upgradeStatus, workspaceFailures,
 } from './fixtures';
 
 export const scenarios = {
@@ -32,6 +32,10 @@ export const scenarios = {
   wsUpdate: 'Workspace update needed',
   wsRestore: 'Interrupted update, restore offered',
   wsRecovery: 'Interrupted update, setup incomplete',
+  wsVersionUnsupported: 'Workspace uses different cluster files',
+  aiStuck: 'Workspace refuses to remove the previous AI connection',
+  freshStopUnconfirmed: "Start a fresh workspace: the stop can't be confirmed",
+  freshReclaimable: "Start a fresh workspace: the old workspace can't be deleted",
   keyRejected: 'API key not accepted',
   aiMismatch: 'Saved AI connection from an earlier setup',
   clusterDenied: 'Cluster access denied',
@@ -157,7 +161,7 @@ function status() {
   const p = phase();
   return {
     selected, localVm: p.localVm, localVmError: null, model: p.localVm === 'ready' ? 'available' : 'locked', modelSupported: true,
-    workspaceProgress: p.progress,
+    workspaceProgress: p.progress, ...freshReport(),
     ...(p.localVm === 'failed' ? downloadFails
       ? { localVmError: 'Downloading the workspace failed: connection reset', workspaceFailure: { operation: 'download', cause: 'network', codes: [] } }
       : { preflightFailure: 'virtualizationDisabled' } : {}),
@@ -423,7 +427,32 @@ function clusterPlace() {
 }
 function failedStatus(name: FailureScenario) {
   const { localVmError, workspaceFailure } = workspaceFailures[name];
-  return { selected: 'localVm', localVm: 'failed', localVmError, model: 'locked', modelSupported: true, workspaceFailure, ...(replaced ? { workspaceReplaced: true } : {}) };
+  return { selected: 'localVm', localVm: 'failed', localVmError, model: 'locked', modelSupported: true, workspaceFailure, ...(replaced ? { workspaceReplaced: true } : {}), ...freshReport() };
+}
+// Start a fresh workspace, as native reports it in the setup snapshot. aiStuck: the workspace refuses to remove the
+// previous AI connection until it is replaced. The old workspace waits in a Bridge-owned folder until it is deleted.
+let freshWorkspace: Record<string, unknown> | null = null;
+let cleanupRefused = scenario === 'aiStuck';
+function freshReport() { return freshWorkspace ? { workspaceFresh: freshWorkspace } : {}; }
+const retiredFolder = (transaction: string) => `C:\\Users\\you\\AppData\\Local\\ai.orka.bridge\\discarded-${transaction}`;
+let freshCount = 0;
+async function freshStart() {
+  if (freshWorkspace?.state === 'replacing' || startedAt !== null) return { state: 'refused', reason: 'busy' };
+  freshWorkspace = { state: 'replacing' };
+  await wait(2);
+  if (scenario === 'freshStopUnconfirmed') {
+    failed = 'stopUnconfirmed';
+    freshWorkspace = { state: 'refused', reason: 'stopUnconfirmed' };
+    return freshWorkspace;
+  }
+  // First install from the cached download: a new workspace, nothing saved for the AI.
+  const transaction = uuid(`fresh-${++freshCount}`);
+  failed = null; stopped = null; selected = 'localVm'; startedAt = now(); reopened = false;
+  modelConnected = false; connectedModel = null; mismatch = false; cleanupRefused = false;
+  const current = { state: 'replaced', transaction, ai: 'removed', reclaimable: [retiredFolder(transaction)], cleaning: true };
+  freshWorkspace = current;
+  void wait(3).then(() => { if (freshWorkspace === current) freshWorkspace = { ...current, cleaning: false, reclaimable: scenario === 'freshReclaimable' ? current.reclaimable : [] }; });
+  return freshWorkspace;
 }
 const modelOf = (doc: Doc) => (/^model: (.+)$/m.exec(doc.agent)?.[1] ?? 'gpt-5.6-terra').replace(/^"|"$/g, '');
 const toolsOf = (doc: Doc) => doc.name === 'web-reader' ? ['web_fetch'] : [];
@@ -557,10 +586,19 @@ async function scenarioReply(command: string, args?: Record<string, unknown>): P
       throw keyRejected(vendor);
     }
     case 'setup_connect_model':
+      if (cleanupRefused) {
+        await wait(2);
+        if (!ready()) throw modelGuest;
+        throw reconnectRefused;
+      }
       if (!mismatch) break;
       await wait(2);
       if (!ready()) throw modelGuest;
       throw installationMismatch(installation, uuid('earlier-installation'), uuid('credential-slot'));
+    case 'setup_remove_model':
+      if (!cleanupRefused) break;
+      await wait(1);
+      throw reconnectRefused;
     case 'setup_reset_model':
       if (scenario !== 'aiMismatch') break;
       await wait(1);
@@ -680,6 +718,7 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
     }
     case 'setup_remove_model': case 'setup_reset_model': await wait(1); modelConnected = false; connectedModel = null; return { ready: false };
     case 'workspace_upgrade_status': return upgradeNone;
+    case 'workspace_fresh_start': return freshStart();
     case 'workspace_catalog':
       if (!ready() || !modelConnected) throw 'catalogUnavailable';
       return {
