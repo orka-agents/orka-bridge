@@ -30,6 +30,7 @@ impl Session {
                 guest_nonce: Uuid::new_v4(),
                 accepted_boot_nonce: saved.as_ref().map(|b| b.boot_nonce),
                 run_cleanup: stage == Stage::Serve,
+                sessions: stage == Stage::Serve,
             },
             saved,
             bytes: Vec::new(),
@@ -154,7 +155,7 @@ pub fn handle(
         ),
     }
 }
-/// Authoring and catalogs share physical-channel authority, not the root-local socket.
+/// Authoring, catalogs and Sessions share physical-channel authority, not the root-local socket.
 pub fn authoring_allowed(host_channel: bool, request: &RequestBody) -> bool {
     host_channel
         || !matches!(
@@ -164,7 +165,9 @@ pub fn authoring_allowed(host_channel: bool, request: &RequestBody) -> bool {
                     | EngineActionWire::OrkaChat { .. }
                     | EngineActionWire::RunWorker { .. }
                     | EngineActionWire::CleanupRunAgent { .. }
-                    | EngineActionWire::WorkspaceCatalog {},
+                    | EngineActionWire::WorkspaceCatalog {}
+                    | EngineActionWire::SessionList { .. }
+                    | EngineActionWire::SessionRead { .. },
                 ..
             } | RequestBody::Engine(
                 EngineActionWire::Orka { .. }
@@ -172,6 +175,8 @@ pub fn authoring_allowed(host_channel: bool, request: &RequestBody) -> bool {
                     | EngineActionWire::RunWorker { .. }
                     | EngineActionWire::CleanupRunAgent { .. }
                     | EngineActionWire::WorkspaceCatalog {}
+                    | EngineActionWire::SessionList { .. }
+                    | EngineActionWire::SessionRead { .. }
             )
         )
 }

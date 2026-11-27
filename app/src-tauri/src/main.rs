@@ -120,6 +120,42 @@ async fn overview_agents(
     Ok(bridge_engine::overview::live_agents(vm.inner().clone(), run.inner().clone()).await)
 }
 #[tauri::command]
+async fn overview_activity(
+    session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+) -> Result<bridge_engine::overview_activity::Activity, &'static str> {
+    Ok(bridge_engine::overview_activity::read(&session).await)
+}
+#[tauri::command]
+async fn overview_tool_calls(
+    session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+    key: String,
+    task: String,
+) -> Result<bridge_engine::overview_activity::TaskToolCalls, &'static str> {
+    Ok(bridge_engine::overview_activity::tool_calls(&session, &key, &task).await)
+}
+#[tauri::command]
+async fn overview_sessions(
+    session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> Result<bridge_engine::overview_sessions::Sessions, &'static str> {
+    Ok(bridge_engine::overview_sessions::read_all(&session, vm.inner().as_ref()).await)
+}
+#[tauri::command]
+async fn overview_transcript(
+    session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    key: String,
+    name: String,
+) -> Result<bridge_engine::overview_sessions::Transcript, &'static str> {
+    Ok(bridge_engine::overview_sessions::read_transcript_at(
+        &session,
+        vm.inner().as_ref(),
+        &key,
+        &name,
+    )
+    .await)
+}
+#[tauri::command]
 async fn overview_places(
     session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
     send: tauri::State<'_, Arc<SendOwner>>,
@@ -914,6 +950,10 @@ fn main() {
             overview_files,
             overview_agents,
             overview_places,
+            overview_activity,
+            overview_tool_calls,
+            overview_sessions,
+            overview_transcript,
             agent_selected,
             agent_create,
             agent_pick_repo,

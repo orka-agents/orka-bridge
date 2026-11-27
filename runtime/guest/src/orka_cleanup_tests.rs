@@ -51,7 +51,8 @@ esac
         fs::write(dir.path().join(format!("{name}.json")), value.to_string()).unwrap();
     }
     let runner = crate::engine::GuestRunner { kmx:crate::engine::Kmx, orka,
-        chat:Orka::new_chat(installation()), catalog_provider:None };
+        chat:Orka::new_chat(installation()), sessions:Orka::new_sessions(installation()),
+        catalog_provider:None };
     (dir, runner)
 }
 fn cleanup_call(runner: &mut crate::engine::GuestRunner) -> io::Result<bool> {

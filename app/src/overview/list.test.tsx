@@ -16,12 +16,63 @@ function place(key = 'team', verdict = 'failed', documentId: string | null = id)
     agents: [{ name: 'remote-reader', namespace: 'agents', uid: `${key}-uid`, agentType: 'runtime', model: null, tools: null,
       record: { id, documentId, source, targetDisplay: key, targetUids: { serviceNamespace: 'control', serviceUid: 'svc', deploymentNamespace: 'control', deploymentUid: 'dep', watchedNamespace: 'agents' }, provider: 'team-model', plannedAgentName: 'remote-reader', agentUid: `${key}-uid`, verdict, time: 2, detailState: documentId ? 'saved' : 'removed', report: verdict === 'running' ? null : { verdict, passed: 1, total: 2 } } }] };
 }
-function ipc(saved = [file()], places = [place()]) {
-  mockIPC(command => command === 'overview_files' ? { state: 'complete', files: saved, historyState: 'complete', runAgents: [], runActive: false }
+function ipc(saved = [file()], places = [place()], activity?: unknown) {
+  mockIPC(command => command === 'overview_activity' && activity ? activity : command === 'overview_files' ? { state: 'complete', files: saved, historyState: 'complete', runAgents: [], runActive: false }
     : command === 'overview_places' ? { places, historyState: 'complete', unobserved: [] }
       : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
 }
 const row = () => screen.findByRole('article', { name: 'reader' });
+
+test('Send polling rereads places without rescanning Recent activity or Conversations', async () => {
+  const calls: string[] = [];
+  const running = place('team', 'running');
+  mockIPC(command => {
+    calls.push(command);
+    return command === 'overview_activity' ? { places: [{ key: 'team', state: 'complete', observedAt: 9500, connection: 1, entries: [] }] }
+      : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+        : command === 'overview_places' ? { places: [running], historyState: 'complete', unobserved: [] }
+          : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null };
+  });
+  render(<Overview {...props} />);
+  await waitFor(() => expect(calls.filter(c => c === 'overview_places').length).toBeGreaterThanOrEqual(3), { timeout: 3000 });
+  expect(calls.filter(c => c === 'overview_activity')).toHaveLength(1);
+  expect(calls.filter(c => c === 'overview_sessions')).toHaveLength(1);
+});
+
+test('See in Overview after a visit rescans Recent activity and Conversations once, not on its polls', async () => {
+  const calls: string[] = [];
+  const running = place('team', 'running');
+  mockIPC(command => {
+    calls.push(command);
+    return command === 'overview_activity' ? { places: [{ key: 'team', state: 'complete', observedAt: 9500, connection: 1, entries: [] }] }
+      : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+        : command === 'overview_places' ? { places: [running], historyState: 'complete', unobserved: [] }
+          : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null };
+  });
+  const view = render(<Overview {...props} />);
+  await waitFor(() => expect(calls.filter(c => c === 'overview_activity')).toHaveLength(1));
+  await waitFor(() => expect(calls.filter(c => c === 'overview_sessions')).toHaveLength(1));
+  view.rerender(<Overview {...props} active={false} />);
+  const placesBefore = calls.filter(c => c === 'overview_places').length;
+  view.rerender(<Overview {...props} focus={{ id: 1, sendId: id, target: { key: 'team', name: 'remote-reader', namespace: 'agents', uid: 'team-uid' } }} />);
+  await waitFor(() => expect(calls.filter(c => c === 'overview_places').length).toBeGreaterThanOrEqual(placesBefore + 3), { timeout: 3000 });
+  expect(calls.filter(c => c === 'overview_activity')).toHaveLength(2);
+  expect(calls.filter(c => c === 'overview_sessions')).toHaveLength(2);
+});
+
+test('Show agent in Recent activity clears the filters, expands the agent row and focuses its card', async () => {
+  const run = { task: 'run-1', uid: 'run-uid', agent: 'remote-reader', agentUid: 'team-uid', phase: 'failed', createdAt: 9000, startedAt: null, completedAt: null, message: null, test: false };
+  ipc(undefined, undefined, { places: [{ key: 'team', state: 'complete', observedAt: 9500, connection: 1, entries: [run] }] });
+  render(<Overview {...props} />);
+  expect(within(await row()).getByRole('button', { name: 'Show places for reader' }).getAttribute('aria-expanded')).toBe('false');
+  const show = await screen.findByRole('button', { name: 'Show remote-reader on team' });
+  await userEvent.type(screen.getByRole('textbox', { name: 'Filter by name' }), 'nothing');
+  await waitFor(() => expect(screen.queryByRole('article', { name: 'reader' })).toBeNull());
+  await userEvent.click(show);
+  await waitFor(() => expect(document.activeElement?.getAttribute('data-card-key')).toBe('team/team-uid'));
+  expect((screen.getByRole('textbox', { name: 'Filter by name' }) as HTMLInputElement).value).toBe('');
+  expect(within(await row()).getByRole('button', { name: 'Show places for reader' }).getAttribute('aria-expanded')).toBe('true');
+});
 beforeEach(() => vi.stubGlobal('isTauri', true));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 

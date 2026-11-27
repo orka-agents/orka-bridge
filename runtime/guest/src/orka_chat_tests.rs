@@ -148,6 +148,7 @@ fn chat_operations_replay_results_without_repeating_delete_and_withhold_unsafe_r
         kmx: crate::engine::Kmx,
         orka: Orka::new(installation()),
         chat,
+        sessions: Orka::new_sessions(installation()),
         catalog_provider: None,
     };
     let mut ops = crate::engine::Operations::new(root.path().join("ops"), runner).unwrap();

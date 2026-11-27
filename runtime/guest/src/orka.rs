@@ -17,10 +17,14 @@ mod catalog;
 mod run_cleanup;
 #[path = "run_worker.rs"]
 mod run_worker;
+#[path = "sessions.rs"]
+mod sessions;
 
 const IDENTITY: &str = "bridge-native-run";
 const CHAT_IDENTITY: &str = "bridge-native-chat";
 const CLEANUP_IDENTITY: &str = "bridge-native-run-cleanup";
+/// Read-only Overview Sessions. Separate from Chat: an existing Role is never widened.
+const SESSIONS_IDENTITY: &str = "bridge-native-sessions";
 const OWNER: &str = "bridge-guest";
 /// Renew well before the ten-minute expiry so no request is sent with a stale token.
 const RENEW_AFTER: Duration = Duration::from_secs(8 * 60);
@@ -41,6 +45,8 @@ fn manifests(identity: &str) -> [(&'static str, Value); 3] {
             json!({"apiGroups":["core.orka.ai"],"resources":["tasks"],"verbs":["get","list"]}),
             json!({"apiGroups":[""],"resources":["pods"],"verbs":["list"]}),
         ]
+    } else if identity == SESSIONS_IDENTITY {
+        vec![json!({"apiGroups":["core.orka.ai"],"resources":["sessions"],"verbs":["get","list"]})]
     } else if identity == CHAT_IDENTITY {
         // RBAC grants Task deletion namespace-wide. ChatRequest validation and
         // the physical-only channel restrict its use to generated Chat Tasks.
@@ -54,7 +60,7 @@ fn manifests(identity: &str) -> [(&'static str, Value); 3] {
             json!({"apiGroups":["core.orka.ai"],"resources":["agents","tasks"],"verbs":["create","get"]}),
         ]
     };
-    if identity != CLEANUP_IDENTITY {
+    if identity != CLEANUP_IDENTITY && identity != SESSIONS_IDENTITY {
         rules.push(
             json!({"apiGroups":["core.orka.ai"],"resources":["tools","providers"],"verbs":["get"]}),
         );
@@ -145,6 +151,12 @@ impl Orka {
     pub fn new_chat(installation: Uuid) -> Self {
         Self {
             identity: CHAT_IDENTITY,
+            ..Self::new(installation)
+        }
+    }
+    pub fn new_sessions(installation: Uuid) -> Self {
+        Self {
+            identity: SESSIONS_IDENTITY,
             ..Self::new(installation)
         }
     }
@@ -378,6 +390,42 @@ impl Orka {
         continuation: Option<&str>,
         deadline: Instant,
     ) -> io::Result<OrkaReply> {
+        let query: &[(&str, &str)] = match continuation {
+            Some(cursor) => &[("limit", "100"), ("continue", cursor)],
+            None => &[],
+        };
+        let (status, raw) =
+            self.send(method, path, after, body, query, MAX_ORKA_REPLY, deadline)?;
+        let body = serde_json::from_slice(&raw).unwrap_or(Value::Null);
+        let reply = OrkaReply { status, body };
+        let stdout = serde_json::to_vec(&reply)?;
+        if stdout.len() > MAX_FILE || self.echoes(&stdout) {
+            return Err(failed());
+        }
+        Ok(reply)
+    }
+    /// True when bytes hold the current or immediately preceding bearer.
+    fn echoes(&self, bytes: &[u8]) -> bool {
+        self.token
+            .as_ref()
+            .map(|t| t.value.as_str())
+            .into_iter()
+            .chain(self.previous_token.as_deref())
+            .any(|secret| bytes.windows(secret.len()).any(|w| w == secret.as_bytes()))
+    }
+    /// One request with lazy setup; the raw reply is bounded by `limit` and must not echo
+    /// a bearer. `query` pairs are URL-encoded after the fixed namespace.
+    #[allow(clippy::too_many_arguments)]
+    fn send(
+        &mut self,
+        method: reqwest::Method,
+        path: &str,
+        after: Option<u64>,
+        body: Option<&Value>,
+        query: &[(&str, &str)],
+        limit: usize,
+        deadline: Instant,
+    ) -> io::Result<(u16, Vec<u8>)> {
         if !self.rbac {
             self.identity(deadline)?;
         }
@@ -417,12 +465,9 @@ impl Orka {
             "http://127.0.0.1:{}/api/v1/{}?namespace={ORKA_NAMESPACE}",
             forward.port, path
         );
-        if let Some(cursor) = continuation {
+        if !query.is_empty() {
             let mut parsed = reqwest::Url::parse(&url).map_err(|_| failed())?;
-            parsed
-                .query_pairs_mut()
-                .append_pair("limit", "100")
-                .append_pair("continue", cursor);
+            parsed.query_pairs_mut().extend_pairs(query);
             url = parsed.into();
         }
         if let Some(after) = after {
@@ -448,27 +493,13 @@ impl Orka {
         let status = response.status().as_u16();
         let mut raw = Vec::new();
         response
-            .take(MAX_ORKA_REPLY as u64 + 1)
+            .take(limit as u64 + 1)
             .read_to_end(&mut raw)
             .map_err(|_| failed())?;
-        if raw.len() > MAX_ORKA_REPLY || Instant::now() >= deadline {
+        if raw.len() > limit || Instant::now() >= deadline || self.echoes(&raw) {
             return Err(failed());
         }
-        let body = serde_json::from_slice(&raw).unwrap_or(Value::Null);
-        let reply = OrkaReply { status, body };
-        let stdout = serde_json::to_vec(&reply)?;
-        if stdout.len() > MAX_FILE
-            || std::iter::once(token.value.as_str())
-                .chain(self.previous_token.as_deref())
-                .any(|secret| {
-                    [&raw, &stdout]
-                        .iter()
-                        .any(|b| b.windows(secret.len()).any(|w| w == secret.as_bytes()))
-                })
-        {
-            return Err(failed());
-        }
-        Ok(reply)
+        Ok((status, raw))
     }
 }
 
@@ -478,6 +509,7 @@ mod tests {
     include!("orka_chat_tests.rs");
     include!("orka_run_worker_tests.rs");
     include!("orka_cleanup_tests.rs");
+    include!("orka_sessions_tests.rs");
     use serde_json::{json, Value};
     use std::{
         collections::VecDeque,
@@ -941,6 +973,7 @@ esac
             kmx: crate::engine::Kmx,
             orka,
             chat: Orka::new_chat(installation()),
+            sessions: Orka::new_sessions(installation()),
             catalog_provider: None,
         };
         let mut ops = crate::engine::Operations::new(root.path().join("ops"), runner).unwrap();
@@ -993,6 +1026,7 @@ esac
             kmx: crate::engine::Kmx,
             orka,
             chat: Orka::new_chat(installation()),
+            sessions: Orka::new_sessions(installation()),
             catalog_provider: None,
         };
         let mut ops = crate::engine::Operations::new(root.path().join("ops"), runner).unwrap();
@@ -1107,6 +1141,7 @@ esac
             kmx: crate::engine::Kmx,
             orka,
             chat: Orka::new_chat(installation()),
+            sessions: Orka::new_sessions(installation()),
             catalog_provider: Some(("copilot".into(), None)),
         };
         let mut ops = crate::engine::Operations::new(root.path().join("ops"), runner).unwrap();
