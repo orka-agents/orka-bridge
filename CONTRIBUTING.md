@@ -57,6 +57,10 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `aiStuck` | The workspace refuses to remove the previous AI connection: Check again once, then Start a fresh workspace, its confirmation, the replacement and the first-setup screen it lands on | This computer → Manage → Connect the AI, Check again, then Start a fresh workspace twice |
 | `freshStopUnconfirmed` | Start a fresh workspace refused because the workspace's stop can't be confirmed | This computer → Manage → What's inside → Start a fresh workspace…, then Start a fresh workspace |
 | `freshReclaimable` | Start a fresh workspace can't delete the previous workspace, and names its folder as space to reclaim | As `freshStopUnconfirmed`, then wait for the deletion |
+| `freshDownload` | The confirmation says first install downloads the workspace again, and how much | As `freshStopUnconfirmed`, up to the confirmation |
+| `freshInterrupted` | A fresh workspace set aside but not finished: Finish starting a fresh workspace, the workspace kept stopped until then | Opens there |
+| `freshConflict` | Folders Bridge didn't expect while finishing a fresh workspace, named with what to do | Opens there |
+| `freshBlocked` | After a workspace update: the stuck AI card keeps Check again and says why a fresh workspace isn't available | This computer → Manage → Connect the AI, then Check again |
 | `clusterDenied` | Cluster access denied | `team-dev` → Use this cluster |
 | `clusterUnreachable` | Can't reach the cluster | `team-dev` |
 | `clusterContexts` | kubectl contexts with one Orka installation (`team-dev`), two (`team-shared`), none (`kind-scratch`) and one that needs a ServiceAccount (`team-restricted`) | Add a cluster → kubectl context, then choose one; `team-restricted` asks for a ServiceAccount after Use this cluster |

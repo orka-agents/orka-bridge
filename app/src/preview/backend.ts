@@ -36,6 +36,10 @@ export const scenarios = {
   aiStuck: 'Workspace refuses to remove the previous AI connection',
   freshStopUnconfirmed: "Start a fresh workspace: the stop can't be confirmed",
   freshReclaimable: "Start a fresh workspace: the old workspace can't be deleted",
+  freshDownload: 'Start a fresh workspace: the download must be fetched again',
+  freshInterrupted: "Start a fresh workspace: set aside but not finished",
+  freshConflict: "Start a fresh workspace: folders Bridge didn't expect",
+  freshBlocked: "Start a fresh workspace isn't available after a workspace update",
   keyRejected: 'API key not accepted',
   aiMismatch: 'Saved AI connection from an earlier setup',
   clusterDenied: 'Cluster access denied',
@@ -396,7 +400,7 @@ const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSigned
 const upgradeScenario = scenario === 'wsUpdate' || scenario === 'wsRestore' || scenario === 'wsRecovery';
 const sendScenario = ['sendBlocked', 'sendRunning', 'sendFailed', 'sendPassed', 'sendLocalFailed'].includes(scenario);
 const remoteScenario = sendScenario || scenario === 'clusterDenied' || scenario === 'clusterUnreachable';
-let failed: FailureScenario | null = Object.hasOwn(workspaceFailures, scenario) ? scenario as FailureScenario : null;
+let failed: FailureScenario | null = Object.hasOwn(workspaceFailures, scenario) ? scenario as FailureScenario : scenario === 'freshInterrupted' || scenario === 'freshConflict' ? 'freshUnfinished' : null;
 let replaced = scenario === 'wsRestore' || scenario === 'wsRecovery';
 let credential: Credential = scenario === 'wsUpdate' ? 'eligible' : 'absent';
 let upgrade = upgradeScenario ? upgradeStatus(scenario === 'wsUpdate' ? 'eligible' : scenario === 'wsRestore' ? 'sourceRetained' : 'incomplete', uuid('upgrade'), credential) : null;
@@ -442,18 +446,22 @@ function failedStatus(name: FailureScenario) {
 }
 // Start a fresh workspace, as native reports it in the setup snapshot. aiStuck: the workspace refuses to remove the
 // previous AI connection until it is replaced. The old workspace waits in a Bridge-owned folder until it is deleted.
-let freshWorkspace: Record<string, unknown> | null = null;
-let cleanupRefused = scenario === 'aiStuck';
-function freshReport() { return freshWorkspace ? { workspaceFresh: freshWorkspace } : {}; }
 const retiredFolder = (transaction: string) => `C:\\Users\\you\\AppData\\Local\\ai.orka.bridge\\discarded-${transaction}`;
+let freshWorkspace: Record<string, unknown> | null = scenario === 'freshInterrupted' ? { state: 'interrupted', transaction: uuid('fresh-interrupted') }
+  : scenario === 'freshConflict' ? { state: 'conflict', found: ['C:\\Users\\you\\AppData\\Local\\ai.orka.bridge\\local-vm-v1', retiredFolder(uuid('fresh-conflict'))] } : null;
+let cleanupRefused = scenario === 'aiStuck' || scenario === 'freshBlocked';
+// Native's plan: whether the action can start, and whether first install reuses the cached download.
+const freshPlan = { ...(scenario === 'freshBlocked' ? { blocked: 'updateHistory' } : {}), image: scenario === 'freshDownload' ? { kind: 'download', bytes: 1_967_572_914 } : { kind: 'cached' } };
+function freshReport() { return { workspaceFreshPlan: freshPlan, ...(freshWorkspace ? { workspaceFresh: freshWorkspace } : {}) }; }
 let freshCount = 0;
 async function freshStart() {
-  if (freshWorkspace?.state === 'replacing' || startedAt !== null) return { state: 'refused', reason: 'busy' };
+  if (freshWorkspace?.state === 'replacing' || startedAt !== null) return { state: 'refused', reason: 'busy', restarted: false };
+  if (freshWorkspace?.state === 'conflict') return freshWorkspace;
   freshWorkspace = { state: 'replacing' };
   await wait(2);
   if (scenario === 'freshStopUnconfirmed') {
     failed = 'stopUnconfirmed';
-    freshWorkspace = { state: 'refused', reason: 'stopUnconfirmed' };
+    freshWorkspace = { state: 'refused', reason: 'stopUnconfirmed', restarted: false };
     return freshWorkspace;
   }
   // First install from the cached download: a new workspace, nothing saved for the AI.

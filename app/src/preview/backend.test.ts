@@ -422,7 +422,7 @@ describe('preview backend replies', () => {
 
   it('reports a fresh workspace refused when the stop is unconfirmed, and one whose old folder is left', async () => {
     await preview('scenario=freshStopUnconfirmed&speed=100');
-    expect(await startFresh()).toEqual({ state: 'refused', reason: 'stopUnconfirmed' });
+    expect(await startFresh()).toEqual({ state: 'refused', reason: 'stopUnconfirmed', restarted: false });
     expect(await setupStatus()).toMatchObject({ ok: true, status: { localVm: 'failed', workspaceFailure: { cause: 'stopUnconfirmed' }, workspaceFresh: { state: 'refused' } } });
     await preview('scenario=freshReclaimable&speed=100');
     const replaced = await startFresh();
@@ -430,5 +430,20 @@ describe('preview backend replies', () => {
     await preview('scenario=wsVersionUnsupported&speed=100');
     expect(await setupStatus()).toMatchObject({ ok: true, status: { localVm: 'failed', workspaceFailure: { cause: 'workspaceVersionUnsupported' } } });
     expect(await startFresh()).toMatchObject({ state: 'replaced' });
+  });
+
+  it('reports the plan, an unfinished fresh workspace and folders Bridge did not expect', async () => {
+    await preview('scenario=freshDownload&speed=100');
+    expect(await setupStatus()).toMatchObject({ ok: true, status: { workspaceFreshPlan: { image: { kind: 'download', bytes: 1_967_572_914 } } } });
+    await preview('scenario=freshBlocked&speed=100');
+    expect(await setupStatus()).toMatchObject({ ok: true, status: { workspaceFreshPlan: { blocked: 'updateHistory' } } });
+    expect(await connectModel()).toMatchObject({ ok: false, cleanup: ['disconnectRetainedModel', 'refused'] });
+    await preview('scenario=freshInterrupted&speed=100');
+    expect(await setupStatus()).toMatchObject({ ok: true, status: { localVm: 'failed', workspaceFresh: { state: 'interrupted' } } });
+    expect(await startFresh()).toMatchObject({ state: 'replaced' });
+    await preview('scenario=freshConflict&speed=100');
+    const conflict = await setupStatus();
+    expect(conflict).toMatchObject({ ok: true, status: { localVm: 'failed', workspaceFresh: { state: 'conflict' } } });
+    expect(await startFresh()).toMatchObject({ state: 'conflict' });
   });
 });
