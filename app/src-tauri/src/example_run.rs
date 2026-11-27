@@ -396,7 +396,7 @@ impl ExampleRun {
         vm: Arc<LocalVm>,
         id: DocumentId,
     ) -> Result<RunSnapshot, &'static str> {
-        self.start_first_test_with_model(vm, id, "gpt-5.6-terra".into(), None)
+        self.start_first_test_with_model(vm, id, crate::agent_folder::EXAMPLE_MODEL.into(), None)
     }
     pub fn start_first_test_with_model(
         self: &Arc<Self>,

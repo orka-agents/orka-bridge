@@ -320,6 +320,7 @@ impl From<bridge_engine::setup::ModelSetupState> for ModelReply {
 #[tauri::command]
 async fn setup_connect_model(
     vendor: Option<bridge_runtime_protocol::ModelVendor>,
+    model: Option<String>,
     state: tauri::State<'_, Arc<SetupStore>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
 ) -> Result<ModelReply, SetupError> {
@@ -327,9 +328,18 @@ async fn setup_connect_model(
         vm.connect_saved_key_model(Arc::clone(state.inner()), vendor)
             .await?
     } else {
-        vm.connect_model(Arc::clone(state.inner())).await?
+        vm.connect_model(Arc::clone(state.inner()), model).await?
     };
     Ok(model.into())
+}
+
+/// Host-only: checks the GitHub CLI sign-in and the Copilot model with GitHub while
+/// the workspace is still on its way. Saves nothing and touches no workspace.
+#[tauri::command]
+async fn setup_check_model(
+    state: tauri::State<'_, Arc<SetupStore>>,
+) -> Result<bridge_engine::setup::CopilotCheck, SetupError> {
+    Arc::clone(state.inner()).check_copilot_async().await
 }
 
 #[tauri::command]
@@ -959,6 +969,7 @@ fn main() {
             setup_open_help,
             setup_example,
             setup_connect_model,
+            setup_check_model,
             setup_connect_key,
             setup_remove_model,
             setup_reset_model,

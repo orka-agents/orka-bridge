@@ -116,6 +116,7 @@ fn copilot_reuse_after_transfer_and_restore_reaches_guest_capability_before_load
         let error = setup
             .connect_stored_model(
                 installation,
+                Some("gpt-5.6-terra"),
                 &mut client,
                 &Vault(Mutex::new(vec![])),
                 || panic!("no recapture"),

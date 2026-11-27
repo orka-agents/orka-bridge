@@ -17,6 +17,8 @@ const SECRET: &[u8] = b"synthetic-model-only";
 mod account_tests;
 #[path = "setup_model_key_tests.rs"]
 mod key_tests;
+#[path = "setup_model_preflight_tests.rs"]
+mod preflight_tests;
 #[path = "setup_model_reset_tests.rs"]
 mod reset_tests;
 
@@ -769,7 +771,9 @@ fn pending_without_id_retries_only_the_installed_generation_without_capture() {
         })
     });
     let result =
-        setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+        setup.connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
+            panic!("no recapture")
+        });
     drop(client);
     let traffic = worker.join().unwrap();
     assert!(result.unwrap().ready);
@@ -856,7 +860,9 @@ fn pending_known_failure_disconnects_and_clears_before_a_fresh_connect() {
         })
     });
     let result =
-        setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+        setup.connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
+            panic!("no recapture")
+        });
     drop(client);
     let traffic = worker.join().unwrap();
     assert!(result.unwrap().ready);
@@ -922,7 +928,9 @@ fn pending_after_acknowledged_clear_reconciles_before_reloading_sign_in() {
         })
     });
     let result =
-        setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+        setup.connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
+            panic!("no recapture")
+        });
     drop(client);
     assert!(result.unwrap().ready);
     assert_eq!(worker.join().unwrap().frames.len(), 5);
@@ -1021,10 +1029,16 @@ fn older_image_refuses_reconnect_without_poisoning_its_existing_control_channel(
     });
     assert_eq!(
         setup
-            .connect_stored_model(install, &mut client, &vault, || panic!("no capture"))
+            .connect_stored_model(
+                install,
+                Some("gpt-5.6-terra"),
+                &mut client,
+                &vault,
+                || panic!("no capture")
+            )
             .unwrap_err()
             .kind,
-        "modelReconnect"
+        "modelReconnectImage"
     );
     assert!(
         client.model_status().is_ok(),
@@ -1045,7 +1059,7 @@ fn unknown_transport_other_is_not_mislabeled_as_a_guest_refusal() {
 fn previous_boot_failures_keep_finite_operation_and_class_without_secrets() {
     for (case, expected) in [
         (0, "modelStatus:unsupported"),
-        (1, "modelStatusPreconditions:refused"),
+        (1, "modelStatusPreconditions:unsupported"),
         (2, "disconnectRetainedModel:refused"),
     ] {
         let (_tmp, setup, install, vault) = associated();
@@ -1078,7 +1092,13 @@ fn previous_boot_failures_keep_finite_operation_and_class_without_secrets() {
         let error = setup
             .sign_out_model(install, Some(&mut client), &vault)
             .unwrap_err();
-        assert_eq!(error.kind, "modelReconnect");
+        // Only the image without retained cleanup is told it may need a newer image.
+        let kind = if case == 1 {
+            "modelReconnectImage"
+        } else {
+            "modelReconnect"
+        };
+        assert_eq!(error.kind, kind);
         assert_eq!(error.model_detail().as_deref(), Some(expected));
         drop(client);
         worker.join().unwrap();
@@ -1123,7 +1143,13 @@ fn new_boot_cleanup_refusal_preserves_slot_and_binding_before_any_secret_load() 
             })
         });
         assert!(setup
-            .connect_stored_model(install, &mut client, &vault, || panic!("no capture"))
+            .connect_stored_model(
+                install,
+                Some("gpt-5.6-terra"),
+                &mut client,
+                &vault,
+                || panic!("no capture")
+            )
             .is_err());
         drop(client);
         worker.join().unwrap();
@@ -1164,7 +1190,9 @@ fn new_boot_reconnect_cleans_retained_connection_before_loading_saved_sign_in() 
             })
         });
         let result =
-            setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+            setup.connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
+                panic!("no recapture")
+            });
         drop(client);
         let traffic = worker.join().unwrap();
         assert!(result.unwrap().ready);

@@ -36,7 +36,13 @@ fn committed(root: &Path, name: &str) -> Vec<u8> {
 }
 #[test]
 fn prepare_example_sets_only_the_closed_model_line_and_commits_it() {
-    for model in ["gpt-5.6-terra", "gpt-4.1", "claude-sonnet-5-5"] {
+    // Any model id from the account's catalog, as the person chose it in the AI card.
+    for model in [
+        "gpt-5.6-terra",
+        "gpt-6.1-terra",
+        "gpt-4.1",
+        "claude-sonnet-5-5",
+    ] {
         let home = tempfile::tempdir().unwrap();
         let folder = AgentFolder::new(Some(home.path().into()));
         let original = include_str!("../example-agent/web-reader.agent.md");
@@ -55,7 +61,9 @@ fn prepare_example_sets_only_the_closed_model_line_and_commits_it() {
     }
     let home = tempfile::tempdir().unwrap();
     let folder = AgentFolder::new(Some(home.path().into()));
-    assert!(folder.prepare_example_model("arbitrary-model").is_err());
+    for invalid in ["auto", "has space", "line\nbreak", ""] {
+        assert!(folder.prepare_example_model(invalid).is_err());
+    }
     assert!(!root(home.path()).exists());
 }
 #[test]

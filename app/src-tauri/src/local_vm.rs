@@ -1644,23 +1644,26 @@ impl LocalVm {
         }
         Ok(result)
     }
+    /// `model` is the Copilot model the person confirmed; a saved connection keeps its own.
     pub async fn connect_model(
         &self,
         setup: Arc<crate::setup::SetupStore>,
+        model: Option<String>,
     ) -> Result<crate::setup::ModelSetupState, crate::setup::SetupError> {
-        self.connect_model_choice(setup, None).await
+        self.connect_model_choice(setup, None, model).await
     }
     pub async fn connect_saved_key_model(
         &self,
         setup: Arc<crate::setup::SetupStore>,
         vendor: bridge_runtime_protocol::ModelVendor,
     ) -> Result<crate::setup::ModelSetupState, crate::setup::SetupError> {
-        self.connect_model_choice(setup, Some(vendor)).await
+        self.connect_model_choice(setup, Some(vendor), None).await
     }
     async fn connect_model_choice(
         &self,
         setup: Arc<crate::setup::SetupStore>,
         vendor: Option<bridge_runtime_protocol::ModelVendor>,
+        model: Option<String>,
     ) -> Result<crate::setup::ModelSetupState, crate::setup::SetupError> {
         if !MODEL_IMAGE_AVAILABLE {
             return Err(crate::setup::SetupError::model("modelGuest"));
@@ -1668,20 +1671,22 @@ impl LocalVm {
         let runtime = tokio::runtime::Handle::current();
         let inner = self.inner.clone();
         self.with_client(move |id, client| {
-            let result =
-                if let Some(vendor) = vendor {
-                    setup.connect_saved_key_model(
-                        id,
-                        vendor,
-                        client,
-                        &crate::runtime::credential_store::OsCredentialStore,
-                    )
-                } else {
-                    setup.connect_stored_model(
-                    id, client, &crate::runtime::credential_store::OsCredentialStore,
+            let result = if let Some(vendor) = vendor {
+                setup.connect_saved_key_model(
+                    id,
+                    vendor,
+                    client,
+                    &crate::runtime::credential_store::OsCredentialStore,
+                )
+            } else {
+                setup.connect_stored_model(
+                    id,
+                    model.as_deref(),
+                    client,
+                    &crate::runtime::credential_store::OsCredentialStore,
                     || runtime.block_on(crate::runtime::credentials::capture_stored_github_token()),
                 )
-                };
+            };
             // The owned worker retains details even if its IPC waiter is dropped.
             inner.model_result(&result);
             result

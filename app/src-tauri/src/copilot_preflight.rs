@@ -14,20 +14,19 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// The model Bridge asks for when the person has not chosen one.
-pub const DEFAULT_MODEL: &str = "gpt-5.6-terra";
-/// A preference order, not a guarantee. When the configured model is not in an
-/// account's catalog, Bridge uses the first of these the catalog offers with tool
-/// calling (the example agent depends on web_fetch). Each entry must also be
-/// accepted by the bundled example (`agent_folder::example_for_model`).
+/// A preference order, not a guarantee, and never a choice on its own: it only picks
+/// which offered model the AI card preselects when the person has not chosen one.
+/// The person confirms the model before Bridge connects with it.
 pub const PREFERRED_MODELS: [&str; 5] = [
-    DEFAULT_MODEL,
+    "gpt-5.6-terra",
     "gpt-6.1-terra",
     "gpt-5.6-sol",
     "gpt-5.6-luna",
     "gpt-4.1",
 ];
-/// The same request the workspace's relay makes for readiness.
+/// The same request the workspace's relay makes for readiness. Some accounts report a
+/// different Copilot API host (an enterprise one); the relay still asks this host, so
+/// the preflight asks it too and never follows or calls another.
 pub const MODELS_URL: &str = "https://api.githubcopilot.com/models";
 const HEADERS: [(&str, &str); 5] = [
     ("copilot-integration-id", "copilot-developer-cli"),
@@ -39,8 +38,9 @@ const HEADERS: [(&str, &str); 5] = [
 const MAX_BODY: usize = 1024 * 1024;
 const MAX_MODELS: usize = 512;
 const MAX_ID: usize = 100;
-/// How many offered ids a ModelNotOffered failure carries for the AI card.
-pub const MAX_SHOWN: usize = 8;
+const MAX_NAME: usize = 80;
+/// How many offered models the AI card's picker lists.
+pub const MAX_SHOWN: usize = 50;
 /// A successful answer is reused for the same sign-in for this long.
 pub const FRESH_FOR: Duration = Duration::from_secs(5 * 60);
 
@@ -59,10 +59,14 @@ pub enum PreflightFailure {
     Malformed,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Offered {
-    id: String,
-    /// False when the reply says the model is not a chat model or cannot call tools.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Offered {
+    pub id: String,
+    /// GitHub's display name, when it sent a plain one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// See `parse` for the fields this rests on.
+    #[serde(skip)]
     usable: bool,
 }
 /// Model ids from GitHub's reply that passed the id pattern, in GitHub's order.
@@ -72,14 +76,18 @@ impl Catalog {
     pub fn usable(&self, id: &str) -> bool {
         self.0.iter().any(|m| m.usable && m.id == id)
     }
-    /// A few usable ids for the AI card, in GitHub's order.
-    pub fn shown(&self) -> Vec<String> {
+    /// The usable models for the AI card's picker, in GitHub's order.
+    pub fn models(&self) -> Vec<Offered> {
         self.0
             .iter()
             .filter(|m| m.usable)
             .take(MAX_SHOWN)
-            .map(|m| m.id.clone())
+            .cloned()
             .collect()
+    }
+    /// A few usable ids, for a refusal's details.
+    pub fn shown(&self) -> Vec<String> {
+        self.models().into_iter().take(8).map(|m| m.id).collect()
     }
     pub fn offering(ids: &[&str]) -> Self {
         Self(
@@ -87,6 +95,7 @@ impl Catalog {
                 .filter(|id| valid_id(id))
                 .map(|id| Offered {
                     id: (*id).into(),
+                    name: None,
                     usable: true,
                 })
                 .collect(),
@@ -95,16 +104,9 @@ impl Catalog {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ModelChoice {
-    /// The model Bridge connects with.
-    pub model: String,
-    /// The model Bridge asked for; differs from `model` after a fallback.
-    pub wanted: String,
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CheckError {
     Failure(PreflightFailure),
-    /// Neither the wanted model nor any preferred one is offered.
+    /// The chosen model is not among the account's usable models.
     NotOffered {
         wanted: String,
         offered: Vec<String>,
@@ -133,23 +135,30 @@ pub fn token_type_ok(token: &[u8]) -> bool {
     })
 }
 
-/// Configured model if usable, else the first usable preferred model.
-pub fn choose(wanted: &str, catalog: &Catalog) -> Result<ModelChoice, CheckError> {
-    let pick = |model: &str| ModelChoice {
-        model: model.into(),
-        wanted: wanted.into(),
-    };
-    if catalog.usable(wanted) {
-        return Ok(pick(wanted));
-    }
-    PREFERRED_MODELS
-        .iter()
-        .find(|id| catalog.usable(id))
-        .map(|id| pick(id))
-        .ok_or_else(|| CheckError::NotOffered {
-            wanted: wanted.into(),
+/// Which row the picker starts on: the previous choice if still usable, else the first
+/// usable preferred model, else the first usable model. Never connects by itself.
+pub fn preselect(previous: Option<&str>, catalog: &Catalog) -> Option<String> {
+    previous
+        .filter(|id| catalog.usable(id))
+        .or_else(|| {
+            PREFERRED_MODELS
+                .iter()
+                .copied()
+                .find(|id| catalog.usable(id))
+        })
+        .map(String::from)
+        .or_else(|| catalog.models().into_iter().next().map(|m| m.id))
+}
+/// The person's chosen model must still be usable when Connect runs.
+pub fn require(model: &str, catalog: &Catalog) -> Result<(), CheckError> {
+    if catalog.usable(model) {
+        Ok(())
+    } else {
+        Err(CheckError::NotOffered {
+            wanted: model.into(),
             offered: catalog.shown(),
         })
+    }
 }
 
 #[derive(Deserialize)]
@@ -160,9 +169,19 @@ struct Reply {
 struct Entry {
     id: String,
     #[serde(default)]
+    name: Option<serde_json::Value>,
+    #[serde(default)]
     capabilities: Option<serde_json::Value>,
+    #[serde(default)]
+    model_picker_enabled: Option<serde_json::Value>,
+    #[serde(default)]
+    policy: Option<serde_json::Value>,
 }
 /// Strict on the shape Bridge relies on, tolerant of GitHub's other fields.
+/// A model is usable for agents only when the reply itself says so:
+/// `capabilities.type` is `"chat"`, `capabilities.supports.tool_calls` is `true`,
+/// `model_picker_enabled` is not `false`, and `policy.state`, when sent, is `"enabled"`.
+/// A reply that does not say a model can call tools does not get it listed.
 pub fn parse(body: &[u8]) -> Result<Catalog, PreflightFailure> {
     if body.len() > MAX_BODY {
         return Err(PreflightFailure::Malformed);
@@ -177,15 +196,37 @@ pub fn parse(body: &[u8]) -> Result<Catalog, PreflightFailure> {
             continue;
         }
         let capabilities = entry.capabilities.as_ref();
-        let kind = capabilities.and_then(|c| c.get("type"));
+        let chat = capabilities
+            .and_then(|c| c.get("type"))
+            .and_then(|t| t.as_str())
+            == Some("chat");
         let tools = capabilities
             .and_then(|c| c.get("supports"))
-            .and_then(|s| s.get("tool_calls"));
-        let usable = kind.is_none_or(|t| t.as_str() == Some("chat"))
-            && tools.is_none_or(|t| t.as_bool() != Some(false));
+            .and_then(|s| s.get("tool_calls"))
+            .and_then(|t| t.as_bool())
+            == Some(true);
+        let picker = entry
+            .model_picker_enabled
+            .as_ref()
+            .is_none_or(|p| p.as_bool() != Some(false));
+        let enabled = entry
+            .policy
+            .as_ref()
+            .and_then(|p| p.get("state"))
+            .is_none_or(|state| state.as_str() == Some("enabled"));
+        let name = entry
+            .name
+            .as_ref()
+            .and_then(|n| n.as_str())
+            .filter(|n| {
+                (1..=MAX_NAME).contains(&n.len())
+                    && n.chars().all(|c| c.is_ascii_graphic() || c == ' ')
+            })
+            .map(String::from);
         models.push(Offered {
             id: entry.id,
-            usable,
+            name,
+            usable: chat && tools && picker && enabled,
         });
     }
     Ok(Catalog(models))
@@ -281,9 +322,8 @@ pub async fn fetch_from(
 enum Source {
     Network,
     Fixed(Result<Catalog, PreflightFailure>),
-    /// Unit tests of the setup state machine only: every wanted model is offered,
-    /// whatever the token, without any request.
-    AnyWanted,
+    /// Unit tests of the setup state machine only: synthetic sign-ins, no token check.
+    Unchecked(Catalog),
 }
 struct Cached {
     at: Instant,
@@ -309,8 +349,9 @@ impl Preflight {
     pub fn fixed(answer: Result<Catalog, PreflightFailure>) -> Self {
         Self::with(Source::Fixed(answer))
     }
-    pub fn any_wanted() -> Self {
-        Self::with(Source::AnyWanted)
+    /// Unit tests of the setup state machine: any token, these models, no request.
+    pub fn offline(ids: &[&str]) -> Self {
+        Self::with(Source::Unchecked(Catalog::offering(ids)))
     }
     fn with(source: Source) -> Self {
         Self {
@@ -319,23 +360,15 @@ impl Preflight {
         }
     }
     /// Blocking: call from a native worker thread, never an async task.
-    pub fn check(&self, token: &[u8], wanted: &str) -> Result<ModelChoice, CheckError> {
-        self.check_at(token, wanted, Instant::now())
+    pub fn catalog(&self, token: &[u8]) -> Result<Catalog, PreflightFailure> {
+        self.catalog_at(token, Instant::now())
     }
-    fn check_at(
-        &self,
-        token: &[u8],
-        wanted: &str,
-        now: Instant,
-    ) -> Result<ModelChoice, CheckError> {
-        if matches!(self.source, Source::AnyWanted) {
-            return Ok(ModelChoice {
-                model: wanted.into(),
-                wanted: wanted.into(),
-            });
+    fn catalog_at(&self, token: &[u8], now: Instant) -> Result<Catalog, PreflightFailure> {
+        if let Source::Unchecked(catalog) = &self.source {
+            return Ok(catalog.clone());
         }
         if !token_type_ok(token) {
-            return Err(CheckError::Failure(PreflightFailure::TokenType));
+            return Err(PreflightFailure::TokenType);
         }
         let digest: [u8; 32] = Sha256::digest(token).into();
         let reused = self.cache.lock().ok().and_then(|cache| {
@@ -344,25 +377,27 @@ impl Preflight {
                 .filter(|c| c.digest == digest && now.saturating_duration_since(c.at) < FRESH_FOR)
                 .map(|c| c.catalog.clone())
         });
-        let catalog = match reused {
-            Some(catalog) => catalog,
-            None => {
-                let answer = match &self.source {
-                    Source::Network => fetch_blocking(token),
-                    Source::Fixed(answer) => answer.clone(),
-                    Source::AnyWanted => unreachable!(),
-                };
-                if let Ok(mut cache) = self.cache.lock() {
-                    *cache = answer.as_ref().ok().map(|catalog| Cached {
-                        at: now,
-                        digest,
-                        catalog: catalog.clone(),
-                    });
-                }
-                answer.map_err(CheckError::Failure)?
-            }
+        if let Some(catalog) = reused {
+            return Ok(catalog);
+        }
+        let answer = match &self.source {
+            Source::Network => fetch_blocking(token),
+            Source::Fixed(answer) => answer.clone(),
+            Source::Unchecked(_) => unreachable!(),
         };
-        choose(wanted, &catalog)
+        if let Ok(mut cache) = self.cache.lock() {
+            *cache = answer.as_ref().ok().map(|catalog| Cached {
+                at: now,
+                digest,
+                catalog: catalog.clone(),
+            });
+        }
+        answer
+    }
+    /// The catalog plus the chosen model's presence, before Connect touches the workspace.
+    pub fn require(&self, token: &[u8], model: &str) -> Result<(), CheckError> {
+        let catalog = self.catalog(token).map_err(CheckError::Failure)?;
+        require(model, &catalog)
     }
     /// Drop a remembered answer, e.g. after the sign-in is removed.
     pub fn forget(&self) {

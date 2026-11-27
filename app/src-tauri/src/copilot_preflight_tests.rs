@@ -62,7 +62,10 @@ async fn run(fake: &Fake) -> Result<Catalog, PreflightFailure> {
 }
 const LIVE_SHAPE: &[u8] = br#"{"object":"list","data":[
   {"id":"gpt-5.6-luna","object":"model","model_picker_enabled":true,"capabilities":{"type":"chat","family":"x","supports":{"tool_calls":true,"streaming":true}},"supported_endpoints":["/responses"],"policy":{"state":"enabled"}},
-  {"id":"gpt-6.1-terra","capabilities":{"type":"chat","supports":{"tool_calls":true}}},
+  {"id":"gpt-6.1-terra","name":"GPT-6.1 Terra","capabilities":{"type":"chat","supports":{"tool_calls":true}}},
+  {"id":"hidden-legacy","model_picker_enabled":false,"capabilities":{"type":"chat","supports":{"tool_calls":true}}},
+  {"id":"needs-opt-in","policy":{"state":"unconfigured"},"capabilities":{"type":"chat","supports":{"tool_calls":true}}},
+  {"id":"silent-tools","capabilities":{"type":"chat","supports":{}}},
   {"id":"text-embedding-3-small","capabilities":{"type":"embeddings","supports":{}}},
   {"id":"gpt-4.1","capabilities":{"type":"chat","supports":{"tool_calls":true}}},
   {"id":"no-tools","capabilities":{"type":"chat","supports":{"tool_calls":false}}}
@@ -185,14 +188,17 @@ async fn hostile_bodies_are_malformed() {
 }
 
 #[test]
-fn odd_ids_are_dropped_not_offered() {
-    let catalog = parse(
-        br#"{"data":[{"id":"gpt-4.1\n"},{"id":"<script>"},{"id":"auto"},{"id":""},{"id":"-lead"},
-        {"id":"a b"},{"id":"gpt\u202e1"},{"id":"gpt-4.1","capabilities":7},{"id":"gpt-4.1"},
-        {"id":"ok_1.2-3","capabilities":{"supports":"yes"}}]}"#,
-    )
-    .unwrap();
-    assert_eq!(catalog.shown(), ["gpt-4.1", "ok_1.2-3"]);
+fn odd_ids_and_names_are_dropped_not_offered() {
+    let chat = r#""capabilities":{"type":"chat","supports":{"tool_calls":true}}"#;
+    let body = format!(
+        r#"{{"data":[{{"id":"gpt-4.1\n",{chat}}},{{"id":"<script>",{chat}}},{{"id":"auto",{chat}}},{{"id":"",{chat}}},
+        {{"id":"-lead",{chat}}},{{"id":"a b",{chat}}},{{"id":"gpt\u202e1",{chat}}},{{"id":"gpt-4.1","capabilities":7}},
+        {{"id":"gpt-4.1",{chat},"name":"bad\nname"}},{{"id":"ok_1.2-3",{chat},"name":7}},{{"id":"x","capabilities":{{"supports":"yes"}}}}]}}"#
+    );
+    let catalog = parse(body.as_bytes()).unwrap();
+    // The first gpt-4.1 entry wins and has no tool support, so it is not listed.
+    assert_eq!(catalog.shown(), ["ok_1.2-3"]);
+    assert!(catalog.models().iter().all(|m| m.name.is_none()));
     assert!(!valid_id(&"m".repeat(101)));
 }
 
@@ -213,58 +219,51 @@ fn token_types_are_checked_without_network() {
     }
     let preflight = Preflight::fixed(Ok(Catalog::offering(&["gpt-4.1"])));
     assert_eq!(
-        preflight.check(b"ghp_classic", DEFAULT_MODEL),
-        Err(CheckError::Failure(PreflightFailure::TokenType))
+        preflight.catalog(b"ghp_classic"),
+        Err(PreflightFailure::TokenType)
     );
 }
 
 #[test]
-fn model_choice_prefers_the_configured_model_then_the_list() {
-    let wanted = |ids: &[&str]| choose(DEFAULT_MODEL, &Catalog::offering(ids));
+fn preselection_uses_the_previous_choice_then_the_list_then_the_first_model() {
+    let catalog = Catalog::offering(&["zeta", "gpt-4.1", "gpt-5.6-luna", "gpt-6.1-terra"]);
+    assert_eq!(preselect(Some("zeta"), &catalog).as_deref(), Some("zeta"));
     assert_eq!(
-        wanted(&["gpt-4.1", DEFAULT_MODEL]).unwrap().model,
-        DEFAULT_MODEL
+        preselect(Some("gone"), &catalog).as_deref(),
+        Some("gpt-6.1-terra")
     );
-    let fallback = wanted(&["gpt-4.1", "gpt-5.6-luna", "gpt-6.1-terra"]).unwrap();
-    assert_eq!(fallback.model, "gpt-6.1-terra");
-    assert_eq!(fallback.wanted, DEFAULT_MODEL);
     assert_eq!(
-        wanted(&["gpt-4.1", "gpt-5.6-luna"]).unwrap().model,
-        "gpt-5.6-luna"
+        preselect(None, &Catalog::offering(&["gpt-4.1", "gpt-5.6-luna"])).as_deref(),
+        Some("gpt-5.6-luna")
     );
-    // A configured fallback stays while it is offered.
     assert_eq!(
-        choose("gpt-4.1", &Catalog::offering(&["gpt-4.1", "gpt-6.1-terra"]))
-            .unwrap()
-            .model,
-        "gpt-4.1"
+        preselect(None, &Catalog::offering(&["zeta", "eta"])).as_deref(),
+        Some("zeta")
     );
+    assert_eq!(preselect(None, &Catalog::offering(&[])), None);
+}
+
+#[test]
+fn a_chosen_model_must_still_be_offered() {
+    let catalog = Catalog::offering(&["gpt-4.1"]);
+    assert_eq!(require("gpt-4.1", &catalog), Ok(()));
     let ids: Vec<String> = (0..20).map(|i| format!("other-{i}")).collect();
     let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
-    match wanted(&refs) {
+    match require("gpt-5.6-terra", &Catalog::offering(&refs)) {
         Err(CheckError::NotOffered { wanted, offered }) => {
-            assert_eq!(wanted, DEFAULT_MODEL);
-            assert_eq!(offered.len(), MAX_SHOWN);
-            assert_eq!(offered[0], "other-0");
+            assert_eq!(wanted, "gpt-5.6-terra");
+            assert_eq!(offered.len(), 8);
         }
         other => panic!("{other:?}"),
     }
-    // A model the reply marks as unable to call tools is never chosen.
-    let catalog = parse(
-        br#"{"data":[{"id":"gpt-6.1-terra","capabilities":{"supports":{"tool_calls":false}}},{"id":"gpt-4.1"}]}"#,
-    )
-    .unwrap();
-    assert_eq!(choose(DEFAULT_MODEL, &catalog).unwrap().model, "gpt-4.1");
+    assert_eq!(Catalog::offering(&refs).models().len(), 20);
 }
 
 #[test]
 fn successful_answers_are_reused_for_the_same_sign_in_while_fresh() {
     let preflight = Preflight::fixed(Ok(Catalog::offering(&["gpt-4.1"])));
     let now = Instant::now();
-    assert_eq!(
-        preflight.check_at(TOKEN, DEFAULT_MODEL, now).unwrap().model,
-        "gpt-4.1"
-    );
+    assert!(preflight.catalog_at(TOKEN, now).unwrap().usable("gpt-4.1"));
     let cached = |token: &[u8], at: Instant| {
         preflight.cache.lock().unwrap().as_ref().is_some_and(|c| {
             c.digest == <[u8; 32]>::from(Sha256::digest(token))
@@ -278,21 +277,18 @@ fn successful_answers_are_reused_for_the_same_sign_in_while_fresh() {
     assert!(!cached(TOKEN, now));
     // A failure is never remembered: Check again asks again.
     let failing = Preflight::fixed(Err(PreflightFailure::AccessDenied));
-    assert_eq!(
-        failing.check(TOKEN, DEFAULT_MODEL),
-        Err(CheckError::Failure(PreflightFailure::AccessDenied))
-    );
+    assert_eq!(failing.catalog(TOKEN), Err(PreflightFailure::AccessDenied));
     assert!(failing.cache.lock().unwrap().is_none());
 }
 
 #[test]
 fn debug_output_never_shows_a_token() {
     let preflight = Preflight::fixed(Ok(Catalog::offering(&["gpt-4.1"])));
-    preflight.check(TOKEN, DEFAULT_MODEL).unwrap();
+    preflight.catalog(TOKEN).unwrap();
     let shown = format!(
         "{preflight:?} {:?} {:?}",
-        preflight.check(TOKEN, DEFAULT_MODEL),
-        Preflight::fixed(Err(PreflightFailure::SignInRejected)).check(TOKEN, DEFAULT_MODEL)
+        preflight.require(TOKEN, "gpt-4.1"),
+        Preflight::fixed(Err(PreflightFailure::SignInRejected)).catalog(TOKEN)
     );
     assert!(!shown.contains("synthetic0preflight"), "{shown}");
 }
@@ -300,7 +296,6 @@ fn debug_output_never_shows_a_token() {
 #[test]
 fn preferred_models_pass_the_id_pattern() {
     assert!(PREFERRED_MODELS.iter().all(|id| valid_id(id)));
-    assert_eq!(PREFERRED_MODELS[0], DEFAULT_MODEL);
 }
 
 /// Live check of the real reply shape. Ignored by default; run by hand with
@@ -316,14 +311,9 @@ fn live_reply_parses() {
         Ok(catalog) => {
             println!(
                 "ok; usable ids: {:?}",
-                catalog
-                    .0
-                    .iter()
-                    .filter(|m| m.usable)
-                    .map(|m| &m.id)
-                    .collect::<Vec<_>>()
+                catalog.models().iter().map(|m| &m.id).collect::<Vec<_>>()
             );
-            println!("choice: {:?}", choose(DEFAULT_MODEL, &catalog));
+            println!("preselected: {:?}", preselect(None, &catalog));
         }
         Err(failure) => println!("failure: {failure:?}"),
     }

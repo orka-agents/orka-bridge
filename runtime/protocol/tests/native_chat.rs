@@ -9,6 +9,8 @@ pub mod agents;
 pub mod catalog;
 #[path = "../../../app/src-tauri/src/chat.rs"]
 pub mod chat;
+#[path = "../../../app/src-tauri/src/copilot_preflight.rs"]
+pub mod copilot_preflight;
 #[cfg(debug_assertions)]
 #[path = "../../../app/src-tauri/src/dev_image.rs"]
 pub mod dev_image;

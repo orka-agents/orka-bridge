@@ -253,6 +253,14 @@ pub struct SetupError {
     diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cleanup: Option<(&'static str, &'static str)>,
+    /// Copilot preflight only: the GitHub login read with the sign-in, never an e-mail.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account: Option<String>,
+    /// Copilot preflight only: the model Bridge asked for and a few the account offers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wanted: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offered: Option<Vec<String>>,
 }
 impl SetupError {
     pub(crate) fn connect(diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>) -> Self {
@@ -269,6 +277,9 @@ impl SetupError {
         }
     }
     pub(crate) fn model_detail(&self) -> Option<String> {
+        if let Some(outcome) = self.kind.strip_prefix("modelCopilot") {
+            return Some(format!("{} Copilot preflight: {outcome}", self.message));
+        }
         if let Some((operation, class)) = self.cleanup {
             return Some(format!("{operation}:{class}"));
         }
@@ -305,7 +316,15 @@ impl SetupError {
             "modelCaptureTimedOut" => "Reading the stored GitHub sign-in timed out.",
             "modelStore" => "The native credential store could not save or load the sign-in.",
             "modelGuest" => "The guest model handler is unavailable or is not idle.",
-            "modelReconnect" => "Bridge could not clean up the previous model connection. The local cluster may need a newer image. The saved sign-in was kept.",
+            "modelReconnect" => "Bridge could not remove the previous AI connection from the local cluster. The saved sign-in was kept.",
+            "modelReconnectImage" => "Bridge could not clean up the previous model connection. The local cluster may need a newer image. The saved sign-in was kept.",
+            "modelCopilotTokenType" => "This GitHub sign-in is a classic token, which GitHub Copilot does not accept here.",
+            "modelCopilotSignInRejected" => "GitHub did not accept the GitHub CLI sign-in.",
+            "modelCopilotAccessDenied" => "GitHub Copilot is not available to this GitHub account.",
+            "modelCopilotUnreachable" => "This computer could not reach GitHub Copilot.",
+            "modelCopilotMalformed" => "GitHub Copilot sent a reply Bridge does not understand.",
+            "modelCopilotModelNotOffered" => "GitHub Copilot does not offer the chosen model for this account.",
+            "modelCopilotChooseModel" => "Choose a GitHub Copilot model before connecting.",
             "modelDelivery" => {
                 "Private credential delivery was not acknowledged. Completion is unknown."
             }
@@ -324,6 +343,9 @@ impl SetupError {
             diagnostic: None,
             native: None,
             recovery: None,
+            account: None,
+            wanted: None,
+            offered: None,
         }
     }
 }
@@ -336,6 +358,9 @@ fn storage_error() -> SetupError {
         diagnostic: None,
         native: None,
         recovery: None,
+        account: None,
+        wanted: None,
+        offered: None,
     }
 }
 
@@ -346,7 +371,7 @@ pub mod preflight;
 pub mod help;
 #[path = "setup_model.rs"]
 mod model;
-pub use model::{KeyVendor, ModelSetupState};
+pub use model::{CopilotCheck, KeyVendor, ModelSetupState};
 pub(crate) fn publish_upgrade_metadata(
     root: &Path,
     name: &str,
@@ -360,6 +385,16 @@ pub struct SetupStore {
     root: Option<PathBuf>,
     upgrade_root: Option<PathBuf>,
     access: Mutex<()>,
+    /// Asked before any Copilot sign-in is saved for, or delivered to, the workspace.
+    copilot: crate::copilot_preflight::Preflight,
+    /// The selection of the current boot's Copilot attempt, so a same-lease retry
+    /// repeats the model the preflight chose. A new boot cleans up instead.
+    copilot_attempt: Mutex<
+        Option<(
+            bridge_runtime_protocol::Uuid,
+            bridge_runtime_protocol::ModelSelection,
+        )>,
+    >,
 }
 impl SetupStore {
     pub fn new(app_data: Option<PathBuf>) -> Self {
@@ -371,7 +406,22 @@ impl SetupStore {
             root: app_data.map(|path| path.join("setup-v1")),
             upgrade_root: local,
             access: Mutex::new(()),
+            // Unit tests drive the setup state machine with synthetic sign-ins and no network.
+            copilot: if cfg!(test) {
+                crate::copilot_preflight::Preflight::offline(&["gpt-5.6-terra", "gpt-4.1", "m"])
+            } else {
+                crate::copilot_preflight::Preflight::network()
+            },
+            copilot_attempt: Mutex::new(None),
         }
+    }
+    /// Replace the Copilot preflight's answer source (tests and fixtures).
+    pub fn with_copilot_preflight(
+        mut self,
+        preflight: crate::copilot_preflight::Preflight,
+    ) -> Self {
+        self.copilot = preflight;
+        self
     }
     pub async fn status_async(self: Arc<Self>) -> Result<SetupSnapshot, SetupError> {
         tokio::task::spawn_blocking(move || self.status())
