@@ -240,6 +240,14 @@ function Find-ReadyClusters {
     }
     Find-Control $script:window 'Clusters' $button
 }
+function Find-StartupControl {
+    $clusters = Find-ReadyClusters
+    if (!$script:window) { return }
+    $example = Find-Control $script:window 'See an example first' $button
+    if ($example -and $example.Current.IsEnabled) { return $example }
+    $setUp = Find-Action $script:window 'Set up'
+    if ($clusters -and $setUp) { return $clusters }
+}
 function Find-TrayPoint($Root, [string]$Label) {
     $all = @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
     @("UIA descendants=$($all.Count)"; $all | ForEach-Object { "Name=$($_.Current.Name); Type=$($_.Current.ControlType.ProgrammaticName); Offscreen=$($_.Current.IsOffscreen)" }) | Set-Content (Join-Path $script:themeOutput "tray-$Label.txt")
@@ -369,20 +377,21 @@ try {
         Broadcast-Theme
         Start-Bridge
         $script:originalPid = $script:app.Id
-        Write-StartupEvent 'clusters-wait-begin'
+        Write-StartupEvent 'startup-control-wait-begin'
         try {
-            $clusters = Wait-For 'Clusters button missing' { Find-ReadyClusters } 600
-            Write-StartupEvent 'clusters-found'
+            $startup = Wait-For 'Job start or settled Places missing' { Find-StartupControl } 600
+            Write-StartupEvent 'startup-control-found'
         } catch {
-            Write-StartupEvent 'clusters-wait-failed'
+            Write-StartupEvent 'startup-control-wait-failed'
             throw
         }
+        if ($startup.Current.Name -eq 'See an example first') {
+            Press $startup
+            $clusters = Wait-For 'Clusters button missing after example' { Find-ReadyClusters }
+        } else { $clusters = $startup }
         Press $clusters
         Save-BrowserDiagnostics 'loaded'
         # The dark walk reuses the light walk's profile, so the welcome may already be dismissed.
-        Wait-For 'Welcome or Places did not appear' { (Find-Control $script:window 'Get started' $button) -or (Find-Action $script:window 'Set up') } | Out-Null
-        $start = Find-Control $script:window 'Get started' $button
-        if ($start) { Press $start }
         # Places owns the local entry: this computer's Set up action beside an empty cluster list.
         $setUp = Wait-For 'Set up action missing on Places' { $control = Find-Action $script:window 'Set up'; if ($control -and $control.Current.IsEnabled -and ((Get-UiNames $script:window) -match 'No other clusters added yet')) { $control } }
         Capture 'places-empty'
