@@ -80,7 +80,7 @@ test('a queued Copilot connection is a status row with a secondary Cancel, separ
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   const status = screen.getByRole('status');
   expect(status.textContent).toContain('Queued');
-  expect(status.textContent).toContain('It connects when the workspace is ready.');
+  expect(status.textContent).toContain('Connects when the workspace is ready.');
   expect(status.closest('fieldset')).toBeNull();
   const cancel = screen.getByRole('button', { name: 'Cancel queued connection' });
   expect(cancel.textContent).toBe('Cancel');

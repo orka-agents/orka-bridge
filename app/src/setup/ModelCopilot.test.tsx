@@ -95,7 +95,7 @@ test('while the workspace starts, a checked choice waits with its account and mo
   const onState = vi.fn();
   const view = render(<Model enabled={false} queueable setupCard onState={onState} />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText('GitHub Copilot is ready: signed in as octocat, model gpt-6.1-terra. It connects when the workspace is ready.');
+  await screen.findByText('GitHub Copilot is ready: signed in as octocat, model gpt-6.1-terra. Connects when the workspace is ready.');
   expect(onState).toHaveBeenLastCalledWith('checked');
   expect(commands()).toEqual([['setup_check_model']]);
   view.rerender(<Model enabled queueable={false} setupCard onState={onState} />);

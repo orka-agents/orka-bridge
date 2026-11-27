@@ -897,11 +897,17 @@ fn main() {
                     connected.store(true, std::sync::atomic::Ordering::SeqCst);
                     key_connected.store(false, std::sync::atomic::Ordering::SeqCst);
                     // A synthetic login only; no GitHub CLI or credential is read.
-                    let vendor = matches!(invoke.message.payload(), tauri::ipc::InvokeBody::Json(args) if !args["vendor"].is_null());
+                    let (vendor, model) = match invoke.message.payload() {
+                        tauri::ipc::InvokeBody::Json(args) => (!args["vendor"].is_null(), args["model"].as_str().map(String::from)),
+                        _ => (false, None),
+                    };
+                    // No model yet stands for a saved choice of the fixed catalog's first model.
                     if vendor { json!({"ready":true}) } else {
-                        json!({"ready":true, "connection":{"kind":"copilot", "model":"gpt-5.6-terra", "account":"synthetic-user"}})
+                        json!({"ready":true, "connection":{"kind":"copilot", "model":model.unwrap_or_else(|| "gpt-5.6-terra".into()), "account":"synthetic-user"}})
                     }
                 }
+                // A fixed Copilot catalog: the walk never asks GitHub or reads GitHub CLI.
+                "setup_check_model" => json!({"account":"synthetic-user", "models":[{"id":"gpt-5.6-terra"}, {"id":"gpt-6.1-terra"}], "preselected":"gpt-5.6-terra"}),
                 "setup_connect_key" => {
                     let tauri::ipc::InvokeBody::Json(args) = invoke.message.payload() else { return false; };
                     let vendor = args["vendor"].as_str().unwrap_or("");
