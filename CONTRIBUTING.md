@@ -67,7 +67,7 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `navTaskFails` | As `navTask`, but the task fails | Opens there, then Create task |
 | `navAgent` | A proposed agent card; Create agent writes the file | Opens there |
 
-The Navigator answers in every scenario with the AI connected, with scripted replies chosen by the question: a link or checksum gets a task card, "agent" an agent card, "new to Orka" an explanation, and a repo, monitor or charter question an explanation with no card, as Bridge can't set those up yet. It runs on This computer only: choose `team-dev` in the Orka switcher in `clusterUnreachable` for the can't-reach card, or in `clusterReady` for the card that offers This computer.
+The Navigator answers in every scenario with the AI connected, with scripted replies chosen by the question: a link or checksum gets a task card, "agent" an agent card, "new to Orka" an explanation, and a repo, monitor or charter question an explanation with no card, as Bridge can't set those up yet. It runs on the selected place: in `clusterReady`, choose `team-dev` in the Orka switcher and the Navigator and Try a task run there; in `clusterUnreachable` it shows the can't-reach card.
 
 In Try a task, `web-reader` fetches the page a task names, by a URL or a bare host such as `dl.k8s.io`, so its result shows Used a tool.
 

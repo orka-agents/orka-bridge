@@ -160,6 +160,32 @@ adopting or duplicating the Agent; Bridge does not erase pending work. There is
 no automatic re-enrolment. A legacy remembered place remains stale and separate
 from a newly confirmed place until explicitly forgotten.
 
+### Conversations on a cluster
+
+Try a task and the Navigator run on the selected cluster once it is connected in
+this run and an AI connection is chosen for it. Each conversation creates, in the
+watched namespace, one `bridge-chat-agent-*` or `bridge-nav-agent-*` Agent on
+that AI connection, one `bridge-chat-task-*` or `bridge-nav-task-*` Task of
+`type: ai` per message, and one `bridge-chat-*` or `bridge-nav-*` Session. As
+with Send, Bridge recognises its own resources by these generated names and the
+UID each create acknowledged; it adds no labels. Through Orka it calls:
+
+| Request | Permission |
+|---|---|
+| `GET providers/{name}` (Navigator only, for the default model) | `get providers` |
+| `POST agents`, `GET agents/{name}` | `create`, `get` agents |
+| `POST tasks`, `GET tasks/{name}`, `/result`, `/events` | `create`, `get` tasks |
+| `GET sessions/{name}` | `get sessions` |
+| `DELETE tasks/{name}` (Stop, and replacing a conversation) | `delete tasks` |
+| `DELETE sessions/{name}`, `DELETE agents/{name}` (replacing a conversation) | `delete` sessions, agents |
+
+The creator role grants all of these. Send's run cancellation uses
+`update tasks/cancel`, which the creator role does not grant; conversations do
+not use it. A refused request names the permission it needed. A refused delete
+leaves the earlier conversation's resources on the cluster, and Bridge says so
+once. Quitting Bridge deletes nothing: the last conversation's Agent, Tasks and
+Session stay in the namespace.
+
 ### Observer
 
 An observer can read Agents, Tasks and Sessions in each explicitly enrolled
