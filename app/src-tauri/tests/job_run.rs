@@ -443,6 +443,11 @@ async fn job_is_drafted_run_and_reviewed_and_only_its_own_run_is_kept() {
     assert_eq!(history.results.len(), 1);
     let row = &history.results[0];
     assert_eq!(row.document_id, input.id);
+    // The drafted check isn't the job's result: nothing says passed.
+    let summary = serde_json::to_value(row.report.as_ref().unwrap()).unwrap();
+    assert_eq!(summary, json!({"verdict":"unknown","passed":0,"total":1}));
+    assert!(done.report.is_none());
+    assert!(!json_of(&done).to_string().contains("\"passed\""));
     let job_agent = f
         .script
         .posts
@@ -711,6 +716,11 @@ async fn stop_while_reviewing_cancels_the_review() {
     assert_eq!(outcome.stage, "review");
     assert_eq!(outcome.answer.as_deref(), Some(ANSWER));
     assert!(outcome.review.is_none());
+    // History keeps the job's run, and the reviewer's Agent is the one cleaned up.
+    let reviewer = agent_uid(&f, Role::Reviewer);
+    let history = f.run.local_results().unwrap();
+    assert_eq!(history.results[0].agent_uid, agent_uid(&f, Role::Job));
+    assert!(f.script.cleaned.lock().unwrap().contains(&reviewer));
     f.vm.shutdown().await.unwrap();
 }
 
@@ -794,6 +804,16 @@ async fn one_run_at_a_time_across_jobs_and_agents() {
     );
     assert!(f.home.path().exists());
     f.vm.shutdown().await.unwrap();
+}
+fn agent_uid(f: &Fixture, role: Role) -> String {
+    f.script
+        .posts
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(path, body)| path == "agents" && role_of(&body["spec"]) == role)
+        .map(|(_, body)| format!("uid-{}", body["name"].as_str().unwrap()))
+        .unwrap()
 }
 fn doc(id: Uuid) -> DocumentId {
     serde_json::from_value(json!(id)).unwrap()

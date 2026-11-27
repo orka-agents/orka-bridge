@@ -911,6 +911,8 @@ impl ExampleRun {
             .stage(id, installation, client, vm, target, pair, &stop, true)
             .await;
         let Some((_, review_report)) = end else {
+            // The job itself finished: history keeps its run, so cleanup removes the reviewer.
+            self.keep_job_history(id, installation, &job_handle, &job_report);
             return;
         };
         let review = first_answer(&review_report).and_then(job_run::parse_review);
@@ -932,16 +934,53 @@ impl ExampleRun {
             change(outcome);
         }
     }
+    /// The job's own run in history, as not tested: the drafted check graded it, not a
+    /// test the person wrote. Leaves the snapshot alone; aux stages become unreferenced.
+    fn keep_job_history(
+        &self,
+        id: DocumentId,
+        installation: Uuid,
+        handle: &RunHandle,
+        report: &RunReport,
+    ) {
+        let Some(agent) = handle.agent() else {
+            return;
+        };
+        let observation = LocalRunObservation {
+            installation,
+            document_id: id,
+            source: handle.snapshot().clone(),
+            namespace: agent.namespace.clone(),
+            agent_name: agent.name.clone(),
+            agent_uid: agent.uid.clone(),
+            observed_at: crate::overview::now(),
+            state: RunState::Complete,
+            report: Some(ReportSummary {
+                verdict: crate::engine::run::Verdict::Unknown,
+                passed: 0,
+                total: report.cases.len(),
+            }),
+        };
+        {
+            let mut state = self.0.lock().unwrap();
+            state.recorded_current = true;
+            state.observation = Some(observation.clone());
+        }
+        // Storage failure affects history availability, never the run.
+        let _ = self.4.record(observation);
+    }
     /// Between stages nothing is running, so an accepted Stop ends the run as stopped.
     fn fail_between(&self, id: DocumentId, stop: &watch::Receiver<bool>, error: &'static str) {
-        if !self.stopped_between(id, stop) {
+        if !self.stopped_between(id, stop, RunState::Unknown) {
             self.fail(id, error);
         }
     }
-    fn stopped_between(&self, id: DocumentId, stop: &watch::Receiver<bool>) -> bool {
+    /// Claims the run's end under the lock, so a later Stop is refused instead of
+    /// becoming an unconfirmed cancellation with nothing left to cancel.
+    fn stopped_between(&self, id: DocumentId, stop: &watch::Receiver<bool>, end: RunState) -> bool {
         let mut state = self.0.lock().unwrap();
         let snapshot = state.snapshots.get_mut(&id).unwrap();
-        if snapshot.state != RunState::Running || !snapshot.claim_end(stop, RunState::Running) {
+        if snapshot.state != RunState::Running || !snapshot.claim_end(stop, end) {
             return false;
         }
         snapshot.state = RunState::Complete;
@@ -963,26 +1002,22 @@ impl ExampleRun {
         review: Option<Option<crate::job_run::Review>>,
         stop: &watch::Receiver<bool>,
     ) {
-        self.record(
-            id,
-            installation,
-            handle,
-            None,
-            Some(report),
-            RunState::Complete,
-        );
+        self.keep_job_history(id, installation, handle, &report);
         let error = match &review {
             None => Some("answer"),
             Some(None) => Some("review"),
             Some(Some(_)) => None,
         };
-        if self.stopped_between(id, stop) {
+        if self.stopped_between(id, stop, RunState::Complete) {
             return;
         }
         {
             let mut state = self.0.lock().unwrap();
             let snapshot = state.snapshots.get_mut(&id).unwrap();
             snapshot.state = RunState::Complete;
+            // The stage reports graded the drafter's check and the reviewer's format.
+            // Neither is the job's result; `job.review` is, and it is never a pass.
+            snapshot.report = None;
             if let Some(outcome) = &mut snapshot.job {
                 outcome.review = review.flatten();
                 outcome.finished_at = Some(crate::overview::now());
