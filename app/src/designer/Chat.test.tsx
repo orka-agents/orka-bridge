@@ -366,6 +366,111 @@ test('hidden Chat never follows or tracks the shared page scroll', async () => {
   view.rerender(<main className="page-content"><Chat documentId={id} active /></main>); await poll();
   expect(page.scrollTop).toBe(1000);
 });
+test('an unchanged poll before the scroll event does not pull the reader back to the bottom', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 }, scrollTop: { value: 800, writable: true } });
+  fireEvent.scroll(page); await poll(); expect(page.scrollTop).toBe(800);
+  // The browser reports a scroll a frame later; the next poll can arrive first.
+  page.scrollTop = 0; await poll(); await poll(); expect(page.scrollTop).toBe(0);
+  fireEvent.scroll(page); await poll(); expect(page.scrollTop).toBe(0);
+  page.scrollTop = 960; fireEvent.scroll(page);
+  snapshot = { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Later' }] }] };
+  await poll(); expect(page.scrollTop).toBe(1000);
+});
+test('a following reader stays at the end when the layout grows without a new snapshot', async () => {
+  const observers: { callback: ResizeObserverCallback; targets: Element[] }[] = [];
+  vi.stubGlobal('ResizeObserver', class {
+    entry: { callback: ResizeObserverCallback; targets: Element[] };
+    constructor(callback: ResizeObserverCallback) { this.entry = { callback, targets: [] }; observers.push(this.entry); }
+    observe(target: Element) { this.entry.targets.push(target); }
+    disconnect() { this.entry.targets = []; }
+  });
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main'); let height = 1000;
+  clampedPage(page, () => height, 800); fireEvent.scroll(page);
+  const resize = () => act(() => { for (const { callback, targets } of observers) if (targets.length) callback([], {} as ResizeObserver); });
+  expect(observers.flatMap(entry => entry.targets)).toEqual(expect.arrayContaining([page, field().closest('form')]));
+  height = 1080; await resize(); expect(page.scrollTop).toBe(880);
+  page.scrollTop = 100; fireEvent.scroll(page); height = 1200; await resize(); expect(page.scrollTop).toBe(100);
+});
+test('growth above the transcript is observed, not only the page scroller', async () => {
+  const observed: Element[] = [];
+  vi.stubGlobal('ResizeObserver', class {
+    observe(target: Element) { observed.push(target); }
+    disconnect() {}
+  });
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  render(<main className="page-content"><h2>Designer heading</h2><div className="panel"><Chat documentId={id} /></div></main>); await act(async () => {});
+  const about = screen.getByText('About this conversation').closest('details, section, div')!;
+  expect(observed).toEqual(expect.arrayContaining([
+    screen.getByRole('heading', { name: 'Designer heading' }), document.querySelector('.panel'), screen.getByRole('region', { name: 'Conversation' }),
+  ]));
+  // Opening About grows a box inside the page; one of those boxes must be observed.
+  expect(observed.some(target => target !== screen.getByRole('main') && target.contains(about))).toBe(true);
+});
+test('hidden Chat stops observing layout changes', async () => {
+  const observers: { callback: ResizeObserverCallback; targets: Element[] }[] = [];
+  vi.stubGlobal('ResizeObserver', class {
+    entry: { callback: ResizeObserverCallback; targets: Element[] };
+    constructor(callback: ResizeObserverCallback) { this.entry = { callback, targets: [] }; observers.push(this.entry); }
+    observe(target: Element) { this.entry.targets.push(target); }
+    disconnect() { this.entry.targets = []; }
+  });
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  const view = render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main'); let height = 1000;
+  expect(observers.flatMap(entry => entry.targets)).toContain(screen.getByRole('region', { name: 'Conversation' }));
+  clampedPage(page, () => height, 800); fireEvent.scroll(page);
+  view.rerender(<main className="page-content"><Chat documentId={id} active={false} /></main>); await act(async () => {});
+  page.scrollTop = 300; height = 1400;
+  act(() => { for (const { callback, targets } of observers) if (targets.length) callback([], {} as ResizeObserver); });
+  expect(page.scrollTop).toBe(300);
+});
+// A page whose scrollTop clamps to its range, as a browser's does.
+function clampedPage(page: HTMLElement, height: () => number, top: number, shift = () => 0) {
+  let value = top;
+  const clamp = (next: number) => Math.max(0, Math.min(next, height() - 200));
+  Object.defineProperties(page, {
+    scrollHeight: { get: height, configurable: true }, clientHeight: { value: 200, configurable: true },
+    scrollTop: { get: () => (value = clamp(value + shift())), set: (next: number) => { value = clamp(next); }, configurable: true },
+  });
+}
+const renderedTurns = () => document.querySelectorAll('.chat-turn').length;
+test('Send resumes following when the reader scroll before it has not been reported', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  let finish!: (value: ChatSnapshot) => void; send = () => new Promise(resolve => { finish = resolve; });
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  clampedPage(page, () => 1000, 800); fireEvent.scroll(page);
+  page.scrollTop = 100; enter('Next question');
+  snapshot = { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Next question' }] }] };
+  await act(async () => finish(snapshot)); fireEvent.scroll(page); await poll();
+  expect(page.scrollTop).toBe(800);
+});
+test('an unreported move is judged against the range it happened in, not the grown transcript', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  clampedPage(page, () => renderedTurns() > 2 ? 2200 : renderedTurns() > 1 ? 1600 : 1000, 800); fireEvent.scroll(page);
+  // A nudge within the follow margin lands in the same render as a long new turn.
+  page.scrollTop = 780;
+  snapshot = { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Later' }] }] };
+  await poll(); fireEvent.scroll(page); expect(page.scrollTop).toBe(1400);
+  snapshot = { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Later' }, { ...turn, message: 'Even later' }] }] };
+  await poll(); expect(page.scrollTop).toBe(2000);
+});
+test('scroll anchoring during a growing render keeps following', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main'); let shifted = false;
+  clampedPage(page, () => renderedTurns() > 1 ? 1600 : 1000, 800, () => renderedTurns() > 1 && !shifted ? (shifted = true, 100) : 0);
+  fireEvent.scroll(page);
+  snapshot = { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Later' }] }] };
+  await poll(); expect(page.scrollTop).toBe(1400);
+});
 test('transcript focus clears the current composer after native focus scrolling, without moving visible controls', async () => {
   const { page, summary, dock, flush } = await focusScroll();
   summary.focus();

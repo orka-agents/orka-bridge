@@ -14,7 +14,7 @@ const states: Record<ChatSnapshot['state'], string> = {
   contextUnavailable: 'Earlier messages could not be confirmed. Start a new conversation when available.',
 };
 export default function Chat({ documentId, blocked, active = true }: { documentId: string; blocked?: string; active?: boolean }) {
-  const [snapshot, setSnapshot] = useState<ChatSnapshot>();
+  const [snapshot, setSnapshot] = useState<ChatSnapshot>(); const shown = useRef('');
   const [draft, setDraft] = useState(''); const draftRef = useRef('');
   const [error, setError] = useState<{ message: string; uncertainSend?: boolean }>(); const [readError, setReadError] = useState<string>();
   const [command, setCommand] = useState<ChatCommand>();
@@ -30,7 +30,7 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
       follow.current = area.scrollHeight - area.clientHeight - area.scrollTop < 48;
     } else if (!submitted?.readerMovedAway) follow.current = true;
   };
-  const receive = (value: ChatSnapshot) => {
+  const receive = (value: ChatSnapshot, poll = false) => {
     const turns = value.versions.flatMap(version => version.turns);
     const submitted = pending.current;
     if (submitted && turns.slice(submitted.count).some(turn => turn.message === submitted.message)) {
@@ -49,7 +49,12 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
       }
     }
     if (submitted && !pending.current) setError(current => current?.uncertainSend ? undefined : current);
-    setSnapshot(value);
+    // Each render while following scrolls to the bottom, and the browser reports a reader's
+    // scroll a frame late. Render a poll only if its snapshot changed, so an unchanged
+    // poll can't undo that scroll.
+    const text = JSON.stringify(value);
+    if (poll && text === shown.current) return;
+    shown.current = text; setSnapshot(value);
   };
   const receiveRef = useRef(receive); receiveRef.current = receive;
   useEffect(() => {
@@ -60,7 +65,7 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
         const request = epoch.current;
         const result = await chatCall('agent_chat_status', documentId);
         if (mounted && request === epoch.current) {
-          if (result.ok) { receiveRef.current(result.snapshot); setReadError(undefined); } else setReadError(result.message);
+          if (result.ok) { receiveRef.current(result.snapshot, true); setReadError(undefined); } else setReadError(result.message);
         }
       }
       if (mounted) timer = setTimeout(() => { void observe(); }, 500);
@@ -94,8 +99,18 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
         if (bottom > visibleBottom) area.scrollTop += bottom - visibleBottom;
       });
     };
+    // Polls render only changed snapshots, so keep a following reader at the end when the
+    // page's content changes size without one (a growing draft, an opened disclosure, a
+    // resize). The scroller's own box doesn't grow with its content, so observe the content:
+    // the page's children, and every box from the transcript up to the page.
+    const resized = typeof ResizeObserver === 'undefined' ? undefined
+      : new ResizeObserver(() => { if (follow.current) area.scrollTop = area.scrollHeight; });
+    const observed = new Set<Element>([area, dock, ...area.children]);
+    for (let box: Element | null = conversation; box && box !== area; box = box.parentElement) observed.add(box);
+    for (const element of observed) resized?.observe(element);
     area.addEventListener('scroll', track); conversation.addEventListener('focusin', reveal);
     return () => {
+      resized?.disconnect();
       area.removeEventListener('scroll', track); conversation.removeEventListener('focusin', reveal);
       if (frame !== undefined) cancelAnimationFrame(frame);
       scrollArea.current = null;
