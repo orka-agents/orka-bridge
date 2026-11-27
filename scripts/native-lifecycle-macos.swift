@@ -210,7 +210,9 @@ func capture(_ name: String, menu: Bool = false) throws {
     if menu {
         check(seen.contains("Open Bridge") && seen.contains("Quit Bridge"), "Native menu not drawn in screenshot: \(seen)")
     } else {
-        check(showsText(seen, "web-reader.agent.md"), "Reopened window lost File editor view: \(seen)")
+        // Vision can put a space after a dot in the small mono label ("web-reader. agent.md", run 45942549528) or at a
+        // wrapped path's hyphen; compare the drawn file name without OCR's inserted spaces.
+        check(showsText(seen.replacingOccurrences(of: " ", with: ""), "web-reader.agent.md"), "Reopened window lost File editor view: \(seen)")
         // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
         guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
