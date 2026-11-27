@@ -66,7 +66,36 @@ pub struct RunSnapshot {
     /// Renderer correlation, recorded only by the admission that accepted it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<Uuid>,
+    /// Present only for a job run: its stages, answer and review.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job: Option<JobOutcome>,
 }
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobOutcome {
+    /// draft, run or review: the stage running now, or the last one reached.
+    pub stage: &'static str,
+    pub instructions: Option<String>,
+    pub tools: Vec<String>,
+    pub answer: Option<String>,
+    /// Names from attributable completed calls of the job's own Task.
+    pub used: Vec<String>,
+    pub review: Option<crate::job_run::Review>,
+    pub started_at: u64,
+    pub finished_at: Option<u64>,
+}
+/// A job to run: its id from the saved job and the sentence, checked by `valid_prompt`.
+#[derive(Clone)]
+pub struct JobInput {
+    pub id: DocumentId,
+    pub prompt: String,
+}
+enum Source {
+    Folder(Arc<AgentFolder>, Option<String>),
+    Job(JobInput),
+}
+/// A finished stage's handle and report; None when Stop or a failure ended the run.
+type StageEnd = Option<(RunHandle, RunReport)>;
 impl RunSnapshot {
     fn claim_end(&mut self, stop: &watch::Receiver<bool>, phase: RunState) -> bool {
         let cancelled = *stop.borrow();
@@ -95,6 +124,7 @@ impl RunSnapshot {
             pending: None,
             error: None,
             attempt_id: None,
+            job: None,
         }
     }
 }
@@ -170,6 +200,7 @@ pub struct ExampleRun(
     bool,
     Arc<AgentFolder>,
     crate::local_results::LocalResults,
+    crate::job_run::Drafts,
 );
 impl ExampleRun {
     /// The native shell supplies its runtime; a blocking IPC thread need not enter it.
@@ -191,7 +222,8 @@ impl ExampleRun {
             runtime,
             model_image_available,
             folder,
-            crate::local_results::LocalResults::new(app_local_data),
+            crate::local_results::LocalResults::new(app_local_data.clone()),
+            crate::job_run::Drafts::new(app_local_data),
         ))
     }
     pub fn local_results(&self) -> std::io::Result<crate::local_results::LocalResultsSnapshot> {
@@ -238,6 +270,11 @@ impl ExampleRun {
                 .unwrap_or_else(|| RunSnapshot::idle(id))
         };
         snapshot.busy = state.active.clone();
+        // A job's stage reports grade the drafter's check and the reviewer's format, never
+        // the job; its result is `job.review`. They stay internal for Stop and evidence.
+        if snapshot.job.is_some() {
+            snapshot.report = None;
+        }
         let cancellable = snapshot.state == RunState::Running;
         // Terminal means admission is released, not merely that the report arrived.
         if !state.retired
@@ -411,7 +448,21 @@ impl ExampleRun {
         {
             return Err("The automatic first test requires the connected bundled example.");
         }
-        Ok(self.start_checked(vm, self.3.clone(), Some(model), attempt_id))
+        Ok(self.start_checked(vm, Source::Folder(self.3.clone(), Some(model)), attempt_id))
+    }
+    /// Drafts, runs and reviews a job without a folder, under one admission.
+    pub fn start_job(
+        self: &Arc<Self>,
+        vm: Arc<LocalVm>,
+        job: JobInput,
+    ) -> Result<RunSnapshot, &'static str> {
+        if job.id == DocumentId::SAMPLE
+            || job.id.0.is_nil()
+            || !crate::job_run::valid_prompt(&job.prompt)
+        {
+            return Err("The job is invalid.");
+        }
+        Ok(self.start_checked(vm, Source::Job(job), None))
     }
     pub fn start(self: &Arc<Self>, vm: Arc<LocalVm>) -> RunSnapshot {
         self.start_document(vm, self.3.clone())
@@ -421,16 +472,24 @@ impl ExampleRun {
         vm: Arc<LocalVm>,
         folder: Arc<AgentFolder>,
     ) -> RunSnapshot {
-        self.start_checked(vm, folder, None, None)
+        self.start_checked(vm, Source::Folder(folder, None), None)
     }
     fn start_checked(
         self: &Arc<Self>,
         vm: Arc<LocalVm>,
-        folder: Arc<AgentFolder>,
-        expected_model: Option<String>,
+        source: Source,
         attempt_id: Option<Uuid>,
     ) -> RunSnapshot {
-        let id = folder.document_id();
+        let (id, document) = match &source {
+            Source::Folder(folder, _) => (folder.document_id(), folder.document()),
+            Source::Job(job) => (
+                job.id,
+                DocumentRef {
+                    document_id: job.id,
+                    name: "Your job".into(),
+                },
+            ),
+        };
         if !self.2 {
             return self.status_document(&vm, id);
         }
@@ -456,7 +515,7 @@ impl ExampleRun {
                 state.recorded_current = false;
                 state.retired = false;
             }
-            state.active = Some(folder.document());
+            state.active = Some(document);
             state.recorded_current = false;
             state.stop = Some(sender);
             state.recovery.remove(&id);
@@ -474,6 +533,11 @@ impl ExampleRun {
             snapshot.stage = Some("capture");
             snapshot.model = None;
             snapshot.vendor = None;
+            snapshot.job = matches!(source, Source::Job(_)).then(|| JobOutcome {
+                stage: "draft",
+                started_at: crate::overview::now(),
+                ..JobOutcome::default()
+            });
             // Only this admission may answer for the request; denials keep the old one.
             snapshot.attempt_id = attempt_id;
             // Keep this document's receipts through preflight failures.
@@ -483,12 +547,22 @@ impl ExampleRun {
         let target = vm.clone();
         self.1.spawn(async move {
             let admission = Arc::new(admission);
-            let bundled_example = expected_model.is_some();
             if *stop.borrow() {
                 owner.cancelled_before_start(id);
                 owner.0.lock().unwrap().active = None;
                 return;
             }
+            let (folder, expected_model) = match source {
+                Source::Folder(folder, model) => (folder, model),
+                Source::Job(job) => {
+                    owner.spawned_job(target, admission, job, stop).await;
+                    let mut state = owner.0.lock().unwrap();
+                    state.active = None;
+                    state.stop = None;
+                    return;
+                }
+            };
+            let bundled_example = expected_model.is_some();
             let pair = tokio::task::spawn_blocking(move || {
                 let snapshot = folder.capture().map_err(|_| ())?;
                 if let Some(model) = expected_model {
@@ -612,6 +686,81 @@ impl ExampleRun {
             let _ = self.4.record(observation);
         }
     }
+    async fn spawned_job(
+        self: &Arc<Self>,
+        target: Arc<LocalVm>,
+        admission: Arc<tokio::sync::OwnedMutexGuard<()>>,
+        job: JobInput,
+        stop: watch::Receiver<bool>,
+    ) {
+        let id = job.id;
+        let runtime = tokio::runtime::Handle::current();
+        let worker = self.clone();
+        let observing = target.clone();
+        if target
+            .with_client(move |installation, client| {
+                if !observing.authoring_current(&admission) {
+                    worker.fail(id, "session");
+                    return;
+                }
+                runtime.block_on(worker.execute_job(installation, client, observing, job, stop));
+                if let Some(outcome) = worker
+                    .0
+                    .lock()
+                    .unwrap()
+                    .snapshots
+                    .get_mut(&id)
+                    .and_then(|s| s.job.as_mut())
+                {
+                    outcome.finished_at.get_or_insert_with(crate::overview::now);
+                }
+                // Every stage's Agent was recorded; only the job's run stays referenced.
+                worker.cleanup(installation, client);
+            })
+            .await
+            .is_err()
+        {
+            self.fail(id, "session");
+        }
+    }
+    /// The connected model, or None after recording why the run ended.
+    fn connect(
+        &self,
+        id: DocumentId,
+        client: &mut VmClient,
+        vm: &LocalVm,
+        stop: &watch::Receiver<bool>,
+    ) -> Option<bridge_runtime_protocol::ModelConnection> {
+        let observed = client.model_status();
+        if *stop.borrow() {
+            self.cancelled_before_start(id);
+            return None;
+        }
+        let model = match observed {
+            Ok(model) if model.phase == ModelPhase::Ready => model,
+            Ok(_) => {
+                vm.clear_model_acknowledgment();
+                self.fail(id, "model");
+                return None;
+            }
+            Err(_) => {
+                self.fail(id, "session");
+                return None;
+            }
+        };
+        let Some(connection) = model.connection else {
+            self.fail(id, "model");
+            return None;
+        };
+        self.0
+            .lock()
+            .unwrap()
+            .snapshots
+            .get_mut(&id)
+            .unwrap()
+            .vendor = connection.selection.vendor;
+        Some(connection)
+    }
     async fn execute(
         &self,
         id: DocumentId,
@@ -634,40 +783,268 @@ impl ExampleRun {
             self.fail(id, "unsupportedTool");
             return;
         }
-        let observed = client.model_status();
-        if *stop.borrow() {
-            self.cancelled_before_start(id);
-            return;
-        }
-        let model = match observed {
-            Ok(model) if model.phase == ModelPhase::Ready => model,
-            Ok(_) => {
-                vm.clear_model_acknowledgment();
-                self.fail(id, "model");
-                return;
-            }
-            Err(_) => {
-                self.fail(id, "session");
-                return;
-            }
-        };
-        let Some(connection) = model.connection else {
-            self.fail(id, "model");
+        let Some(connection) = self.connect(id, client, &vm, &stop) else {
             return;
         };
         if bundled_example && connection.selection.model != pair.model() {
             self.fail(id, "model");
             return;
         }
-        self.0
-            .lock()
-            .unwrap()
-            .snapshots
-            .get_mut(&id)
-            .unwrap()
-            .vendor = connection.selection.vendor;
         let boot = client.boot_nonce();
         let provider = connection.selection.provider;
+        self.stage(
+            id,
+            installation,
+            client,
+            vm,
+            (provider, boot),
+            pair,
+            &stop,
+            true,
+        )
+        .await;
+    }
+    /// Drafts (unless a draft for this sentence is saved), runs, then reviews.
+    async fn execute_job(
+        &self,
+        installation: Uuid,
+        client: &mut VmClient,
+        vm: Arc<LocalVm>,
+        job: JobInput,
+        stop: watch::Receiver<bool>,
+    ) {
+        use crate::job_run;
+        let id = job.id;
+        if *stop.borrow() {
+            self.cancelled_before_start(id);
+            return;
+        }
+        let Some(connection) = self.connect(id, client, &vm, &stop) else {
+            return;
+        };
+        let model = connection.selection.model;
+        let target = (connection.selection.provider, client.boot_nonce());
+        self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().model = Some(model.clone());
+        let draft = match self.5.load(id, &job.prompt) {
+            Some(draft) => draft,
+            None => {
+                let Ok(pair) = job_run::draft_pair(&model, &job.prompt) else {
+                    self.fail_between(id, &stop, "draft");
+                    return;
+                };
+                let end = self
+                    .stage(
+                        id,
+                        installation,
+                        client,
+                        vm.clone(),
+                        target.clone(),
+                        pair,
+                        &stop,
+                        false,
+                    )
+                    .await;
+                let Some((_, report)) = end else {
+                    return;
+                };
+                let Some(draft) = first_answer(&report).and_then(job_run::parse_draft) else {
+                    self.fail_between(id, &stop, "draft");
+                    return;
+                };
+                // A lost save only means the next run drafts again.
+                let _ = self.5.save(id, &job.prompt, &draft);
+                draft
+            }
+        };
+        let Ok(pair) = job_run::job_pair(&model, &job.prompt, &draft) else {
+            self.fail_between(id, &stop, "draft");
+            return;
+        };
+        self.update_job(id, |outcome| {
+            outcome.stage = "run";
+            outcome.instructions = Some(draft.instructions.clone());
+            outcome.tools = draft.tools.clone();
+        });
+        let end = self
+            .stage(
+                id,
+                installation,
+                client,
+                vm.clone(),
+                target.clone(),
+                pair,
+                &stop,
+                false,
+            )
+            .await;
+        let Some((job_handle, job_report)) = end else {
+            // Stopped or failed: an answer that already came back is still shown, unreviewed.
+            let mut state = self.0.lock().unwrap();
+            let snapshot = state.snapshots.get_mut(&id).unwrap();
+            let case = snapshot
+                .report
+                .as_ref()
+                .and_then(|r| r.cases.first())
+                .cloned();
+            if let (Some(outcome), Some(case)) = (&mut snapshot.job, case) {
+                outcome.answer = case.answer.filter(|answer| !answer.trim().is_empty());
+                outcome.used = case.completed_tools;
+            }
+            return;
+        };
+        let answer = first_answer(&job_report)
+            .filter(|answer| !answer.trim().is_empty())
+            .map(str::to_owned);
+        self.update_job(id, |outcome| {
+            outcome.answer = answer.clone();
+            outcome.used = job_report
+                .cases
+                .first()
+                .map(|case| case.completed_tools.clone())
+                .unwrap_or_default();
+        });
+        let Some(answer) = answer else {
+            self.finish_job(id, installation, &job_handle, job_report, None, &stop);
+            return;
+        };
+        let Ok(pair) = job_run::review_pair(&model, &job.prompt, &answer) else {
+            self.finish_job(id, installation, &job_handle, job_report, Some(None), &stop);
+            return;
+        };
+        self.update_job(id, |outcome| outcome.stage = "review");
+        let end = self
+            .stage(id, installation, client, vm, target, pair, &stop, true)
+            .await;
+        let Some((_, review_report)) = end else {
+            // The job itself finished: history keeps its run, so cleanup removes the reviewer.
+            self.keep_job_history(id, installation, &job_handle, &job_report);
+            return;
+        };
+        let review = first_answer(&review_report).and_then(job_run::parse_review);
+        self.finish_job(
+            id,
+            installation,
+            &job_handle,
+            job_report,
+            Some(review),
+            &stop,
+        );
+    }
+    fn update_job(&self, id: DocumentId, change: impl FnOnce(&mut JobOutcome)) {
+        let mut state = self.0.lock().unwrap();
+        let snapshot = state.snapshots.get_mut(&id).unwrap();
+        // Each stage starts from its own report; the job's evidence is in `job`.
+        snapshot.report = None;
+        if let Some(outcome) = &mut snapshot.job {
+            change(outcome);
+        }
+    }
+    /// The job's own run in history, as not tested: the drafted check graded it, not a
+    /// test the person wrote. Leaves the snapshot alone; aux stages become unreferenced.
+    fn keep_job_history(
+        &self,
+        id: DocumentId,
+        installation: Uuid,
+        handle: &RunHandle,
+        report: &RunReport,
+    ) {
+        let Some(agent) = handle.agent() else {
+            return;
+        };
+        let observation = LocalRunObservation {
+            installation,
+            document_id: id,
+            source: handle.snapshot().clone(),
+            namespace: agent.namespace.clone(),
+            agent_name: agent.name.clone(),
+            agent_uid: agent.uid.clone(),
+            observed_at: crate::overview::now(),
+            state: RunState::Complete,
+            report: Some(summary(report, true)),
+        };
+        {
+            let mut state = self.0.lock().unwrap();
+            state.recorded_current = true;
+            state.observation = Some(observation.clone());
+        }
+        // Storage failure affects history availability, never the run.
+        let _ = self.4.record(observation);
+    }
+    /// Between stages nothing is running, so an accepted Stop ends the run as stopped.
+    fn fail_between(&self, id: DocumentId, stop: &watch::Receiver<bool>, error: &'static str) {
+        if !self.stopped_between(id, stop, RunState::Unknown) {
+            self.fail(id, error);
+        }
+    }
+    /// Claims the run's end under the lock, so a later Stop is refused instead of
+    /// becoming an unconfirmed cancellation with nothing left to cancel.
+    fn stopped_between(&self, id: DocumentId, stop: &watch::Receiver<bool>, end: RunState) -> bool {
+        let mut state = self.0.lock().unwrap();
+        let snapshot = state.snapshots.get_mut(&id).unwrap();
+        if snapshot.state != RunState::Running || !snapshot.claim_end(stop, end) {
+            return false;
+        }
+        snapshot.state = RunState::Complete;
+        snapshot.cancellation = Cancellation::Cancelled;
+        snapshot.error = None;
+        if let Some(outcome) = &mut snapshot.job {
+            outcome.finished_at = Some(crate::overview::now());
+        }
+        true
+    }
+    /// History keeps the job's own run. `review` None: the job gave no answer;
+    /// Some(None): the review was unusable; after the review stage the run already ended.
+    fn finish_job(
+        &self,
+        id: DocumentId,
+        installation: Uuid,
+        handle: &RunHandle,
+        report: RunReport,
+        review: Option<Option<crate::job_run::Review>>,
+        stop: &watch::Receiver<bool>,
+    ) {
+        // Claim the end before any history I/O, so Stop can't be accepted after the work is done.
+        let stopped = self.stopped_between(id, stop, RunState::Complete);
+        self.keep_job_history(id, installation, handle, &report);
+        let error = match &review {
+            None => Some("answer"),
+            Some(None) => Some("review"),
+            Some(Some(_)) => None,
+        };
+        {
+            let mut state = self.0.lock().unwrap();
+            let snapshot = state.snapshots.get_mut(&id).unwrap();
+            // The stage reports graded the drafter's check and the reviewer's format.
+            // Neither is the job's result; `job.review` is, and it is never a pass.
+            snapshot.report = None;
+            if stopped {
+                return;
+            }
+            snapshot.state = RunState::Complete;
+            if let Some(outcome) = &mut snapshot.job {
+                outcome.review = review.flatten();
+                outcome.finished_at = Some(crate::overview::now());
+            }
+        }
+        if let Some(error) = error {
+            self.fail(id, error);
+        }
+    }
+    /// One pair, submitted and observed. Only the last stage claims the run's end;
+    /// earlier stages hand back their report unless Stop or a failure ended the run.
+    #[allow(clippy::too_many_arguments)]
+    async fn stage(
+        &self,
+        id: DocumentId,
+        installation: Uuid,
+        client: &mut VmClient,
+        vm: Arc<LocalVm>,
+        target: (String, Uuid),
+        pair: ParsedPair,
+        stop: &watch::Receiver<bool>,
+        last: bool,
+    ) -> StageEnd {
+        let (provider, boot) = target;
         let runner = NativeRunner::with_transport(VmRunTransport {
             client: Mutex::new(client),
             provider: provider.clone(),
@@ -677,7 +1054,7 @@ impl ExampleRun {
             Ok(prepared) => prepared,
             Err(_) => {
                 self.fail(id, "submit");
-                return;
+                return None;
             }
         };
         self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().stage = Some("submit");
@@ -691,7 +1068,7 @@ impl ExampleRun {
                     .snapshots
                     .get_mut(&id)
                     .unwrap()
-                    .claim_end(&stop, RunState::Unknown) =>
+                    .claim_end(stop, RunState::Unknown) =>
             {
                 let recovery = Recovery {
                     document: self.0.lock().unwrap().active.clone().unwrap(),
@@ -705,7 +1082,7 @@ impl ExampleRun {
                     }),
                 };
                 self.finish_cancellation(id, &runner, recovery, true).await;
-                return;
+                return None;
             }
             Err(error) => {
                 self.record(
@@ -720,7 +1097,7 @@ impl ExampleRun {
                     RunState::Unknown,
                 );
                 self.fail(id, "submit");
-                return;
+                return None;
             }
         };
         self.record(id, installation, &handle, None, None, RunState::Running);
@@ -751,21 +1128,23 @@ impl ExampleRun {
             .await;
         // Cancel and normal completion compete under the same lock. Once the
         // worker crosses its final Stop check, no request may claim to cancel it.
-        let cancelled = self
-            .0
-            .lock()
-            .unwrap()
-            .snapshots
-            .get_mut(&id)
-            .unwrap()
-            .claim_end(
-                &stop,
-                if observed.is_ok() {
-                    RunState::Complete
-                } else {
-                    RunState::Unknown
-                },
-            );
+        // An earlier stage keeps the run Running, so Stop stays accepted until the next.
+        let cancelled = {
+            let mut state = self.0.lock().unwrap();
+            let snapshot = state.snapshots.get_mut(&id).unwrap();
+            if last || observed.is_err() {
+                snapshot.claim_end(
+                    stop,
+                    if observed.is_ok() {
+                        RunState::Complete
+                    } else {
+                        RunState::Unknown
+                    },
+                )
+            } else {
+                *stop.borrow()
+            }
+        };
         if cancelled {
             let recovery = Recovery {
                 document: self.0.lock().unwrap().active.clone().unwrap(),
@@ -776,23 +1155,26 @@ impl ExampleRun {
                 pending: None,
             };
             self.finish_cancellation(id, &runner, recovery, true).await;
-            return;
+            return None;
         }
         match observed {
+            Ok(report) if !last => Some((handle, report)),
             Ok(report) => {
                 self.record(
                     id,
                     installation,
                     &handle,
                     None,
-                    Some(report),
+                    Some(report.clone()),
                     RunState::Complete,
                 );
                 self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().state = RunState::Complete;
+                Some((handle, report))
             }
             Err(_) => {
                 self.record(id, installation, &handle, None, None, RunState::Unknown);
                 self.fail(id, "observe");
+                None
             }
         }
     }
@@ -806,6 +1188,7 @@ impl ExampleRun {
         phase: RunState,
     ) {
         let mut state = self.0.lock().unwrap();
+        let job = state.snapshots.get(&id).is_some_and(|s| s.job.is_some());
         // Only this operation's acknowledged handle supplies both source and UID.
         // A pre-ack retry failure must leave the previous coherent tuple untouched.
         if let Some(agent) = handle.agent() {
@@ -819,7 +1202,7 @@ impl ExampleRun {
                 agent_uid: agent.uid.clone(),
                 observed_at: crate::overview::now(),
                 state: phase,
-                report: report.as_ref().map(ReportSummary::from),
+                report: report.as_ref().map(|report| summary(report, job)),
             });
         }
         let snapshot = state.snapshots.get_mut(&id).unwrap();
@@ -832,6 +1215,20 @@ impl ExampleRun {
             let _ = self.4.record(observation);
         }
     }
+}
+/// A job's run is recorded as not tested: no stage report is the job's own pass.
+fn summary(report: &RunReport, job: bool) -> ReportSummary {
+    if !job {
+        return ReportSummary::from(report);
+    }
+    ReportSummary {
+        verdict: crate::engine::run::Verdict::Unknown,
+        passed: 0,
+        total: report.cases.len(),
+    }
+}
+fn first_answer(report: &RunReport) -> Option<&str> {
+    report.cases.first().and_then(|case| case.answer.as_deref())
 }
 /// Acknowledged identities only, shared by local Run and remote Send.
 pub fn receipts(handle: &RunHandle) -> Vec<Receipt> {
