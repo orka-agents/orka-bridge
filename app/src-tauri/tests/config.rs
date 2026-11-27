@@ -82,6 +82,8 @@ fn agent_commands_are_granted_only_to_local_main_window() {
         "overview_files",
         "overview_agents",
         "overview_places",
+        "overview_activity",
+        "overview_tool_calls",
         "cluster_places",
         "cluster_reconnect",
         "cluster_select",

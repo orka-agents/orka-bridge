@@ -43,6 +43,7 @@ test('one linked row retains distinct place evidence and keeps Open at the paren
   await userEvent.click(within(parent).getByRole('button', { name: 'Open reader' }));
   expect(props.onOpenDocument).toHaveBeenCalledWith(id);
   expect(within(remote).queryByRole('button', { name: /Open/ })).toBeNull();
+  expect(screen.getAllByRole('heading', { level: 2 }).at(-1)?.textContent).toBe('Recent activity');
 });
 
 test('an unlinked remote Agent has no Open or Run action and keeps Details evidence', async () => {

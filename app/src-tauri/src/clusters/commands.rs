@@ -190,6 +190,17 @@ impl ClusterSession {
     pub async fn overview_one(&self, key: &str) -> Vec<crate::overview_places::Place> {
         self.6.refresh_one(key).await
     }
+    /// Access for Activity reads, with the place's connection revision: only a place this
+    /// session confirmed and last read successfully, otherwise why not.
+    pub(crate) fn activity_connection(
+        &self,
+        key: &str,
+    ) -> (
+        Option<u64>,
+        Result<Arc<RemoteAccess>, crate::overview_places::Lost>,
+    ) {
+        self.6.activity_connection(key)
+    }
     /// A display-only snapshot: never reads kubeconfig, refreshes inventory or renews access.
     pub fn places(&self) -> ClusterPlaceSnapshot {
         // Do not hold the admission lock while reading the independent inventory.

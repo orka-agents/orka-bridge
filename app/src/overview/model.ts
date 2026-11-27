@@ -25,7 +25,7 @@ const absolute = (ms: number) => new Date(ms).toLocaleString();
 const sourceKey = (s: { agent: string; tests: string }) => `${s.agent}/${s.tests}`;
 const fileTitle = (f: SavedFile) => f.summary?.name || f.name;
 // Context name alone when unique, then with namespace, then with the service, so two installations never look alike.
-function placeLabels(places: Place[]) {
+export function placeLabels(places: Place[]) {
   const labels = new Map<string, string>();
   const clash = (key: (p: Place) => string, p: Place) => places.filter(q => key(q) === key(p)).length > 1;
   places.forEach(p => labels.set(p.key, !clash(q => q.context, p) ? p.context : !clash(q => `${q.context}/${q.namespace}`, p) ? `${p.context} · ${p.namespace}` : `${p.context} · ${p.namespace} · ${p.service}`));

@@ -35,6 +35,18 @@ test('two same-name agents with different UIDs: the exact UID card takes focus, 
   view.rerender(<Overview {...props} focus={{ id: 2, sendId: 's2', target: target('uid-one') }} />);
   await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
 });
+test('See in Overview starts one Recent activity pass, and its scoped Send polls do not rescan', async () => {
+  const running = { ...agent('uid-one'), record: { ...record('uid-one'), verdict: 'running' } };
+  const calls = ipc(places([running]));
+  const view = render(<Overview {...props} />);
+  const count = (name: string) => calls.mock.calls.filter(([command]) => command === name).length;
+  await waitFor(() => expect(count('overview_activity')).toBe(1));
+  view.rerender(<Overview {...props} focus={{ id: 1, sendId: 's1', target: target('uid-one') }} />);
+  await waitFor(() => expect(count('overview_activity')).toBe(2));
+  const scoped = () => calls.mock.calls.filter(([command, args]) => command === 'overview_places' && (args as { key?: string } | undefined)?.key === key).length;
+  await waitFor(() => expect(scoped()).toBeGreaterThanOrEqual(3), { timeout: 3000 });
+  expect(count('overview_activity')).toBe(2);
+});
 test.each([false, true])('completion during the first scoped read still reveals the exact target without resetting filters (user moved: %s)', async moved => {
   let release!: (value: unknown) => void; let scopedReads = 0;
   const stale = places([agent('uid-one')]);
@@ -89,7 +101,7 @@ test.each(['revealed', 'expanded', 'collapsed'])('completion revalidates the req
   view.rerender(<Overview {...props} onNewAgent={() => undefined} focus={focus} placesRevision={1} />);
   await screen.findByRole('img', { name: 'team: Failed' });
   expect(filter.value).toBe(disclosure === 'revealed' ? '' : 'same');
-  expect(screen.getByRole('button', { name: disclosure === 'revealed' ? 'All' : 'team', pressed: true })).toBeTruthy();
+  expect(within(screen.getByRole('group', { name: 'Place' })).getByRole('button', { name: disclosure === 'revealed' ? 'All' : 'team', pressed: true })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Show places for same-name' }).getAttribute('aria-expanded')).toBe(String(disclosure !== 'collapsed'));
   if (before) {
     expect(screen.getByRole('article', { name: 'team, Failed' })).toBe(before);
