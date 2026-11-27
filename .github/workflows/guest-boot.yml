@@ -1,0 +1,151 @@
+name: Guest boot
+
+on:
+  pull_request:
+    paths:
+      - 'images/guest/**'
+      - 'runtime/Cargo.lock'
+      - 'runtime/Cargo.toml'
+      - 'runtime/artifact.py'
+      - 'runtime/guest/**'
+      - 'runtime/protocol/**'
+      - '.github/workflows/guest-boot.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'images/guest/**'
+      - 'runtime/Cargo.lock'
+      - 'runtime/Cargo.toml'
+      - 'runtime/artifact.py'
+      - 'runtime/guest/**'
+      - 'runtime/protocol/**'
+      - '.github/workflows/guest-boot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guest-boot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  base:
+    name: Base reference boot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prepare the runner for KVM guests
+        run: |
+          echo "WORK=$RUNNER_TEMP/guest-boot" >> "$GITHUB_ENV"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          test -r /dev/kvm
+          test -w /dev/kvm
+          df -h /
+          # The base case uses about 5 GB. Deleting preinstalled toolchains takes
+          # minutes, so do it only when the runner image leaves less than 15 GB.
+          avail=$(df --output=avail -BG / | tail -n 1 | tr -d ' G')
+          case "$avail" in
+            ''|*[!0-9]*) echo "::error::Could not read the free space on /: '$avail'"; exit 1 ;;
+          esac
+          if [ "$avail" -lt 15 ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+            df -h /
+          fi
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: '1.98.1'
+          targets: x86_64-unknown-linux-musl
+      - name: Build the endpoint from this commit
+        env:
+          RUSTFLAGS: '-C linker=rust-lld -C link-self-contained=yes -C target-feature=+crt-static'
+        run: |
+          cargo +1.98.1 build --manifest-path runtime/Cargo.toml --locked --release -p bridge-guest --target x86_64-unknown-linux-musl
+          mkdir -p "$WORK/runtime"
+          cp runtime/target/x86_64-unknown-linux-musl/release/bridge-guest "$WORK/runtime/bridge-guest"
+          python3 runtime/artifact.py --target x86_64-unknown-linux-musl --binary "$WORK/runtime/bridge-guest" --out "$WORK/runtime/provenance.json"
+      - id: inputs
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.WORK }}/downloads
+          key: guest-boot-inputs-${{ hashFiles('images/guest/ci/sources.json') }}
+      - name: Fetch and verify pinned inputs
+        run: python3 images/guest/ci_inputs.py fetch --out "$WORK/downloads"
+      - if: steps.inputs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.WORK }}/downloads
+          key: ${{ steps.inputs.outputs.cache-primary-key }}
+      - id: builder
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.WORK }}/builder.tar
+          key: guest-boot-builder-${{ hashFiles('images/guest/ci/Dockerfile') }}
+      - name: Prepare the builder image
+        env:
+          BUILDER_KEY: ${{ steps.builder.outputs.cache-primary-key }}
+        run: |
+          # A restored builder is trusted as this repository's cache content. One
+          # that fails to load is rebuilt for this run only: the save step below
+          # runs only on a cache miss, so the warning names the entry to delete.
+          # Building without BuildKit's cache avoids reusing layers that a failed
+          # load left incomplete.
+          if [ -f "$WORK/builder.tar" ] && docker load --input "$WORK/builder.tar"; then
+            rm "$WORK/builder.tar"
+          else
+            if [ -f "$WORK/builder.tar" ]; then
+              echo "::warning::The cached builder image failed to load and was rebuilt. Delete the $BUILDER_KEY cache entry to replace it."
+            fi
+            rm -f "$WORK/builder.tar"
+            docker build --no-cache --tag bridge-guest-builder:ci images/guest/ci
+            docker save --output "$WORK/builder.tar" bridge-guest-builder:ci
+          fi
+          # Retain the builder's identity and package set with the receipts.
+          docker image inspect --format '{{.Id}}' bridge-guest-builder:ci > "$WORK/builder-image.txt"
+          cat "$WORK/builder-image.txt"
+          docker run --rm --network none bridge-guest-builder:ci dpkg-query -W > "$WORK/builder-packages.txt"
+      - name: Lock inputs without networking
+        run: |
+          docker run --rm --network none --volume "$PWD:/src:ro" --volume "$WORK:/work" bridge-guest-builder:ci \
+            python3 /src/images/guest/ci_inputs.py lock --downloads /work/downloads --runtime /work/runtime --out /work/inputs
+      - name: Assemble the OS without networking
+        run: |
+          docker run --rm --network none --device /dev/kvm --volume "$PWD:/src:ro" --volume "$WORK:/work" bridge-guest-builder:ci \
+            python3 /src/images/guest/build.py --lock /work/inputs/inputs.json --out /work/build
+      - name: Boot the base case without networking
+        run: |
+          mkdir -p "$WORK/runs"
+          docker run --rm --network none --device /dev/kvm --volume "$PWD:/src:ro" --volume "$WORK:/work" bridge-guest-builder:ci \
+            python3 /src/images/guest/boot_test.py --case base --image /work/build/os.qcow2 --lock /work/inputs/inputs.json --out /work/runs/base
+      - if: steps.builder.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.WORK }}/builder.tar
+          key: ${{ steps.builder.outputs.cache-primary-key }}
+      - name: Report disk use
+        if: always()
+        run: |
+          df -h /
+          sudo du -sh "${WORK:?}"/* || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: guest-boot-base
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            ${{ env.WORK }}/builder-image.txt
+            ${{ env.WORK }}/builder-packages.txt
+            ${{ env.WORK }}/inputs/inputs.json
+            ${{ env.WORK }}/build/build.json
+            ${{ env.WORK }}/runs/base/boot.json
+            ${{ env.WORK }}/runs/base/*/case.json
+            ${{ env.WORK }}/runs/base/*/qemu.log
+            ${{ env.WORK }}/runs/base/*/serial.log
