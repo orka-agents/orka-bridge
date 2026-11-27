@@ -5,6 +5,7 @@ pub mod catalog;
 pub mod chat;
 pub mod clusters;
 pub mod copilot_environment;
+pub mod copilot_preflight;
 #[cfg(debug_assertions)]
 pub mod dev_image;
 pub mod engine;
