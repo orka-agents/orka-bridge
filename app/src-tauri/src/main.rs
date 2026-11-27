@@ -434,18 +434,40 @@ fn agent_chat_status(
 ) -> ChatSnapshot {
     state.status(document_id)
 }
+/// The selected place for one message: the local workspace, or the cluster named by the
+/// renderer's opaque ids for a target and AI connection already confirmed in this run.
+fn chat_channel(
+    vm: &Arc<LocalVm>,
+    clusters: &bridge_engine::clusters::commands::ClusterSession,
+    target_id: Option<String>,
+    provider_id: Option<String>,
+) -> Result<bridge_engine::chat::Channel, ChatError> {
+    match (target_id, provider_id) {
+        (None, None) => Ok(bridge_engine::chat::Channel::Local(vm.clone())),
+        (Some(target), Some(provider)) => {
+            bridge_engine::clusters::chat::channel(clusters, &target, &provider)
+                .map(bridge_engine::chat::Channel::Cluster)
+        }
+        _ => Err(ChatError::Model),
+    }
+}
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn agent_chat_send(
     document_id: DocumentId,
     message: String,
+    target_id: Option<String>,
+    provider_id: Option<String>,
     agents: tauri::State<'_, Arc<Agents>>,
     state: tauri::State<'_, Arc<ChatOwner>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
 ) -> Result<ChatSnapshot, ChatError> {
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id)?;
     let folder = document_folder(agents.inner().clone(), document_id)
         .await
         .map_err(|_| ChatError::Source)?;
-    state.send(vm.inner().clone(), folder, message)
+    state.send_on(channel, folder, message)
 }
 #[tauri::command]
 fn agent_chat_reconnect(
@@ -481,17 +503,21 @@ fn navigator_status(state: tauri::State<'_, NavigatorChat>) -> NavigatorSnapshot
 #[tauri::command]
 async fn navigator_send(
     message: String,
+    target_id: Option<String>,
+    provider_id: Option<String>,
     agents: tauri::State<'_, Arc<Agents>>,
     state: tauri::State<'_, NavigatorChat>,
     vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
 ) -> Result<NavigatorSnapshot, ChatError> {
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id)?;
     let agents = agents.inner().clone();
     let saved = tauri::async_runtime::spawn_blocking(move || navigator::saved_agents(&agents))
         .await
         .map_err(|_| ChatError::Source)?;
     let owner = state.0.clone();
     owner
-        .send_navigator(vm.inner().clone(), saved, message)
+        .send_navigator_on(channel, saved, message)
         .map(|chat| navigator::snapshot(&owner, chat))
 }
 #[tauri::command]
