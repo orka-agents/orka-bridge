@@ -5,7 +5,7 @@ import TryTask, { duration } from './TryTask';
 import { readFileSync } from 'node:fs';
 import type { ChatSnapshot, ChatTurn } from './chat-api';
 const id = '9b2b93c4-375c-4815-9717-39852a96e411';
-const idle: ChatSnapshot = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+const idle: ChatSnapshot = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
 const turn: ChatTurn = { message: 'Hello', answer: 'Hello back', phase: 'Succeeded', tools: [], contextRetained: true, terminationUnconfirmed: false, stopUnconfirmed: false, startedAt: 1_700_000_000_000, finishedAt: 1_700_000_012_000 };
 let snapshot: ChatSnapshot; let calls: { command: string; args: Record<string, unknown> }[];
 let send: (() => unknown) | undefined; let renew: (() => unknown) | undefined;
@@ -505,7 +505,9 @@ const blockedReason = 'Wait for your changes to save.';
 test('a blocked idle Try a task does not claim Ready and disables Run again with the exact reason', async () => {
   snapshot = { ...idle, versions: [{ turns: [turn] }] };
   await open(blockedReason);
-  expect(screen.getByRole('status').textContent).toBe('Try a task is unavailable.');
+  // The hint gives the reason; the status line does not add a second message.
+  expect(screen.getByRole('status').textContent).toBe('');
+  expect(screen.getByText(blockedReason)).toBeTruthy();
   const again = screen.getByRole('button', { name: 'Run again' });
   expect(again.hasAttribute('disabled')).toBe(true); expect(again.getAttribute('title')).toBe(blockedReason);
   fireEvent.click(again); await settle();
@@ -552,4 +554,32 @@ test('two Try a task views of the same agent keep their own field and hint ids',
   expect(new Set(fields.map(field => field.id)).size).toBe(2);
   expect(new Set(fields.map(field => field.getAttribute('aria-describedby'))).size).toBe(2);
   for (const field of fields) expect(document.getElementById(field.getAttribute('aria-describedby')!)?.textContent).toBeTruthy();
+});
+const place = { name: 'team-dev', targetId: '00000000-0000-4000-8000-000000000001', providerId: '00000000-0000-4000-8000-000000000002' };
+test('on a cluster a task is sent there by its ids and the composer says where it runs', async () => {
+  render(<TryTask documentId={id} agentName="web-reader" place={place} />); await settle();
+  expect(screen.getByRole('region', { name: 'Try a task on team-dev' })).toBeTruthy();
+  expect(screen.getByText('Runs once on team-dev. It does not change test results.')).toBeTruthy();
+  send = () => (snapshot = { ...idle, state: 'preparing', busy: true, canSend: false });
+  await enter('Read it');
+  expect(sends().map(c => c.args)).toEqual([{ documentId: id, message: 'Read it', targetId: place.targetId, providerId: place.providerId }]);
+  // Stop and New act on the conversation where it started: they name no place.
+  expect(calls.find(c => c.command === 'agent_chat_new')?.args).toEqual({ documentId: id });
+});
+test.each([
+  [{ error: 'permission', denied: 'deleteTasks' }, 'Your access to this cluster doesn’t allow “delete tasks” in its namespace. Ask the cluster’s administrator to add it.'],
+  [{ error: 'sessionsUnsupported', denied: null }, 'This cluster’s Orka is too old for Try a task. It needs Orka v0.4.0 or later.'],
+  [{ error: 'clusterUnavailable', denied: null }, 'Bridge couldn’t reach the selected cluster. Reconnect it in Clusters, then try again.'],
+] as const)('a cluster refusal %j is one precise message', async (extra, message) => {
+  snapshot = { ...idle, state: 'contextUnavailable', canSend: false, ...extra };
+  render(<TryTask documentId={id} agentName="web-reader" place={place} />); await settle();
+  expect(screen.getByRole('alert').textContent).toBe(message);
+  expect(screen.getByRole('status').classList.contains('sr-only')).toBe(true);
+});
+test('a cluster that kept earlier tasks says so once, and About names what Quit leaves', async () => {
+  snapshot = { ...idle, keptOnCluster: true, versions: [{ turns: [turn] }] };
+  render(<TryTask documentId={id} agentName="web-reader" place={place} />); await settle();
+  expect(screen.getAllByText('Earlier tasks stay on team-dev: your access there doesn’t allow Bridge to delete them.')).toHaveLength(1);
+  const about = screen.getByText('About tasks here').closest('details')!;
+  expect(about.textContent).toContain('Quitting Bridge leaves the last task there.');
 });

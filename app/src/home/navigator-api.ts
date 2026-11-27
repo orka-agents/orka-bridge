@@ -1,9 +1,10 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { type ChatCommand, type ChatResult, type ChatSnapshot, chatErrors, isChatSnapshot } from '../designer/chat-api';
+import { type ChatCommand, type ChatPlace, type ChatResult, type ChatSnapshot, chatErrors, isChatSnapshot } from '../designer/chat-api';
 
 // The key of the Navigator's one live conversation (navigator.rs CONVERSATION). Never a saved agent file.
 export const NAVIGATOR_ID = '6e617669-6761-4074-9f2e-6e6176696761';
-export type ThinksWith = { kind: 'copilot' | 'openai' | 'anthropic'; model: string };
+// `cluster` is a cluster's AI connection, whose vendor Bridge doesn't know.
+export type ThinksWith = { kind: 'copilot' | 'openai' | 'anthropic' | 'cluster'; model: string };
 export type NavigatorSnapshot = { chat: ChatSnapshot; thinksWith: ThinksWith | null };
 export type NavigatorResult = ChatResult & { thinksWith?: ThinksWith | null };
 
@@ -20,6 +21,9 @@ export const navigatorErrors: Record<keyof typeof chatErrors, string> = {
   contextUnavailable: 'This conversation could not be confirmed. Start a new conversation.',
   workspaceChanged: 'The workspace changed. Start a new conversation.',
   interrupted: 'The answer was interrupted. Nothing was created or changed.',
+  permission: 'Your access to this cluster doesn’t allow the Navigator. Ask the cluster’s administrator for access.',
+  sessionsUnsupported: 'This cluster’s Orka is too old for the Navigator. It needs Orka v0.4.0 or later.',
+  clusterUnavailable: 'Bridge couldn’t reach the selected cluster. Reconnect it in Clusters, then try again.',
 };
 
 const commands: Record<ChatCommand, string> = {
@@ -32,19 +36,19 @@ const exactKeys = (value: Record<string, unknown>, keys: string[]) => Object.key
 export function isNavigatorSnapshot(value: unknown): value is NavigatorSnapshot {
   if (!object(value) || !exactKeys(value, ['chat', 'thinksWith'])) return false;
   const { chat, thinksWith } = value;
-  return object(chat) && exactKeys(chat, ['documentId', 'state', 'busy', 'canSend', 'versions', 'error']) && isChatSnapshot(chat)
+  return object(chat) && exactKeys(chat, ['documentId', 'state', 'busy', 'canSend', 'versions', 'error', 'denied', 'keptOnCluster']) && isChatSnapshot(chat)
     && chat.documentId === NAVIGATOR_ID
     && chat.versions.every(version => exactKeys(version, ['turns']) && version.turns.every(turn => exactKeys(turn, ['message', 'answer', 'phase', 'tools', 'contextRetained', 'terminationUnconfirmed', 'stopUnconfirmed', 'startedAt', 'finishedAt'])
       && turn.tools.every(tool => exactKeys(tool, ['name', 'callId', 'phase']))))
     && (thinksWith === null || object(thinksWith) && exactKeys(thinksWith, ['kind', 'model'])
-      && ['copilot', 'openai', 'anthropic'].includes(thinksWith.kind as string) && typeof thinksWith.model === 'string' && thinksWith.model.length > 0 && thinksWith.model.length <= 256);
+      && ['copilot', 'openai', 'anthropic', 'cluster'].includes(thinksWith.kind as string) && typeof thinksWith.model === 'string' && thinksWith.model.length > 0 && thinksWith.model.length <= 256);
 }
 
 // Speaks the Try a task command set so useTurn can reconcile the Navigator's turns the same way.
-export async function navigatorCall(command: ChatCommand, _documentId: string, message?: string): Promise<NavigatorResult> {
+export async function navigatorCall(command: ChatCommand, _documentId: string, message?: string, place?: ChatPlace): Promise<NavigatorResult> {
   if (!isTauri()) return { ok: false, message: 'The Navigator is available only in the native app.' };
   try {
-    const value = await invoke<unknown>(commands[command], command === 'agent_chat_send' ? { message } : {});
+    const value = await invoke<unknown>(commands[command], command === 'agent_chat_send' ? { message, ...place } : {});
     if (isNavigatorSnapshot(value)) return { ok: true, snapshot: value.chat, thinksWith: value.thinksWith };
   } catch (error) {
     if (typeof error === 'string' && Object.hasOwn(navigatorErrors, error)) return { ok: false, message: navigatorErrors[error as keyof typeof chatErrors] };

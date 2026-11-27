@@ -59,7 +59,7 @@ test.each(['Try a task', 'File'])('creation from %s opens empty Instructions wit
   native((command, args) => {
     calls.push(command);
     if (command === 'agent_create') return id;
-    if (command === 'agent_chat_status') return { documentId: args.documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+    if (command === 'agent_chat_status') return { documentId: args.documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
   });
   const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: previousView }));
@@ -75,7 +75,7 @@ test.each(['Try a task', 'File'])('creation from %s opens empty Instructions wit
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'Try a task' }));
   expect(screen.getByText(/write instructions in Agent view before trying a task/i)).toBeTruthy();
-  await screen.findByText('Try a task is unavailable.');
+  expect(screen.queryByText('Try a task is unavailable.')).toBeNull();
   await user.type(screen.getByRole('textbox', { name: /one task$/ }), 'Hello{Enter}');
   expect(calls).not.toContain('agent_run');
   expect(calls).not.toContain('agent_chat_send');

@@ -5,7 +5,7 @@ import { CardSection, type Status, StatusIcon, StatusPill } from '../components/
 import { Disclosure } from '../components/Disclosure';
 import { relativeTime } from '../components/RelativeTime';
 import { builtInTools } from './built-in-tools';
-import { type ChatSnapshot, type ChatTurn, chatErrors } from './chat-api';
+import { type ChatPlace, type ChatSnapshot, type ChatTurn, snapshotErrorMessage } from './chat-api';
 import { modelLabel } from './model-label';
 import { useTurn } from './use-turn';
 
@@ -106,13 +106,21 @@ function Result({ label, turn, live, waiting, model, actions }: { label: string;
   </article>;
 }
 
-export default function TryTask({ documentId, agentName, model, blocked, active = true }: { documentId: string; agentName: string; model?: string; blocked?: string; active?: boolean }) {
+// Errors that already say why a cluster can't take the task; the status line stays quiet beside them.
+const clusterErrors: ChatSnapshot['error'][] = ['permission', 'sessionsUnsupported', 'clusterUnavailable'];
+export default function TryTask({ documentId, agentName, model, blocked, place, active = true }: {
+  documentId: string; agentName: string; model?: string; blocked?: string; active?: boolean;
+  // A connected cluster and its chosen AI connection; absent means this computer.
+  place?: ChatPlace & { name: string };
+}) {
+  const where = place?.name ?? 'this computer';
   // Home and Designer can show the same agent at once, so element ids are per instance.
   const instance = useId(); const fieldId = `task-${documentId}-${instance}`; const hintId = `task-hint-${documentId}-${instance}`;
   const composer = useRef<HTMLTextAreaElement>(null); const composing = useRef(false);
   // The model each task was started with, by its place in this agent's list of tasks. Memory only.
   const models = useRef(new Map<number, string | undefined>());
-  const { snapshot, draft, setDraft, error, readError, command, awaitingTurn, pending, act } = useTurn(documentId, blocked);
+  const { snapshot, draft, setDraft, error, readError, command, awaitingTurn, pending, act } = useTurn(documentId, blocked,
+    { place: place && { targetId: place.targetId, providerId: place.providerId } });
   useEffect(() => {
     if (!active) return;
     const field = composer.current;
@@ -153,14 +161,15 @@ export default function TryTask({ documentId, agentName, model, blocked, active 
   const status = pending.current?.uncertain ? 'Checking whether your task was accepted. Do not run it again.'
     : command === 'agent_chat_stop' ? states.requestingStop
     : snapshot?.state === 'working' && current && ['', 'Pending', 'Queued', 'Scheduled'].includes(current.phase) ? 'Waiting to start…'
-    : blocked && snapshot?.state === 'ready' ? 'Try a task is unavailable.'
+    // The hint below the field already says why; one message, not two.
+    : blocked && snapshot?.state === 'ready' ? undefined
     : snapshot ? states[snapshot.state] : 'Opening Try a task…';
-  const routine = status === states.ready || status === states.contextUnavailable && !snapshot?.error;
+  const routine = !status || status === states.ready || status === states.contextUnavailable && (!snapshot?.error || clusterErrors.includes(snapshot.error));
   const canStop = !!snapshot && snapshot.state !== 'ready' && snapshot.state !== 'contextUnavailable';
   const canReconnect = !!snapshot && snapshot.state !== 'contextUnavailable' && !snapshot.busy && (!snapshot.canSend || !!pending.current?.uncertain);
   const snapshotError = snapshot?.state === 'ready' && snapshot.error === 'connection'
-    ? 'The workspace could not be reached. Check Clusters, then try running the task again.'
-    : snapshot?.error ? chatErrors[snapshot.error] : undefined;
+    ? place ? `${place.name} could not be reached. Check Clusters, then try running the task again.` : 'The workspace could not be reached. Check Clusters, then try running the task again.'
+    : snapshot ? snapshotErrorMessage(snapshot) : undefined;
   const confirming = !!current && (snapshot?.state === 'waitingForSession' || snapshot?.state === 'working' && terminal.includes(current.phase));
   const waiting = !current || current.answer !== null ? undefined
     : confirming ? snapshot?.state === 'waitingForSession' ? states.waitingForSession : 'Confirming your agent’s reply…'
@@ -173,7 +182,7 @@ export default function TryTask({ documentId, agentName, model, blocked, active 
   </>;
   // Without a turn for it yet, recovery belongs to the composer; once the task shows, to its result.
   const recoveryOnCard = !!current && !awaitingTurn && (canStop || canReconnect);
-  return <section className="try-task" aria-label="Try a task on this computer">
+  return <section className="try-task" aria-label={`Try a task on ${where}`}>
     <form className="card card-strong try-composer" onSubmit={event => { event.preventDefault(); void run(draft); }}>
       <label className="try-composer-label" htmlFor={fieldId}>Give <span className="try-agent">{agentName}</span> one task</label>
       <textarea className="field" ref={composer} id={fieldId} rows={2} placeholder="Describe the task" value={draft} aria-describedby={hintId}
@@ -185,12 +194,13 @@ export default function TryTask({ documentId, agentName, model, blocked, active 
           }
         }} />
       <div className="try-composer-foot">
-        <p className="muted" id={hintId}>{reason ?? 'Runs once on this computer. It does not change test results.'}<span className="sr-only"> Enter runs the task · Shift+Enter for a new line</span></p>
+        <p className="muted" id={hintId}>{reason ?? `Runs once on ${where}. It does not change test results.`}<span className="sr-only"> Enter runs the task · Shift+Enter for a new line</span></p>
         <Button type="submit" kind="primary" size="large" disabled={!!reason || !draft.trim()} title={reason ?? (!draft.trim() ? 'Describe the task first.' : undefined)}>Run task</Button>
       </div>
       <p className={`try-status${routine ? ' sr-only' : ''}`} role="status" aria-live="polite" aria-atomic="true">{routine && !current ? undefined : status}</p>
       {(error || readError || snapshotError) && <div className="alert alert-failed"><p role="alert" className="alert-title">{error?.message ?? readError ?? snapshotError}</p></div>}
       {!recoveryOnCard && (canStop || canReconnect) && <div className="try-recovery">{recovery}</div>}
+      {place && snapshot?.keptOnCluster && <p className="muted">Earlier tasks stay on {place.name}: your access there doesn’t allow Bridge to delete them.</p>}
     </form>
     {current ? <Result label="Task result" turn={current} live={live} waiting={waiting} model={models.current.get(turns.length - 1)}
       actions={recoveryOnCard ? recovery : <Button type="button" kind="secondary" disabled={!!reason} title={reason} onClick={() => { void run(current.message); }}>Run again</Button>} />
@@ -204,7 +214,10 @@ export default function TryTask({ documentId, agentName, model, blocked, active 
         <p>Earlier tasks are kept only while Bridge is open.</p>
         <p>Each task starts fresh and doesn’t remember earlier ones.</p>
         <p>Stop asks the task to stop. A tool that already started may finish, and what it did isn’t undone.</p>
-        <p>If a task can’t be stopped, restart the workspace.</p>
+        {place ? <>
+          <p>On {place.name}, Bridge deletes a task’s agent and record when you run the next one. Quitting Bridge leaves the last task there.</p>
+          <p>If a task can’t be stopped, it ends at its two-minute limit.</p>
+        </> : <p>If a task can’t be stopped, restart the workspace.</p>}
       </div>
     </Disclosure>
   </section>;

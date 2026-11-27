@@ -247,7 +247,12 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     : instructionsMissing || testDraft ? 'Write instructions in Agent view and complete the test file on disk before sending.'
     : reloading ? 'Wait for your saved files to reload' : setupPending ? 'Wait for the workspace to be ready before sending'
     : saveState !== 'saved' || pendingSoul ? 'Save your changes first' : undefined;
-  const chatBlocked = !remote && !workspaceReady ? 'Waiting for the workspace to start.' : instructionsMissing ? 'Write instructions in Agent view before trying a task.' : remote ? 'Try a task runs on the workspace. Choose This computer in Clusters.'
+  // On a cluster, Try a task runs on its chosen AI connection once the cluster is connected in this run.
+  const clusterName = place.kind === 'cluster' ? place.target?.context_name : undefined;
+  const chatPlace = clusterName && targetId && providerId ? { name: clusterName, targetId, providerId } : undefined;
+  const remoteBlock = !remote ? undefined : !targetId ? 'Connect this cluster in Clusters to try a task on it.'
+    : !providerId ? `Choose an AI connection for ${clusterName} in Clusters to try a task on it.` : undefined;
+  const chatBlocked = !remote && !workspaceReady ? 'Waiting for the workspace to start.' : instructionsMissing ? 'Write instructions in Agent view before trying a task.' : remoteBlock ? remoteBlock
     : setupPending ? 'Connect the workspace and the AI in Clusters before trying a task.'
     : documentId !== boundDocument ? 'Wait for your agent to finish saving before switching.'
     : reloading ? 'Wait for your saved files to reload.'
@@ -278,7 +283,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     }} onCancel={() => { setCreating(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.new-agent-entry')?.focus()); }} />}
     <section className="designer" hidden={creating} aria-labelledby={active && !creating ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
-      <div className="agent-heading-copy"><h1 className={info.name ? 'agent-name' : undefined} id={active && !creating ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{view === 'Try' ? <p className="muted">Try a task on this computer before you rely on it.</p> : info.description ? <p className="muted">{info.description}</p> : pair && <p className="muted">No description in the agent file.</p>}</div>
+      <div className="agent-heading-copy"><h1 className={info.name ? 'agent-name' : undefined} id={active && !creating ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{view === 'Try' ? <p className="muted">Try a task on {chatPlace?.name ?? 'this computer'} before you rely on it.</p> : info.description ? <p className="muted">{info.description}</p> : pair && <p className="muted">No description in the agent file.</p>}</div>
       <div className="heading-actions">
         <div className="view-switch" role="group" aria-label="Designer view">
           <button type="button" aria-pressed={view === 'Agent'} onClick={() => setView('Agent')}>Agent</button>
@@ -314,7 +319,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
       </div>
       <section className="designer-try" hidden={view !== 'Try'} aria-labelledby={`try-title-${boundDocument}`}>
         <div className="file-toolbar"><h2 className="section-label" id={`try-title-${boundDocument}`}>Try a task</h2></div>
-        <TryTask key={boundDocument} documentId={boundDocument} agentName={savedName ?? pair.name ?? 'your agent'} model={readForm(draft).model ?? currentCatalog?.reply?.defaultModel ?? undefined} blocked={chatBlocked} active={active && !creating && view === 'Try'} />
+        <TryTask key={boundDocument} documentId={boundDocument} agentName={savedName ?? pair.name ?? 'your agent'} model={readForm(draft).model ?? currentCatalog?.reply?.defaultModel ?? undefined} blocked={chatBlocked} place={chatPlace} active={active && !creating && view === 'Try'} />
       </section>
       <div className="designer-side" hidden={view === 'Try'}>
       {/* While a Send runs or has a result, Team cluster leads and This computer folds to its head line. Keys keep
