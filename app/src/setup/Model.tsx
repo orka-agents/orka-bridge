@@ -4,16 +4,31 @@ import { createPortal } from 'react-dom';
 import { Button } from '../components/Button';
 import { StatusPill } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
-import { companies, connectKey, connectModel, copilotModel, type KeyVendor, keyFailure, type ModelConnection, type ModelFailure, type ModelRecovery, removeModel, resetModel, validKey } from './modelState';
+import { checkCopilot, companies, connectKey, connectModel, type CopilotCatalog, isPreflightCategory, type KeyVendor, keyFailure, type ModelConnection, type ModelFailure, type ModelRecovery, removeModel, resetModel, validKey } from './modelState';
 import type { HelpTopic } from './recovery-info';
 
-export type ModelState = 'idle' | 'queued' | 'connecting' | 'removing' | 'resetting' | 'resetFailed' | 'removalFailed' | 'connected' | 'failed';
+// `checking` and `checked` are a Copilot choice checked on this computer while the workspace is still on its way.
+export type ModelState = 'idle' | 'queued' | 'checking' | 'checked' | 'connecting' | 'removing' | 'resetting' | 'resetFailed' | 'removalFailed' | 'connected' | 'failed';
+const ghLogin = 'gh auth login --hostname github.com --web';
+// What to do next after a Copilot preflight refusal; nothing reached the workspace.
+function preflightStep(error: ModelFailure, hasSignIn: boolean): { summary: string; step: string; command?: string } | undefined {
+  const again = hasSignIn ? ' Bridge saved an earlier sign-in: remove it first, then connect again.' : ' Then press Check again.';
+  switch (error.category) {
+    case 'modelCopilotTokenType': return { summary: error.message, step: `Sign in to GitHub CLI again with your browser in your terminal.${again}`, command: ghLogin };
+    case 'modelCopilotSignInRejected': return { summary: error.message, step: `Sign in again with GitHub CLI in your terminal.${again}`, command: ghLogin };
+    case 'modelCopilotAccessDenied': return { summary: `GitHub Copilot isn't available to ${error.account ?? 'this GitHub account'}.`, step: 'Check the account has Copilot, or that your organisation allows Copilot in the command line. Or use your own API key.' };
+    case 'modelCopilotUnreachable': return { summary: error.message, step: "Check this computer's internet connection, then press Check again." };
+    case 'modelCopilotMalformed': return { summary: error.message, step: 'Press Check again. If it happens again, copy the details for help.' };
+    case 'modelCopilotModelNotOffered': return { summary: `${error.wanted ?? 'The chosen model'} isn't offered to ${error.account ?? 'this GitHub account'} any more.`, step: 'Choose another model, then press Connect the AI.' };
+  }
+}
 // `enabled` is native permission to touch credentials. `queueable` only permits remembering the
 // creator's choice while the workspace is still arriving. `away` means another place was chosen.
 // Each increase of changeRequest explicitly asks to change the AI provider.
 // `setupCard` is first setup's own AI card beside the steps: a Copilot failure takes the card, as its own story.
-export default function Model({ title = 'Connect the AI', enabled, queueable = false, paused = false, away = false, primary = true, changeRequest = 0, sharedConnection = false, recoveryTarget, choiceTarget, inline = false, onPlaceCard = false, setupCard = false, onState, onSettled, onConnectRequest }: {
-  sharedConnection?: boolean; title?: string; choiceTarget?: HTMLElement | null; inline?: boolean; setupCard?: boolean;
+// `diagnostic` is the workspace card's detail line (the guest's typed Connect diagnostic), copied for help.
+export default function Model({ title = 'Connect the AI', enabled, queueable = false, paused = false, away = false, primary = true, changeRequest = 0, sharedConnection = false, recoveryTarget, choiceTarget, inline = false, onPlaceCard = false, setupCard = false, diagnostic, onState, onSettled, onConnectRequest }: {
+  sharedConnection?: boolean; title?: string; choiceTarget?: HTMLElement | null; inline?: boolean; setupCard?: boolean; diagnostic?: string | null;
   enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; primary?: boolean; changeRequest?: number; recoveryTarget?: HTMLElement | null; onPlaceCard?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void; onConnectRequest?: () => void;
 }) {
   // In-memory consent only. It never carries a credential and is consumed once.
@@ -21,6 +36,13 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   const [choice, setChoice] = useState<'copilot' | 'key'>('copilot');
   const [vendor, setVendor] = useState<KeyVendor>('anthropic');
   const [connection, setConnection] = useState<ModelConnection>();
+  // The account's Copilot models, fetched live, and the person's choice among them.
+  const [catalog, setCatalog] = useState<CopilotCatalog>();
+  const [model, setModel] = useState<string>();
+  const [picking, setPicking] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [reconnectFailures, setReconnectFailures] = useState(0);
+  const checkRequest = useRef(0);
   const keyField = useRef<HTMLInputElement>(null);
   const [hasKey, setHasKey] = useState(false);
   const clearKey = useCallback(() => { if (keyField.current) keyField.current.value = ''; setHasKey(false); }, []);
@@ -85,9 +107,9 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     return () => { epoch.current++; };
   }, [enabled]);
   useEffect(() => {
-    onState?.(!enabled ? queued ? 'queued' : 'idle' : busy === 'connect' ? 'connecting' : busy === 'remove' ? 'removing' : busy === 'reset' ? 'resetting' : ready ? 'connected' : error ? failedAction === 'reset' ? 'resetFailed' : failedAction === 'remove' || error.category === 'modelKeyCleanup' ? 'removalFailed' : 'failed' : queued ? 'queued' : 'idle');
-  }, [enabled, busy, ready, error, queued, failedAction, onState]);
-  useEffect(() => { if (away || !enabled) clearKey(); if (away) setQueued(false); }, [away, enabled, clearKey]);
+    onState?.(!enabled ? error && failedAction === 'connect' ? 'failed' : queued ? checking ? 'checking' : catalog ? 'checked' : 'queued' : 'idle' : busy === 'connect' ? 'connecting' : busy === 'remove' ? 'removing' : busy === 'reset' ? 'resetting' : ready ? 'connected' : error ? failedAction === 'reset' ? 'resetFailed' : failedAction === 'remove' || error.category === 'modelKeyCleanup' ? 'removalFailed' : 'failed' : queued ? 'queued' : 'idle');
+  }, [enabled, busy, ready, error, queued, failedAction, onState, checking, catalog]);
+  useEffect(() => { if (away || !enabled) clearKey(); if (away) { setQueued(false); checkRequest.current++; setChecking(false); } }, [away, enabled, clearKey]);
   useEffect(() => {
     // Setup can stay mounted under a hidden tab or cluster page.
     const observer = new MutationObserver(() => { if (root.current?.closest('[hidden]')) clearKey(); });
@@ -142,7 +164,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
       : root.current?.querySelector<HTMLElement>('.model-choice input:checked:not(:disabled)');
     (target ?? heading.current)?.focus();
   });
-  async function perform(action: 'connect' | 'remove' | 'reset') {
+  async function perform(action: 'connect' | 'remove' | 'reset', chosen = model) {
     if (!enabled || paused || active.current || (action === 'connect' && ready)) return;
     if ((action === 'remove' || action === 'reset') && sharedConnection) return;
     if (action === 'reset' && !recovery) return;
@@ -159,22 +181,39 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     if (action === 'remove') setChanging(false);
     if (action === 'reset') setResetAttempts(value => value + 1);
     if (action !== 'connect') setConnected(false);
-    const result = await (action === 'reset' ? resetModel() : action === 'remove' ? removeModel() : choice === 'key' && key ? connectKey(vendor, key) : connectModel(choice === 'key' ? vendor : undefined));
+    const result = await (action === 'reset' ? resetModel() : action === 'remove' ? removeModel() : choice === 'key' && key ? connectKey(vendor, key) : choice === 'key' ? connectModel(vendor) : connectModel(undefined, chosen));
     if (request !== epoch.current) return;
     active.current = false; setBusy(undefined);
+    if (!result.ok && result.catalog && (result.category === 'modelCopilotChooseModel' || result.category === 'modelCopilotModelNotOffered')) {
+      // The sign-in is good: show the account's models. Nothing was saved or sent to the workspace.
+      const list = result.catalog;
+      const pick = chosen && list.models.some(m => m.id === chosen) ? chosen : list.preselected;
+      setCatalog(list); setModel(pick); setAttempted(before.attempted); setRemoved(before.removed);
+      if (result.category === 'modelCopilotChooseModel') {
+        setError(undefined);
+        // On the guided first run the preselected model, named on the card, is the person's confirmation.
+        if (setupCard && !picking && pick && !chosen) { void perform('connect', pick); return; }
+        setPicking(true);
+      } else { setPicking(true); setError(result); }
+      onSettled?.();
+      return;
+    }
     if (result.ok) {
       setConnected(action === 'connect'); setRemoved(action !== 'connect'); setChanging(false);
       if (action === 'reset') { setResetDone(true); setRecovery(undefined); setAttempted(false); setDetails(false); if (anotherProvider) setChoice('key'); }
       if (action === 'connect') {
-        const info = result.connection ?? { kind: 'copilot', model: copilotModel };
-        setConnection(info); setChoice(info.kind);
-        if (info.kind === 'key') setVendor(info.vendor);
-      } else setConnection(undefined);
+        const info: ModelConnection | undefined = result.connection ?? (choice === 'copilot' && chosen ? { kind: 'copilot', model: chosen } : undefined);
+        setConnection(info); if (info) setChoice(info.kind); setPicking(false); setReconnectFailures(0);
+        if (info?.kind === 'key') setVendor(info.vendor);
+      } else { setConnection(undefined); setCatalog(undefined); setModel(undefined); setPicking(false); }
     } else {
       if (result.vendor) { setChoice('key'); setVendor(result.vendor); }
       if (action === 'connect' && result.category === 'modelBusy') { setAttempted(before.attempted); setRemoved(before.removed); }
       if (['modelCaptureUnavailable', 'modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(result.category)) setAttempted(false);
+      // A refused preflight saved nothing: this attempt adds no sign-in to remove.
+      if (isPreflightCategory(result.category)) { setAttempted(before.attempted); setRemoved(before.removed); }
       setError(result);
+      if (result.category === 'modelReconnect') setReconnectFailures(count => count + 1);
       if (result.recovery && (action === 'reset' || result.category === 'modelInstallationMismatch')) setRecovery(result.recovery);
       else if (action === 'reset') setRecovery(value => value && { ...value, resetStage: undefined });
       if ((choice === 'key' || result.vendor) && ['modelCredentialRejected', 'modelProviderUnreachable', 'modelModelUnavailable'].includes(result.category)) setRemoved(true);
@@ -188,8 +227,12 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   async function copy() {
     if (!error) return;
     try {
-      await navigator.clipboard.writeText(['Bridge AI connection', `Operation: ${failedAction === 'reset' ? 'Resetting AI connection' : failedAction === 'remove' ? 'Removing sign-in' : 'Connecting AI'}`, `Category: ${error.category}`,
+      // Finite categories, ids and the workspace's own diagnostic line only: never a token or an e-mail.
+      await navigator.clipboard.writeText(['Bridge AI connection', `Operation: ${failedAction === 'reset' ? 'Resetting AI connection' : failedAction === 'remove' ? 'Removing sign-in' : checking || !enabled ? 'Checking the AI sign-in' : 'Connecting AI'}`, `Category: ${error.category}`,
+        ...(isPreflightCategory(error.category) ? [`Copilot preflight: ${error.category.replace('modelCopilot', '')}`] : []),
+        ...(error.wanted ? [`Chosen model: ${error.wanted}`] : []),
         ...(error.cleanup ? [`Cleanup operation: ${error.cleanup[0]}`, `Cleanup class: ${error.cleanup[1]}`] : []),
+        ...(diagnostic ? [`Workspace detail: ${diagnostic}`] : []),
         ...error.codes.map(code => `OS code: ${code}`),
         ...(recovery ? [`Installation: ${recovery.installation}`, `Saved installation: ${recovery.savedInstallation}`, `Native credential slot: ${recovery.credentialSlot}`, `Reset stage: ${recovery.resetStage ?? (failedAction === 'reset' ? 'Unconfirmed' : 'Not started')}`] : [])].join('\n'));
       setNotice('Details copied. No keys or sign-in tokens are included.');
@@ -198,11 +241,27 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   function choose() {
     onConnectRequest?.();
     refocus.current = document.activeElement === retry.current ? 'connect' : undefined;
-    if (enabled) void perform('connect'); else if (choice === 'copilot' && queueable && !paused) { setQueued(true); setExpanded(false); changeButton.current?.focus(); }
+    if (enabled) void perform('connect'); else if (choice === 'copilot' && queueable && !paused) { setQueued(true); setExpanded(false); changeButton.current?.focus(); void precheck(); }
+  }
+  // While the workspace is on its way: check the GitHub CLI sign-in and list the account's models on
+  // this computer. Nothing is saved or sent to the workspace; Connect checks again if this goes stale.
+  async function precheck() {
+    // The latest request wins; one the person cancelled or moved away from is dropped.
+    const request = ++checkRequest.current;
+    setChecking(true); setError(undefined); setFailedAction('connect'); setNotice('');
+    const result = await checkCopilot();
+    if (request !== checkRequest.current) return;
+    setChecking(false);
+    if (result.ok) {
+      setCatalog(result.catalog);
+      setModel(value => value && result.catalog.models.some(m => m.id === value) ? value : result.catalog.preselected);
+      if (!result.catalog.models.length) setQueued(false);
+    } else if (isPreflightCategory(result.category) || result.category.startsWith('modelCapture')) { setQueued(false); setError(result); }
+    // Otherwise this build couldn't check early: the choice stays queued and Connect checks before the workspace is touched.
   }
   const cliUnavailable = !removalFailed && error?.category === 'modelCaptureUnavailable';
   const signInCheck = !removalFailed && error && ['modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(error.category);
-  function chooseKind(kind: 'copilot' | 'key') { clearKey(); setQueued(false); setChoice(kind); setError(undefined); setAnotherChoice(false); }
+  function chooseKind(kind: 'copilot' | 'key') { clearKey(); setQueued(false); setChoice(kind); setError(undefined); setAnotherChoice(false); setPicking(false); }
   const keyMode = choice === 'key';
   const keyProblem = keyMode && error && !removalFailed;
   // A key the company refused, or one that isn't whole, is an error on the field itself.
@@ -281,10 +340,23 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     <p id="model-key-help" className="muted">Stored on this computer, never in your agent files.</p>
     <a href={`https://${company.site}`} onClick={event => { event.preventDefault(); void help(vendor === 'openai' ? 'openaiKey' : 'anthropicKey'); }}>Where do I get a key?</a>
   </div>;
+  const noModels = !!catalog && !catalog.models.length;
+  const picker = !!catalog?.models.length && <div className="model-picker">
+    <label htmlFor="model-copilot-model">Model</label>
+    <select id="model-copilot-model" className="field" value={model ?? ''} disabled={!!busy || checking} onChange={event => { setModel(event.currentTarget.value); if (error?.category === 'modelCopilotModelNotOffered') setError(undefined); }}>
+      {catalog.models.map(m => <option key={m.id} value={m.id}>{m.name ? `${m.id} · ${m.name}` : m.id}</option>)}
+    </select>
+    <p className="muted">The models your Copilot plan offers for agents, as GitHub lists them.</p>
+  </div>;
+  // Copilot's model comes from the account's own list; before the check there is nothing to name.
+  const copilotModelLine = noModels ? <p>GitHub Copilot doesn't offer {catalog.account ?? 'this GitHub account'} a model Bridge can use for agents. Check the account's Copilot plan, or use your own API key.</p>
+    : catalog && model && setupCard && !picking ? <p className="model-chosen">Model <code>{model}</code> <Button type="button" kind="quiet" aria-label="Change model" disabled={!!busy || checking} onClick={() => setPicking(true)}>Change</Button></p>
+    : catalog ? picker
+    : <p className="muted">Bridge checks your GitHub sign-in, then lists the models your Copilot plan offers.</p>;
   // What the selected choice means: on first setup it sits inside the selected option; elsewhere it follows both options.
   const choiceDetail = <>
     {keyMode ? keyForm : !connecting && <p className="muted">Use GitHub Copilot. GitHub CLI must be installed and signed in to github.com.</p>}
-    <p>Model <code>{keyMode ? company.model : copilotModel}</code>, a good default.</p>
+    {keyMode ? <p>Model <code>{company.model}</code>, a good default.</p> : copilotModelLine}
     {!enabled && keyMode ? <p className="muted">Bridge can't queue a key. Enter it once the workspace is ready.</p>
       : !enabled && (queueable || queued) ? (!compact || expanded) && <p className="muted">Choose now to connect automatically when the workspace is ready.</p>
       : !enabled ? <p className="muted">Start the workspace before connecting the AI.</p>
@@ -299,6 +371,17 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     {cliUnavailable && <Button type="button" kind={setupFailure ? 'secondary' : 'quiet'} onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</Button>}
     {(cliUnavailable || signInCheck) && <Button type="button" kind="quiet" onClick={() => { void help('githubSignIn'); }}>Sign-in help</Button>}
   </>;
+  const preflight = error && !removalFailed && !keyMode ? preflightStep(error, hasSignIn) : undefined;
+  // Cleanup refused again: a host-only reset can't clear the workspace's own record of the old connection.
+  const stuck = error?.category === 'modelReconnect' && reconnectFailures >= 2;
+  const summary = preflight?.summary ?? error?.message;
+  const nextStep = preflight?.step ?? (stuck ? "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace is the sure way back, and Bridge can't start one from this card yet. Copy the details for whoever helps you with Bridge. Your agent files are kept."
+    : cliUnavailable ? 'Install GitHub CLI if needed, then sign in to github.com in your terminal:'
+    : signInCheck ? 'Check your GitHub CLI sign-in in your terminal:'
+    : error?.category === 'modelBusy' ? 'Wait for the other operation to finish, then press Check again.'
+    : 'Press Check again to reconnect. If it happens again, copy the details for help.');
+  const command = preflight ? preflight.command : cliUnavailable ? ghLogin : signInCheck ? 'gh auth status --hostname github.com' : undefined;
+  const otherRoute = error?.category === 'modelCopilotAccessDenied' && !hasSignIn && !busy && <Button type="button" kind="secondary" onClick={() => chooseKind('key')}>Use your own API key</Button>;
   const copyAction = error && <Button type="button" kind={setupFailure ? 'secondary' : 'quiet'} onClick={() => { void copy(); }}>Copy details for help</Button>;
   const reconnectHint = !removalFailed && <p className="muted">Check again reconnects the AI using your saved sign-in when available.</p>;
   // A key that is cleared after a refusal waits for the next one: the action keeps its place and says what it needs.
@@ -313,10 +396,10 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     {queued || busy ? !headBusy && <div ref={status} role={queued ? 'status' : undefined} tabIndex={-1} className="model-state">
       {!queuedCard && <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? 'Removing' : ready ? 'Connected' : queued ? 'Queued' : keyMode ? 'Checking' : 'Connecting'}</StatusPill>}
       {busy && (busy === 'remove' || !keyMode) && <span className="status-description">{busy === 'remove' ? keyMode ? 'Removing key…' : 'Removing sign-in…' : 'Connecting the AI…'}</span>}
-      {queued && <><span className="status-description">Connects when the workspace is ready.</span>{(!compact || expanded) && <Button type="button" kind="secondary" aria-label={compact ? undefined : 'Cancel queued connection'} onClick={() => { setQueued(false); if (compact) { setExpanded(false); changeButton.current?.focus(); } }}>{compact ? "Don't connect automatically" : 'Cancel'}</Button>}</>}
+      {queued && <><span className="status-description">{checking ? 'Checking your GitHub sign-in. It connects when the workspace is ready.' : catalog && model ? `GitHub Copilot is ready: ${catalog.account ? `signed in as ${catalog.account}, ` : ''}model ${model}. It connects when the workspace is ready.` : 'Connects when the workspace is ready.'}</span>{catalog && model && (!compact || expanded) && <Button type="button" kind="quiet" aria-label="Change model" onClick={() => { setQueued(false); setPicking(true); }}>Change</Button>}{(!compact || expanded) && <Button type="button" kind="secondary" aria-label={compact ? undefined : 'Cancel queued connection'} onClick={() => { setQueued(false); checkRequest.current++; setChecking(false); if (compact) { setExpanded(false); changeButton.current?.focus(); } }}>{compact ? "Don't connect automatically" : 'Cancel'}</Button>}</>}
     </div>
-    : !ready && !removalFailed && <Button key="model-connect" ref={retry} type="button" kind={primary ? 'primary' : 'secondary'} className={awaitingKey && primary ? 'model-connect-waiting' : undefined} aria-describedby={awaitingKey ? fieldError ? 'model-key-error' : 'model-key-help' : undefined} disabled={(!enabled && (!queueable || keyMode)) || paused || !!busy || (keyMode && !hasKey && !hasSignIn)} onClick={choose}>
-      {error && failedAction === 'connect' ? 'Check again' : 'Connect the AI'}
+    : !ready && !removalFailed && <Button key="model-connect" ref={retry} type="button" kind={primary ? 'primary' : 'secondary'} className={awaitingKey && primary ? 'model-connect-waiting' : undefined} aria-describedby={awaitingKey ? fieldError ? 'model-key-error' : 'model-key-help' : undefined} disabled={(!enabled && (!queueable || keyMode)) || paused || !!busy || (keyMode && !hasKey && !hasSignIn) || (!keyMode && noModels && !error)} onClick={choose}>
+      {error && failedAction === 'connect' && error.category !== 'modelCopilotModelNotOffered' ? 'Check again' : 'Connect the AI'}
     </Button>}
     {ready && !changing && <Button ref={changeButton} type="button" kind="quiet" title={actionReason} disabled={paused || !!busy} aria-expanded={false} onClick={event => { if (document.activeElement === event.currentTarget) changeFocus.current = 'panel'; setChanging(true); }}>Change</Button>}
     {removalFailed && removalAction}
@@ -338,7 +421,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     <div hidden={compact && !expanded}>
     {actionReason && (paused || busy && !headBusy || removalFailed) && <p className="muted">{actionReason}</p>}
     {!ready && busy !== 'remove' && !removalFailed && <>
-      {queuedCard ? <p>{keyMode ? 'Your own API key' : 'GitHub Copilot'} · <code>{keyMode ? company.model : copilotModel}</code></p>
+      {queuedCard ? <p>{keyMode ? 'Your own API key' : 'GitHub Copilot'}{(keyMode || model) && <> · <code>{keyMode ? company.model : model}</code></>}</p>
         : !connecting && choicesShown ? <><fieldset className="model-choice" title={providerReason}>
         <legend className="sr-only">AI connection</legend>
         {option('copilot', 'GitHub Copilot')}
@@ -353,29 +436,25 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     </>}
     {setupFailure ? <>
       <div className="workspace-failure" role="alert"><div className="workspace-failure-explanation">
-        <p className="failure-summary">{error.message}</p>
-        <p>{cliUnavailable ? 'Install GitHub CLI if needed, then sign in to github.com in your terminal:'
-          : signInCheck ? 'Check your GitHub CLI sign-in in your terminal:'
-          : error.category === 'modelBusy' ? 'Wait for the other operation to finish, then press Check again.'
-          : 'Press Check again to reconnect. If it happens again, copy the details for help.'}</p>
-        {(cliUnavailable || signInCheck) && <pre>{cliUnavailable ? 'gh auth login --hostname github.com --web' : 'gh auth status --hostname github.com'}</pre>}
-        <p className="muted">Your workspace and agent files are kept. A sign-in may already have been saved.</p>
+        <p className="failure-summary">{summary}</p>
+        <p>{nextStep}</p>
+        {command && <pre>{command}</pre>}
+        {error.category === 'modelCopilotModelNotOffered' && picker}
+        <p className="muted">{preflight ? 'Nothing was sent to your workspace.' : 'Your workspace and agent files are kept. A sign-in may already have been saved.'}</p>
       </div></div>
       {actions}
+      {otherRoute && <div className="workspace-step-actions">{otherRoute}</div>}
       <div className="workspace-step-actions model-copy-row">{copyAction}</div>
       {reconnectHint}
       {!anotherChoice && !hasSignIn && !busy && <Button type="button" kind="quiet" className="model-another" onClick={() => setAnotherChoice(true)}>Choose another provider</Button>}
     </> : <div className={callout ? 'workspace-failure' : undefined} role={callout ? 'alert' : undefined}>
       <div className={callout ? 'workspace-failure-explanation' : undefined}>
-        {callout && <><p className="failure-summary">{removalFailed && error.category === 'unknown' ? `Bridge could not confirm ${keyMode ? 'key' : 'sign-in'} removal.` : keyMode ? keyFailure(error, vendor) : error.message}</p>
-        {!keyProblem && <><p>{removalFailed ? 'Press Retry removal to retry cleanup. If it happens again, copy the details for help.'
-          : cliUnavailable ? 'Install GitHub CLI if needed, then sign in to github.com in your terminal:'
-          : signInCheck ? 'Check your GitHub CLI sign-in in your terminal:'
-          : error.category === 'modelBusy' ? 'Wait for the other operation to finish, then press Check again.'
-          : 'Press Check again to reconnect. If it happens again, copy the details for help.'}</p>
-        {(cliUnavailable || signInCheck) && <pre>{cliUnavailable ? 'gh auth login --hostname github.com --web' : 'gh auth status --hostname github.com'}</pre>}
-        <p>Your workspace and agent files are kept. {removalFailed ? 'Removal has not been confirmed.' : 'A sign-in may already have been saved.'}</p>
-        {reconnectHint}</>}
+        {callout && <><p className="failure-summary">{removalFailed && error.category === 'unknown' ? `Bridge could not confirm ${keyMode ? 'key' : 'sign-in'} removal.` : keyMode ? keyFailure(error, vendor) : summary}</p>
+        {!keyProblem && <><p>{removalFailed ? 'Press Retry removal to retry cleanup. If it happens again, copy the details for help.' : nextStep}</p>
+        {command && <pre>{command}</pre>}
+        <p>{preflight ? 'Nothing was sent to your workspace.' : `Your workspace and agent files are kept. ${removalFailed ? 'Removal has not been confirmed.' : 'A sign-in may already have been saved.'}`}</p>
+        {otherRoute}
+        {!preflight && reconnectHint}</>}
         </>}
         {actions}
       </div>

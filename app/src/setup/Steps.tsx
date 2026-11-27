@@ -43,6 +43,7 @@ function stepRows({ status, stopping, updating, updateBlocked, error, modelState
     : modelState === 'failed' ? ['needs-you', 'Needs you'] : connected ? ['passed', 'Connected']
     : modelState === 'resetting' ? ['running', 'Resetting'] : modelState === 'connecting' ? ['running', 'Connecting'] : modelState === 'removing' ? ['running', 'Removing sign-in']
     : modelState === 'queued' ? ['not-started', 'Queued']
+    : modelState === 'checking' ? ['running', 'Checking sign-in'] : modelState === 'checked' ? ['not-started', 'Checked, waiting']
     : status.localVm === 'ready' ? status.model === 'locked' ? ['not-started', 'Unavailable'] : ['needs-you', 'Needs you']
     : canQueueModel(status) ? ['not-started', 'Pick any time'] : ['not-started', 'Waiting'];
   // A kept result belongs to an earlier workspace until this one is ready with its model connected.

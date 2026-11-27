@@ -42,10 +42,10 @@ test('account metadata is accepted only as a valid GitHub login on a Copilot con
   expect(await connectKey('openai', 'sk-synthetic-only')).toMatchObject({ ok: false });
 });
 
-test('before connecting, each choice names its actual fixed default model without a picker or other providers', () => {
+test('before connecting, Copilot names no model until the account lists its own; keys name their default', () => {
   render(<Model enabled />);
-  expect(card().textContent).toContain('Model gpt-5.6-terra, a good default.');
-  expect(screen.getByText('gpt-5.6-terra').tagName).toBe('CODE');
+  expect(card().textContent).toContain('Bridge checks your GitHub sign-in, then lists the models your Copilot plan offers.');
+  expect(card().textContent).not.toMatch(/gpt-|a good default/);
   expect(screen.queryByRole('combobox')).toBeNull();
   expect(screen.queryByRole('listbox')).toBeNull();
   expect(card().textContent).not.toMatch(/Azure/);
@@ -80,7 +80,7 @@ test('a queued Copilot connection is a status row with a secondary Cancel, separ
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   const status = screen.getByRole('status');
   expect(status.textContent).toContain('Queued');
-  expect(status.textContent).toContain('Connects when the workspace is ready.');
+  expect(status.textContent).toContain('It connects when the workspace is ready.');
   expect(status.closest('fieldset')).toBeNull();
   const cancel = screen.getByRole('button', { name: 'Cancel queued connection' });
   expect(cancel.textContent).toBe('Cancel');
@@ -88,7 +88,7 @@ test('a queued Copilot connection is a status row with a secondary Cancel, separ
   expect(card().textContent).not.toMatch(/local cluster/);
   fireEvent.click(cancel);
   expect(screen.queryByText('Queued')).toBeNull();
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(['setup_check_model']);
 });
 
 test('locked and failure copy names the workspace rather than the local cluster', async () => {

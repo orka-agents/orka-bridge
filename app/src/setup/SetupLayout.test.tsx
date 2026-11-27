@@ -88,7 +88,7 @@ test('readiness keeps keyboard focus with a queued choice when its card moves ou
   view.rerender(<Model enabled inline={false} choiceTarget={target} />);
   await act(async () => {});
   expect(document.activeElement?.closest('.setup-model')).toBeTruthy();
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([['setup_connect_model']]);
   await act(async () => finish({ ready: true }));
   expect(document.activeElement).toBe(screen.getByText('Connected').closest('[role="status"]'));
   view.unmount(); target.remove();
@@ -104,7 +104,7 @@ test('a queued inline choice can be revoked without stopping the workspace or co
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Change' }));
   view.rerender(<Model enabled />);
   await act(async () => {});
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([]);
 });
 
 test('the collapsed queued summary is a persistent live acknowledgement', () => {
