@@ -1002,22 +1002,24 @@ impl ExampleRun {
         review: Option<Option<crate::job_run::Review>>,
         stop: &watch::Receiver<bool>,
     ) {
+        // Claim the end before any history I/O, so Stop can't be accepted after the work is done.
+        let stopped = self.stopped_between(id, stop, RunState::Complete);
         self.keep_job_history(id, installation, handle, &report);
         let error = match &review {
             None => Some("answer"),
             Some(None) => Some("review"),
             Some(Some(_)) => None,
         };
-        if self.stopped_between(id, stop, RunState::Complete) {
-            return;
-        }
         {
             let mut state = self.0.lock().unwrap();
             let snapshot = state.snapshots.get_mut(&id).unwrap();
-            snapshot.state = RunState::Complete;
             // The stage reports graded the drafter's check and the reviewer's format.
             // Neither is the job's result; `job.review` is, and it is never a pass.
             snapshot.report = None;
+            if stopped {
+                return;
+            }
+            snapshot.state = RunState::Complete;
             if let Some(outcome) = &mut snapshot.job {
                 outcome.review = review.flatten();
                 outcome.finished_at = Some(crate::overview::now());
