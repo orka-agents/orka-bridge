@@ -460,10 +460,14 @@ scroll(4000)
 // The AI card is its own card beside the Workspace card, with its choices shown: Connect the AI queues Copilot
 // until the workspace is ready, and the queued card names its choice and offers its own Cancel.
 click("Connect the AI", [])
+// Connect the AI first checks the GitHub sign-in (examples/model_walk.rs answers setup_check_model from its fixed
+// catalog), then the queued card names the account and model in one sentence (setup/Model.tsx).
+let queuedLine = "GitHub Copilot is ready: signed in as synthetic-user, model gpt-5.6-terra. Connects when the workspace is ready."
+waitForNativeText([queuedLine])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("Connects when the workspace is ready.", -200)
-    _ = try capture("local-setup-queued-\(size)", ["Queued", "GitHub Copilot", "Connects when the workspace is ready."])
+    _ = try capture("local-setup-queued-\(size)", ["Queued", "GitHub Copilot", queuedLine])
     require(enabledButton("Cancel queued connection") != nil && enabledButton("Connect the AI") == nil,
             "A queued connection must offer its own Cancel instead of Connect the AI")
 }
@@ -1046,7 +1050,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     waitForButton("Try a task"); click("Try a task", [])
     waitForChatText("before you rely on it.")
-    require(!nativeChatTextIsVisible("Try a task on this computer"), "Remote Try a task must name the cluster")
+    require(tryTaskSubtitlePlace() == "team-dev", "Remote Try a task must name the cluster") // As drawn in run 45931983935.
     require(!nativeChatTextIsVisible("Ready for a task."), "Remote Try a task must not say Ready")
     require(anyButton("Run task") && enabledButton("Run task") == nil, "Remote Try a task must wait for a task")
     _ = try capture("local-shell-chat-remote-\(size)", ["before you rely on it."])
@@ -1630,11 +1634,30 @@ localSize(1280, 800)
 scroll(4000)
 click("Try a task", [])
 }
+// The Try a task subtitle names where tasks run: "Try a task on <place> before you rely on it." (designer/Example.tsx).
+// The place is a separate text node, which WebKit can expose as its own static text on the same line; read the
+// visible pieces between the two fixed parts, or the place inside a single merged string.
+func tryTaskSubtitlePlace() -> String? {
+    let texts = nativeElements().compactMap { element -> (String, CGRect)? in
+        guard attribute(element, "AXRole") as? String == "AXStaticText", let value = attribute(element, "AXValue") as? String,
+              let bounds = nativeBounds(element), bounds.width > 1, bounds.height > 1, window()!.1.contains(bounds) else { return nil }
+        return (value.trimmingCharacters(in: .whitespaces), bounds)
+    }
+    let head = "Try a task on", tail = "before you rely on it."
+    if let merged = texts.first(where: { $0.0.hasPrefix(head + " ") && $0.0.hasSuffix(" " + tail) })?.0 {
+        return String(merged.dropFirst(head.count + 1).dropLast(tail.count + 1))
+    }
+    guard let start = texts.first(where: { $0.0 == head })?.1, let end = texts.first(where: { $0.0 == tail })?.1,
+          abs(start.midY - end.midY) < 4, end.minX > start.maxX else { return nil }
+    let middle = texts.filter { abs($0.1.midY - start.midY) < 4 && $0.1.minX >= start.maxX - 1 && $0.1.maxX <= end.minX + 1 }
+        .sorted { $0.1.minX < $1.1.minX }.map { $0.0 }.filter { !$0.isEmpty }
+    return middle.isEmpty ? nil : middle.joined(separator: " ")
+}
 func requireSingleChatCopy() {
     let strings = nativeElements().flatMap { element in
         ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
     }
-    require(strings.contains(where: { showsText($0, "Try a task on this computer before you rely on it.") }), "Try a task subtitle missing from the agent heading")
+    require(tryTaskSubtitlePlace() == "this computer", "Try a task subtitle missing from the agent heading")
     require(!strings.contains(where: { showsText($0, "Conversation 1") || showsText($0, "Save as a test") }), "Try a task must not number conversations or offer Save as a test")
 }
 func requireChatComposerVisible() {
