@@ -703,6 +703,19 @@ async fn workspace_upgrade_remove<R: tauri::Runtime>(
         .await
         .map_err(|_| "The saved connection could not be removed.")
 }
+/// Start a fresh workspace. The renderer supplies nothing: paths, the workspace and the saved
+/// AI connection are all native-selected. A refusal is a state in the reply, not an error.
+#[tauri::command]
+async fn workspace_fresh_start<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    store: tauri::State<'_, Arc<SetupStore>>,
+) -> Result<bridge_engine::workspace_fresh::FreshStatusDto, &'static str> {
+    let (data, local, _) = upgrade_paths(&app)?;
+    Ok(vm
+        .start_fresh_workspace(data, local, store.inner().clone())
+        .await)
+}
 #[tauri::command]
 async fn workspace_upgrade_cancel(
     vm: tauri::State<'_, Arc<LocalVm>>,
@@ -897,6 +910,16 @@ fn main() {
                 app.path().app_data_dir().ok(),
                 app.path().app_local_data_dir().ok(),
             ));
+            // An interrupted fresh workspace finishes, or is undone, before anything opens one.
+            let fresh = match (app.path().app_data_dir(), app.path().app_local_data_dir()) {
+                (Ok(data), Ok(local)) => bridge_engine::workspace_fresh::recover_startup(
+                    &data,
+                    &local,
+                    &store,
+                    &bridge_engine::runtime::credential_store::OsCredentialStore,
+                ),
+                _ => Ok(None),
+            };
             let recovery = match (app.path().app_data_dir(), app.path().app_local_data_dir()) {
                 (Ok(data), Ok(local)) => {
                     bridge_engine::workspace_upgrade::recover_startup(&data, &local)
@@ -908,10 +931,24 @@ fn main() {
                 app.path().app_data_dir().ok(),
                 app.path().app_local_data_dir().ok(),
             );
-            let vm = if recovery.is_ok() {
+            let vm = if recovery.is_ok() && fresh.is_ok() {
                 vm
             } else {
                 vm.for_recovery()
+            };
+            let fresh_cleanup = match fresh {
+                Ok(Some(dto)) => {
+                    let cleaning = matches!(
+                        dto,
+                        bridge_engine::workspace_fresh::FreshStatusDto::Replaced {
+                            cleaning: true,
+                            ..
+                        }
+                    );
+                    vm.seed_fresh(dto);
+                    cleaning
+                }
+                _ => false,
             };
             vm.set_workspace_replaced(recovery.as_ref().copied().unwrap_or(true));
             if let (Ok(data), Ok(local)) =
@@ -976,7 +1013,11 @@ fn main() {
             )?;
             #[cfg(debug_assertions)]
             startup_marker("ready");
+            let paths = (app.path().app_data_dir(), app.path().app_local_data_dir());
             tauri::async_runtime::spawn(async move {
+                if let (true, Ok(data), Ok(local)) = (fresh_cleanup, paths.0, paths.1) {
+                    vm.clean_fresh_workspace(data, local);
+                }
                 if local_vm::resume_selected(store, &vm).await.is_err() {
                     eprintln!("The saved setup choice could not be read.");
                 }
@@ -1034,6 +1075,7 @@ fn main() {
             workspace_upgrade_transfer,
             workspace_upgrade_remove,
             workspace_upgrade_cancel,
+            workspace_fresh_start,
             cluster_places,
             cluster_reconnect,
             cluster_select,
