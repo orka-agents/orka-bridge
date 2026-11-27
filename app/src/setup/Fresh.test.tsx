@@ -165,7 +165,7 @@ test('Manage keeps a quiet Start a fresh workspace in the workspace details, and
   await user.click(within(await screen.findByRole('region', { name: 'Start a fresh workspace?' })).getByRole('button', { name: 'Start a fresh workspace' }));
   const done = await screen.findByRole('region', { name: 'Fresh workspace' });
   expect(done.textContent).toContain("Bridge couldn't confirm its saved sign-in or key was removed. When you connect the AI, choose Reset AI connection to try again.");
-  expect(done.textContent).toContain("Bridge couldn't delete the previous workspace. To free its space, quit Bridge and delete this folder:");
+  expect(done.textContent).toContain("Bridge couldn't delete the previous workspace. It may still hold that workspace's copy of your sign-in. To remove it and free its space, quit Bridge and delete this folder:");
   expect(within(done).getByText(retired, { selector: 'code' })).toBeTruthy();
   await user.click(within(done).getByRole('button', { name: 'Done' }));
   expect(screen.queryByRole('region', { name: 'Fresh workspace' })).toBeNull();

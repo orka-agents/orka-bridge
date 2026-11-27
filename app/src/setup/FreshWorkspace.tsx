@@ -57,7 +57,7 @@ export default function FreshWorkspace({ asking, working, status, onConfirm, onC
     {status.ai === 'kept' && <p>Bridge couldn't confirm its saved sign-in or key was removed. When you connect the AI, choose Reset AI connection to try again.</p>}
     {status.cleaning ? <p className="muted">Deleting the previous workspace…</p>
       : status.reclaimable.length > 0 && <div className="workspace-fresh-reclaim">
-        <p>Bridge couldn't delete the previous workspace. To free its space, quit Bridge and delete {status.reclaimable.length > 1 ? 'these folders' : 'this folder'}:</p>
+        <p>Bridge couldn't delete the previous workspace. It may still hold that workspace's copy of your sign-in. To remove it and free its space, quit Bridge and delete {status.reclaimable.length > 1 ? 'these folders' : 'this folder'}:</p>
         <ul>{status.reclaimable.map(path => <li key={path}><code>{path}</code></li>)}</ul>
       </div>}
     <div className="workspace-step-actions"><Button type="button" kind="quiet" onClick={onDismiss}>Done</Button></div>
