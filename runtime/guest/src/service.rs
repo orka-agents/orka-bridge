@@ -30,6 +30,7 @@ impl Session {
                 guest_nonce: Uuid::new_v4(),
                 accepted_boot_nonce: saved.as_ref().map(|b| b.boot_nonce),
                 run_cleanup: stage == Stage::Serve,
+                navigator_chat: false,
             },
             saved,
             bytes: Vec::new(),

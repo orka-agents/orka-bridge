@@ -9,7 +9,7 @@ const source = '---\nname: reader\nmodel: listed\nkmx:\n  schemaVersion: 1\n  ru
 const pair = { documentId: id, name: 'reader', agent: source, tests: 'Tests stay separate' };
 const target = { id: '00000000-0000-4000-8000-000000000011', context_id: '00000000-0000-4000-8000-000000000012', context_name: 'team-dev', service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka-agents/orka:0.4.0' };
 const provider = { id: '00000000-0000-4000-8000-000000000013', name: 'team-model', ready: true };
-const idle = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
+const idle = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false, readOnly: false };
 let sent: { documentId: string; message: string; saved: string; targetId?: string; providerId?: string }[]; let calls: string[];
 function native(save?: (content: string) => unknown) {
   sent = []; calls = []; let saved = source; vi.stubGlobal('isTauri', true);

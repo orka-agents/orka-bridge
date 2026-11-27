@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '../components/Button';
 import { StatusIcon, StatusPill } from '../components/DesignSystem';
 import type { ChatSnapshot, ChatTurn } from '../designer/chat-api';
@@ -6,7 +6,7 @@ import { type AgentEntry, listDocuments } from '../designer/documents-api';
 import { useTurn } from '../designer/use-turn';
 import AgentCard from './AgentCard';
 import { type Card, type ExplainCard, parseReply, sourceLabel } from './cards';
-import { type CardRecord, updateConversation, useConversation } from './conversation-store';
+import { type CardRecord, selectConversationPlace, updateConversation, useConversation } from './conversation-store';
 import { NAVIGATOR_ID, type NavigatorResult, type ThinksWith, navigatorCall, navigatorErrors } from './navigator-api';
 import Prose from './Prose';
 import TaskCard, { runLine, type TaskPlace } from './TaskCard';
@@ -22,6 +22,8 @@ type Props = {
   onThisComputer: () => void; blockedFor?: (documentId: string) => string | undefined;
   /** Opens the list of clusters, rather than the selected one. */
   onManageClusters?: () => void;
+  /** A cluster connected in this run that the Navigator can switch to, when this computer can't run it. */
+  switchTo?: { name: string; choose: () => void };
 };
 
 const starters: { label: string; message: string }[] = [
@@ -35,8 +37,11 @@ const vendors: Record<Exclude<ThinksWith['kind'], 'cluster'>, string> = { copilo
 
 export default function Home(props: Props) {
   const { gate } = props;
+  // Each place has its own conversation: switching shows that place's, and never continues another's.
+  const placeKey = gate.kind === 'ready' && gate.place ? `${gate.place.targetId}/${gate.place.providerId}` : '';
+  useLayoutEffect(() => { selectConversationPlace(placeKey); }, [placeKey]);
   if (gate.kind !== 'ready') return <Gated {...props} gate={gate} />;
-  return <Navigator {...props} />;
+  return <Navigator key={placeKey} {...props} />;
 }
 
 function Hero({ lede = true }: { lede?: boolean }) {
@@ -80,6 +85,30 @@ function Gated({ gate, onOpenPage, onThisComputer, onManageClusters }: Props & {
   </section>;
 }
 
+// This computer's workspace predates the Navigator. Nothing is sent to it, so the routes that work are listed instead.
+function TooOld({ onOpenPage, switchTo }: Pick<Props, 'onOpenPage' | 'switchTo'>) {
+  const reason = 'The workspace on this computer can’t run the Navigator yet.';
+  return <section className="home home-start" aria-labelledby="page-title">
+    <Hero lede={false} />
+    <article className="card nav-gate" aria-labelledby="nav-gate-title">
+      <header className="nav-gate-head"><StatusIcon state="needs-you" /><h2 id="nav-gate-title">The workspace on this computer is older than this Bridge.</h2><StatusPill state="needs-you">Needs you</StatusPill></header>
+      <p>It can’t run the Navigator yet, so nothing was sent to it. {switchTo ? `The Navigator can think with ${switchTo.name} instead. ` : ''}Designer still works here: Try a task runs on this computer.</p>
+      <div className="nav-actions">
+        {switchTo && <Button type="button" kind="primary" onClick={switchTo.choose}>Switch to {switchTo.name}</Button>}
+        <Button type="button" kind={switchTo ? 'secondary' : 'primary'} onClick={() => onOpenPage('Designer')}>Open Designer</Button>
+      </div>
+    </article>
+    <section className="nav-composer nav-composer-off" aria-label="Chat" aria-disabled="true">
+      <p className="nav-composer-placeholder">Ask anything, or describe a task</p>
+      <div className="nav-composer-foot"><span className="nav-line">Navigator · runs on this computer · workspace too old</span><Button type="button" kind="secondary" size="large" disabled title={reason}>Send</Button></div>
+    </section>
+    <div className="nav-starters" role="group" aria-label="Or start with">
+      <span className="muted">Or start with</span>
+      {starters.map(starter => <Button key={starter.label} type="button" kind="secondary" disabled title={reason}>{starter.label}</Button>)}
+    </div>
+  </section>;
+}
+
 type View = { kind: 'thinking' } | { kind: 'answer'; reply: ReturnType<typeof parseReply> } | { kind: 'failed'; reason?: string } | { kind: 'stopped' } | { kind: 'held'; state: ChatSnapshot['state'] };
 // How one Navigator turn reads, from the native turn and, for the newest turn, the conversation state.
 function turnView(turn: ChatTurn, newest: boolean, snapshot: ChatSnapshot | undefined): View {
@@ -98,23 +127,25 @@ const heldCopy: Partial<Record<ChatSnapshot['state'], [string, string]>> = {
   contextUnavailable: ['This conversation could not be confirmed.', 'Start a new conversation. Nothing was created or changed.'],
 };
 
-function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCreated, blockedFor }: Props) {
+function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCreated, blockedFor, switchTo }: Props) {
   const place = gate.kind === 'ready' ? gate.place : undefined;
   const fieldId = useId();
   const field = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const [thinksWith, setThinksWith] = useState<ThinksWith | null>(null);
+  const [tooOld, setTooOld] = useState(false);
   const call = useCallback(async (...args: Parameters<typeof navigatorCall>) => {
     const result: NavigatorResult = await navigatorCall(...args);
     if (result.ok && result.thinksWith !== undefined) {
       const next = result.thinksWith;
       setThinksWith(current => current?.kind === next?.kind && current?.model === next?.model ? current : next);
     }
+    if (result.ok && result.workspaceTooOld !== undefined) setTooOld(result.workspaceTooOld);
     return result;
   }, []);
-  const { snapshot, draft, setDraft, error, readError, command, awaitingTurn, pending, act } = useTurn(NAVIGATOR_ID, undefined,
-    { call, place: place && { targetId: place.targetId, providerId: place.providerId } });
+  const { snapshot, draft, setDraft, error, readError, command, awaitingTurn, pending, failed, act } = useTurn(NAVIGATOR_ID, undefined,
+    { call, errors: navigatorErrors, place: place && { targetId: place.targetId, providerId: place.providerId } });
   const conversation = useConversation();
   // Saved agents, for the task card's choices. Unreadable means none to offer.
   const [agents, setAgents] = useState<AgentEntry[]>([]);
@@ -131,8 +162,9 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
   }, [versionCount, conversation.startVersion]);
   const turns = useMemo(() => snapshot?.versions.slice(conversation.startVersion).flatMap(version => version.turns) ?? [], [snapshot, conversation.startVersion]);
   const thinking = !!snapshot?.busy || awaitingTurn;
-  const empty = !turns.length && !awaitingTurn;
+  const empty = !turns.length && !awaitingTurn && !failed;
   const reason = command ? 'Wait for this action to finish.' : !snapshot ? 'Opening the Navigator…' : thinking ? undefined
+    : snapshot.readOnly ? 'This conversation was started with another AI connection. Start a new conversation to continue.'
     : !snapshot.canSend && snapshot.state !== 'contextUnavailable' ? 'Reconnect or stop the last answer first.' : undefined;
   const startOver = async () => {
     if (thinking) return;
@@ -140,8 +172,10 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
     if (await act('agent_chat_new') !== true) return;
     updateConversation(() => ({ startVersion: versions, cards: {} }));
   };
+  // A starter is the same as typing its text and sending: it fills the field, so a failed send leaves it there.
   const send = async (message: string) => {
     if (!message.trim() || reason || thinking) return;
+    setDraft(message);
     if (snapshot?.state === 'contextUnavailable') await startOver();
     await act('agent_chat_send', message);
   };
@@ -167,9 +201,11 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
     if (card && card.kind !== 'explain') latest.set(card.kind, String(turn.startedAt));
   });
   // On a cluster the line says where it runs; the model is the one its last answer used.
+  // The line always names the place whose conversation is on screen, then the model its last answer used.
   const line = place ? <>runs on {place.name}{thinksWith?.kind === 'cluster' && <span className="nav-line-wide"> · thinks with {thinksWith.model}</span>}</>
-    : thinksWith && thinksWith.kind !== 'cluster' ? <><span className="nav-line-wide">thinks with {vendors[thinksWith.kind]} · </span>{thinksWith.model}</> : undefined;
-  const failure = error?.message ?? readError;
+    : <>runs on this computer{thinksWith && thinksWith.kind !== 'cluster' && <span className="nav-line-wide"> · thinks with {vendors[thinksWith.kind]} · {thinksWith.model}</span>}</>;
+  // A refused send shows on its own turn below; the field alert is for everything else.
+  const failure = error && error.message !== failed?.reason ? error.message : readError;
   const composer = <form className={`nav-composer${empty ? ' nav-composer-start' : ''}`} aria-label="Chat" onSubmit={event => { event.preventDefault(); void send(draft); }}>
     <label className="sr-only" htmlFor={fieldId}>Message</label>
     <textarea id={fieldId} ref={field} rows={empty ? 3 : 1} placeholder="Ask anything, or describe a task" value={draft}
@@ -179,7 +215,7 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
         if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(draft); }
       }} />
     <div className="nav-composer-foot">
-      <span className="nav-line">Navigator{line && <> · {line}</>}</span>
+      <span className="nav-line">Navigator · {line}</span>
       <span className="nav-links">
         <Button type="button" kind="quiet" disabled={thinking || !!command} onClick={() => { void startOver(); }}>New conversation</Button>
       </span>
@@ -188,6 +224,7 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
     </div>
     {failure && <div className="alert alert-failed"><p className="alert-title" role="alert">{failure}</p></div>}
   </form>;
+  if (tooOld && !place && empty) return <TooOld onOpenPage={onOpenPage} switchTo={switchTo} />;
   if (empty) return <section className="home home-start" aria-labelledby="page-title">
     <Hero />
     {composer}
@@ -205,6 +242,17 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
         onReconnect={() => { void act('agent_chat_reconnect'); }} onStartOver={() => { void startOver(); }}
         onOpenPage={onOpenPage} onOpenAgent={onOpenAgent} onAgentCreated={onAgentCreated} blockedFor={blockedFor} place={place} />)}
       {awaitingTurn && <li className="nav-turn"><p className="nav-user">{pending.current?.message}</p><Thinking /></li>}
+      {failed && !awaitingTurn && <li className="nav-turn"><p className="nav-user">{failed.message}</p>
+        <article className="card nav-card" aria-label="Not sent">
+          <div className="alert alert-failed" role="alert"><p className="alert-title">Not sent.</p><p>{failed.reason}</p></div>
+          <div className="nav-actions">
+            {tooOld && !place ? <>{switchTo && <Button type="button" kind="primary" onClick={switchTo.choose}>Switch to {switchTo.name}</Button>}
+              <Button type="button" kind={switchTo ? 'secondary' : 'primary'} onClick={() => onOpenPage('Designer')}>Open Designer</Button></>
+              : <><Button type="button" kind="primary" disabled={!!reason} title={reason} onClick={() => { void send(failed.message); }}>Try again</Button>
+                <Button type="button" kind="secondary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button></>}
+          </div>
+        </article>
+      </li>}
     </ol>
     <div ref={end} />
     <div className="nav-composer-dock">{composer}</div>

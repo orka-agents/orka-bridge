@@ -6,7 +6,7 @@
 use crate::{
     agent_folder::DocumentId,
     agents::Agents,
-    chat::{ChatOwner, ChatSnapshot},
+    chat::{ChatOwner, ChatSnapshot, Place},
     engine::run::ParsedAgent,
 };
 use bridge_runtime_protocol::{ModelSelection, ModelVendor, Uuid};
@@ -101,19 +101,24 @@ impl From<&ModelSelection> for ThinksWith {
 pub struct NavigatorSnapshot {
     pub chat: ChatSnapshot,
     pub thinks_with: Option<ThinksWith>,
+    /// This computer's workspace is known to predate the Navigator: it can't run there yet.
+    pub workspace_too_old: bool,
 }
-pub fn snapshot(owner: &ChatOwner, chat: ChatSnapshot) -> NavigatorSnapshot {
-    let cluster = owner.thinks_on_cluster();
+/// The Navigator's conversation on `place`, with the model that place's conversation thought with.
+pub fn snapshot(owner: &ChatOwner, place: &Place, chat: ChatSnapshot) -> NavigatorSnapshot {
     NavigatorSnapshot {
         chat,
-        thinks_with: owner.thinks_with().as_ref().map(|selection| ThinksWith {
-            kind: if cluster {
-                "cluster"
-            } else {
-                ThinksWith::from(selection).kind
-            },
-            model: selection.model.clone(),
-        }),
+        thinks_with: owner
+            .thinks_with_on(CONVERSATION, place)
+            .map(|(selection, cluster)| ThinksWith {
+                kind: if cluster {
+                    "cluster"
+                } else {
+                    ThinksWith::from(&selection).kind
+                },
+                model: selection.model,
+            }),
+        workspace_too_old: false,
     }
 }
 

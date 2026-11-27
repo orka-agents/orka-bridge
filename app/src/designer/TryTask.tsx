@@ -108,6 +108,8 @@ function Result({ label, turn, live, waiting, model, actions }: { label: string;
 
 // Errors that already say why a cluster can't take the task; the status line stays quiet beside them.
 const clusterErrors: ChatSnapshot['error'][] = ['permission', 'sessionsUnsupported', 'clusterUnavailable'];
+// This computer's workspace didn't answer one request. If it stopped answering entirely, the error is workspaceUnavailable.
+const localConnection = 'The workspace on this computer didn’t answer. Run the task again. If it keeps happening, quit Bridge and open it again to restart the workspace.';
 export default function TryTask({ documentId, agentName, model, blocked, place, active = true }: {
   documentId: string; agentName: string; model?: string; blocked?: string; active?: boolean;
   // A connected cluster and its chosen AI connection; absent means this computer.
@@ -119,7 +121,7 @@ export default function TryTask({ documentId, agentName, model, blocked, place, 
   const composer = useRef<HTMLTextAreaElement>(null); const composing = useRef(false);
   // The model each task was started with, by its place in this agent's list of tasks. Memory only.
   const models = useRef(new Map<number, string | undefined>());
-  const { snapshot, draft, setDraft, error, readError, command, awaitingTurn, pending, act } = useTurn(documentId, blocked,
+  const { snapshot, draft, setDraft, error, readError, command, awaitingTurn, pending, failed, act } = useTurn(documentId, blocked,
     { place: place && { targetId: place.targetId, providerId: place.providerId } });
   useEffect(() => {
     if (!active) return;
@@ -138,7 +140,8 @@ export default function TryTask({ documentId, agentName, model, blocked, place, 
   const earlier = turns.slice(0, -1).map((turn, index) => ({ turn, index })).reverse();
   const live = snapshot?.state;
   const held = !!snapshot && !snapshot.busy && !snapshot.canSend && snapshot.state !== 'contextUnavailable';
-  const runnable = !!snapshot && !snapshot.busy && (snapshot.canSend || snapshot.state === 'contextUnavailable');
+  // A conversation from another AI connection is only shown; running a task starts a new one first.
+  const runnable = !!snapshot && !snapshot.busy && (snapshot.canSend || snapshot.readOnly || snapshot.state === 'contextUnavailable');
   const reason = blocked ?? (command ? 'Wait for this action to finish.' : awaitingTurn ? 'Wait for this task to be accepted.' : !snapshot ? 'Opening Try a task…'
     : held && ['observationLost', 'stopUnconfirmed'].includes(snapshot.state) ? 'Check the last task first: reconnect or stop it.'
     : !runnable ? 'Wait for the current task or test to finish.' : undefined);
@@ -168,8 +171,10 @@ export default function TryTask({ documentId, agentName, model, blocked, place, 
   const canStop = !!snapshot && snapshot.state !== 'ready' && snapshot.state !== 'contextUnavailable';
   const canReconnect = !!snapshot && snapshot.state !== 'contextUnavailable' && !snapshot.busy && (!snapshot.canSend || !!pending.current?.uncertain);
   const snapshotError = snapshot?.state === 'ready' && snapshot.error === 'connection'
-    ? place ? `${place.name} could not be reached. Check Clusters, then try running the task again.` : 'The workspace could not be reached. Check Clusters, then try running the task again.'
+    ? place ? `${place.name} could not be reached. Check Clusters, then try running the task again.` : localConnection
     : snapshot ? snapshotErrorMessage(snapshot) : undefined;
+  // The task that wasn't run stays in the field; this says why. One message, not two.
+  const failure = error?.message ?? readError ?? snapshotError ?? failed?.reason;
   const confirming = !!current && (snapshot?.state === 'waitingForSession' || snapshot?.state === 'working' && terminal.includes(current.phase));
   const waiting = !current || current.answer !== null ? undefined
     : confirming ? snapshot?.state === 'waitingForSession' ? states.waitingForSession : 'Confirming your agent’s reply…'
@@ -198,7 +203,8 @@ export default function TryTask({ documentId, agentName, model, blocked, place, 
         <Button type="submit" kind="primary" size="large" disabled={!!reason || !draft.trim()} title={reason ?? (!draft.trim() ? 'Describe the task first.' : undefined)}>Run task</Button>
       </div>
       <p className={`try-status${routine ? ' sr-only' : ''}`} role="status" aria-live="polite" aria-atomic="true">{routine && !current ? undefined : status}</p>
-      {(error || readError || snapshotError) && <div className="alert alert-failed"><p role="alert" className="alert-title">{error?.message ?? readError ?? snapshotError}</p></div>}
+      {failure && <div className="alert alert-failed"><p role="alert" className="alert-title">{failure}</p></div>}
+      {place && snapshot?.readOnly && <p className="muted">This task ran with another AI connection on {place.name}. The next task starts fresh with the one chosen now.</p>}
       {!recoveryOnCard && (canStop || canReconnect) && <div className="try-recovery">{recovery}</div>}
       {place && snapshot?.keptOnCluster && <p className="muted">Earlier tasks stay on {place.name}: your access there doesn’t allow Bridge to delete them.</p>}
     </form>

@@ -62,6 +62,7 @@ export const scenarios = {
   navTask: 'Navigator: proposes a task',
   navTaskFails: 'Navigator: proposes a task that fails',
   navAgent: 'Navigator: proposes an agent',
+  navTooOld: 'Navigator: workspace too old for the Navigator',
 } as const;
 export type Scenario = keyof typeof scenarios;
 type Gh = 'missing' | 'signedOut' | 'signedIn';
@@ -201,17 +202,21 @@ function runSnapshot(documentId: string) {
 // One scripted task per conversation, as Try a task uses it: New, then Send. Phases advance with time; web-reader
 // fetches the page it was given. Stop deletes the task, as the native path does, and leaves its phase as last seen.
 type Turn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean; sentAt: number; startedAt: number; finishedAt: number | null; stopped: boolean; hold?: boolean };
-// `cluster`: the conversation's last message ran on a connected cluster, as native records its channel.
-type Chat = { versions: Turn[][]; fresh: boolean; cluster?: boolean };
+// One conversation per source and place, as native keeps them: switching never shows or continues another place's.
+type Chat = { versions: Turn[][]; fresh: boolean };
 // A cluster whose access this run confirmed, so Try a task and the Navigator can run on it.
 let clusterConfirmed = scenario === 'clusterReady';
 const chats = new Map<string, Chat>();
+// '' is this computer; a cluster is its target and AI connection ids, as the app passes them.
+const placeOf = (args?: Record<string, unknown>) => typeof args?.targetId === 'string' && typeof args?.providerId === 'string' ? `${args.targetId}/${args.providerId}` : '';
+const chatKey = (id: string, place: string) => `${id}|${place}`;
 const chatPhases = [[0.1, 'Pending'], [0.3, 'Scheduled'], [0.5, 'Running'], [0.85, 'Finalizing']] as const;
-// The workspace admits one conversation turn at a time, Navigator or Try a task, as native authoring does.
+// The workspace admits one conversation turn at a time, Navigator or Try a task, as native authoring does. A cluster's
+// conversations don't hold the workspace.
 const working = (turn: Turn) => turn.answer === null && !turn.stopped && turn.phase !== 'Failed' && (turn.hold || (now() - turn.sentAt) / 1000 / chatSeconds < 1);
-const anyWorking = () => [...chats.values()].some(chat => chat.versions.flat().some(working));
-function chatSnapshot(documentId: string) {
-  const chat = chats.get(documentId) ?? { versions: [], fresh: true };
+const anyWorking = () => [...chats].some(([key, chat]) => key.endsWith('|') && chat.versions.flat().some(working));
+function chatSnapshot(documentId: string, place = '') {
+  const chat = chats.get(chatKey(documentId, place)) ?? { versions: [], fresh: true };
   const turns = chat.versions.flat();
   const navigator = documentId === NAVIGATOR_ID;
   for (const turn of turns) {
@@ -238,9 +243,9 @@ function chatSnapshot(documentId: string) {
     }
   }
   const busy = turns.some(working);
-  const canSend = (ready() && modelConnected || clusterConfirmed) && !anyWorking();
+  const canSend = place ? clusterConfirmed && !busy : ready() && modelConnected && !anyWorking();
   return {
-    documentId, state: busy ? 'working' : 'ready', busy, canSend, error: null, denied: null, keptOnCluster: false,
+    documentId, state: busy ? 'working' : 'ready', busy, canSend, error: null, denied: null, keptOnCluster: false, readOnly: false,
     versions: chat.versions.map(version => ({ turns: version.map(turn => ({ message: turn.message, answer: turn.answer, phase: turn.phase, tools: turn.tools, contextRetained: turn.contextRetained, terminationUnconfirmed: turn.terminationUnconfirmed, stopUnconfirmed: turn.stopUnconfirmed, startedAt: turn.startedAt, finishedAt: turn.finishedAt })) })),
   };
 }
@@ -292,30 +297,36 @@ const navSeed: Partial<Record<Scenario, Turn[]>> = {
   navAgent: [seeded(agentQuestion, navigatorReply(agentQuestion))],
 };
 const navTurns = navSeed[scenario];
-if (navTurns) chats.set(NAVIGATOR_ID, { versions: [navTurns], fresh: false });
-function navigatorSnapshot() {
-  const cluster = chats.get(NAVIGATOR_ID)?.cluster;
-  return { chat: chatSnapshot(NAVIGATOR_ID), thinksWith: cluster ? { kind: 'cluster', model: 'gpt-5.6-terra' } : modelConnected ? { kind: 'copilot', model: connectedModel ?? 'gpt-5.6-terra' } : null };
+if (navTurns) chats.set(chatKey(NAVIGATOR_ID, ''), { versions: [navTurns], fresh: false });
+// navTooOld: the workspace on this computer predates the Navigator, so native sends it nothing.
+const tooOld = scenario === 'navTooOld';
+function navigatorSnapshot(args?: Record<string, unknown>) {
+  const place = placeOf(args);
+  const thought = chats.get(chatKey(NAVIGATOR_ID, place))?.versions.some(version => version.length);
+  return { chat: chatSnapshot(NAVIGATOR_ID, place), thinksWith: place ? thought ? { kind: 'cluster', model: 'gpt-5.6-terra' } : null : modelConnected ? { kind: 'copilot', model: connectedModel ?? 'gpt-5.6-terra' } : null,
+    workspaceTooOld: tooOld && !place };
 }
-function chatNew(id: string) {
-  if (chatSnapshot(id).busy) throw 'busy';
-  chats.set(id, { versions: chats.get(id)?.versions ?? [], fresh: true });
+function chatNew(id: string, args?: Record<string, unknown>) {
+  const place = placeOf(args);
+  if (chatSnapshot(id, place).busy) throw 'busy';
+  chats.set(chatKey(id, place), { versions: chats.get(chatKey(id, place))?.versions ?? [], fresh: true });
 }
-function chatStop(id: string) {
-  for (const turn of chats.get(id)?.versions.flat() ?? []) if (turn.answer === null && turn.phase !== 'Failed') { turn.stopped = true; turn.hold = false; turn.terminationUnconfirmed = true; }
+function chatStop(id: string, args?: Record<string, unknown>) {
+  for (const turn of chats.get(chatKey(id, placeOf(args)))?.versions.flat() ?? []) if (turn.answer === null && turn.phase !== 'Failed') { turn.stopped = true; turn.hold = false; turn.terminationUnconfirmed = true; }
 }
 // A send names a cluster by its target and AI connection ids, as the app passes them; none means this computer.
 function chatSend(id: string, message: string, args?: Record<string, unknown>) {
-  const cluster = typeof args?.targetId === 'string' && typeof args?.providerId === 'string';
-  if (cluster && !clusterConfirmed) throw 'clusterUnavailable';
-  if (!cluster && !(ready() && modelConnected)) throw 'busy';
-  if (!chatSnapshot(id).canSend) throw 'busy';
-  const chat = chats.get(id) ?? { versions: [], fresh: true };
-  // Another place is another conversation, as native binds one to its channel.
-  if (chat.fresh || !chat.versions.length || !!chat.cluster !== cluster) chat.versions.push([]);
-  chat.fresh = false; chat.cluster = cluster;
+  const place = placeOf(args);
+  if (place && !clusterConfirmed) throw 'clusterUnavailable';
+  if (!place && id === NAVIGATOR_ID && tooOld) throw 'workspaceOutdated';
+  if (!place && !(ready() && modelConnected)) throw 'busy';
+  if (!chatSnapshot(id, place).canSend) throw 'busy';
+  const key = chatKey(id, place);
+  const chat = chats.get(key) ?? { versions: [], fresh: true };
+  if (chat.fresh || !chat.versions.length) chat.versions.push([]);
+  chat.fresh = false;
   chat.versions.at(-1)!.push({ message, answer: null, phase: '', tools: [], contextRetained: false, terminationUnconfirmed: false, stopUnconfirmed: false, sentAt: now(), startedAt: Date.now(), finishedAt: null, stopped: false, hold: scenario === 'navThinking' });
-  chats.set(id, chat);
+  chats.set(key, chat);
 }
 
 // The last finished local run, recorded for Overview the way native local-results does.
@@ -726,14 +737,14 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
       return runSnapshot(id);
     }
     case 'agent_run_check_cancellation': return runSnapshot(documentId(args));
-    case 'agent_chat_status': case 'agent_chat_reconnect': return chatSnapshot(documentId(args));
-    case 'agent_chat_new': chatNew(documentId(args)); return chatSnapshot(documentId(args));
-    case 'agent_chat_stop': chatStop(documentId(args)); return chatSnapshot(documentId(args));
-    case 'agent_chat_send': chatSend(documentId(args), String(args?.message ?? ''), args); return chatSnapshot(documentId(args));
-    case 'navigator_status': case 'navigator_reconnect': return navigatorSnapshot();
-    case 'navigator_new': chatNew(NAVIGATOR_ID); return navigatorSnapshot();
-    case 'navigator_stop': chatStop(NAVIGATOR_ID); return navigatorSnapshot();
-    case 'navigator_send': chatSend(NAVIGATOR_ID, String(args?.message ?? ''), args); return navigatorSnapshot();
+    case 'agent_chat_status': case 'agent_chat_reconnect': return chatSnapshot(documentId(args), placeOf(args));
+    case 'agent_chat_new': chatNew(documentId(args), args); return chatSnapshot(documentId(args), placeOf(args));
+    case 'agent_chat_stop': chatStop(documentId(args), args); return chatSnapshot(documentId(args), placeOf(args));
+    case 'agent_chat_send': chatSend(documentId(args), String(args?.message ?? ''), args); return chatSnapshot(documentId(args), placeOf(args));
+    case 'navigator_status': case 'navigator_reconnect': return navigatorSnapshot(args);
+    case 'navigator_new': chatNew(NAVIGATOR_ID, args); return navigatorSnapshot(args);
+    case 'navigator_stop': chatStop(NAVIGATOR_ID, args); return navigatorSnapshot(args);
+    case 'navigator_send': chatSend(NAVIGATOR_ID, String(args?.message ?? ''), args); return navigatorSnapshot(args);
     case 'overview_files': return savedFiles();
     case 'overview_agents': return ready()
       ? { state: 'complete', installation, agents: [], observedAt: Math.floor(Date.now() / 1000), observation: null, runActive: false, reason: null }

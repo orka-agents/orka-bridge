@@ -112,17 +112,21 @@ describe('preview backend replies', () => {
     await preview('scenario=clusterReady&speed=1000');
     const selected = await selectCluster('team-dev');
     const place = { targetId: selected.target.id, providerId: selected.providers[0].id };
-    expect(await chatCall('agent_chat_send', SAMPLE_DOCUMENT_ID, 'Read https://example.com', place)).toMatchObject({ ok: true, snapshot: { busy: true, denied: null, keptOnCluster: false } });
+    expect(await chatCall('agent_chat_send', SAMPLE_DOCUMENT_ID, 'Read https://example.com', place)).toMatchObject({ ok: true, snapshot: { busy: true, denied: null, keptOnCluster: false, readOnly: false } });
     await new Promise(resolve => setTimeout(resolve, 20));
-    const task = await chatCall('agent_chat_status', SAMPLE_DOCUMENT_ID);
+    // Each place answers with its own conversation: this computer's is still empty.
+    expect(await chatCall('agent_chat_status', SAMPLE_DOCUMENT_ID)).toMatchObject({ ok: true, snapshot: { versions: [] } });
+    const task = await chatCall('agent_chat_status', SAMPLE_DOCUMENT_ID, undefined, place);
     expect(task).toMatchObject({ ok: true, snapshot: { versions: [{ turns: [{ phase: 'Succeeded', tools: [{ name: 'web_fetch' }, { name: 'web_fetch' }] }] }] } });
     expect(await navigatorCall('agent_chat_send', '', 'What is a Task?', place)).toMatchObject({ ok: true, thinksWith: { kind: 'cluster' } });
     await new Promise(resolve => setTimeout(resolve, 20));
     // The second message continues the same conversation on the same cluster.
     expect(await navigatorCall('agent_chat_send', '', 'And a Session?', place)).toMatchObject({ ok: true });
     await new Promise(resolve => setTimeout(resolve, 20));
-    const nav = await navigatorCall('agent_chat_status', '');
+    const nav = await navigatorCall('agent_chat_status', '', undefined, place);
     expect(nav.ok && nav.snapshot.versions.map(version => version.turns.length)).toEqual([2]);
+    const here = await navigatorCall('agent_chat_status', '');
+    expect(here.ok && here.snapshot.versions).toEqual([]);
   });
 
   it('refuses a cluster conversation before the cluster is connected in this run', async () => {

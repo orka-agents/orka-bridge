@@ -100,6 +100,9 @@ export default function App() {
   }, []);
   const [place, setPlace] = useState<SelectedPlace>({ kind: 'thisComputer' });
   const remote = place.kind === 'cluster';
+  // The last cluster connected in this run with an AI connection, for Home to offer when this computer can't run the Navigator.
+  const [lastCluster, setLastCluster] = useState<SelectedPlace>();
+  useEffect(() => { if (place.kind === 'cluster' && place.target && place.providerId) setLastCluster(place); }, [place]);
   // The guided first run ends once the person moves on: another page, a cluster instead of this computer, or Set up later.
   // That includes Setup opening Designer when the automatic first test doesn't pass, so the person sees why.
   useEffect(() => { if (guided && (page !== 'Clusters' || remote)) leaveGuided(); }, [guided, page, remote, leaveGuided]);
@@ -498,6 +501,7 @@ export default function App() {
           onOpenAgent={id => { openDesigner(id); setDocumentAction({ id: ++actionSequence.current, documentId: id, action: 'chat' }); }}
           onAgentCreated={() => setAgentsRevision(value => value + 1)}
           onThisComputer={() => choosePlace({ kind: 'thisComputer' })}
+          switchTo={lastCluster?.kind === 'cluster' && lastCluster.target ? { name: lastCluster.target.context_name, choose: () => choosePlace(lastCluster) } : undefined}
           onManageClusters={() => { setPage('Clusters'); localCluster.current?.showPlaces(); }}
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
           blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}

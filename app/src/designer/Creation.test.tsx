@@ -59,7 +59,7 @@ test.each(['Try a task', 'File'])('creation from %s opens empty Instructions wit
   native((command, args) => {
     calls.push(command);
     if (command === 'agent_create') return id;
-    if (command === 'agent_chat_status') return { documentId: args.documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
+    if (command === 'agent_chat_status') return { documentId: args.documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false, readOnly: false };
   });
   const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: previousView }));

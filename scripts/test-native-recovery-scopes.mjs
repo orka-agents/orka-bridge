@@ -57,7 +57,7 @@ for (const name of ['chat-pending', 'chat-running', 'chat-answer', 'chat-session
   const snapshot = Function('name', 'documentId', chatStatus)(name, 'fixture-document');
   const turn = snapshot.versions[0].turns[0];
   // The renderer's validator needs every native snapshot key, including a cluster's refusal and kept notice.
-  assert.equal(snapshot.denied, null, name); assert.equal(snapshot.keptOnCluster, false, name);
+  assert.equal(snapshot.denied, null, name); assert.equal(snapshot.keptOnCluster, false, name); assert.equal(snapshot.readOnly, false, name);
   const confirming = name.startsWith('chat-session-');
   assert.equal(snapshot.state, confirming ? 'waitingForSession' : name === 'chat-answer' ? 'ready' : 'working', name);
   assert.equal(turn.phase, confirming || name === 'chat-answer' ? 'Succeeded' : name === 'chat-pending' ? 'Pending' : 'Running', name);
