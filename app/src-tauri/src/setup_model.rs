@@ -92,10 +92,7 @@ fn unavailable() -> SetupError {
         diagnostic: None,
         native: None,
         recovery: None,
-        account: None,
-        wanted: None,
-        models: None,
-        preselected: None,
+        copilot: None,
     }
 }
 /// A typed preflight refusal. Nothing has been saved or delivered when this is returned.
@@ -109,22 +106,29 @@ fn copilot_error(error: crate::copilot_preflight::CheckError, account: Option<&s
         CheckError::Failure(PreflightFailure::Malformed) => "modelCopilotMalformed",
         CheckError::NotOffered { .. } => "modelCopilotModelNotOffered",
     });
-    setup.account = account
-        .filter(|login| crate::runtime::credentials::valid_login(login))
-        .map(String::from);
+    let mut detail = CopilotDetail {
+        account: account
+            .filter(|login| crate::runtime::credentials::valid_login(login))
+            .map(String::from),
+        ..CopilotDetail::default()
+    };
     if let CheckError::NotOffered { wanted, catalog } = error {
-        setup.preselected = crate::copilot_preflight::preselect(None, &catalog);
-        setup.models = Some(catalog.models());
-        setup.wanted = Some(wanted);
+        detail.preselected = crate::copilot_preflight::preselect(None, &catalog);
+        detail.models = Some(catalog.models());
+        detail.wanted = Some(wanted);
     }
+    setup.copilot = Some(Box::new(detail));
     setup
 }
 /// Not a failure: the sign-in is good and these are the models to choose from.
 fn choose_model(account: Option<String>, check: CopilotCheck) -> SetupError {
     SetupError {
-        account: account.filter(|login| crate::runtime::credentials::valid_login(login)),
-        preselected: check.preselected,
-        models: Some(check.models),
+        copilot: Some(Box::new(CopilotDetail {
+            account: account.filter(|login| crate::runtime::credentials::valid_login(login)),
+            preselected: check.preselected,
+            models: Some(check.models),
+            wanted: None,
+        })),
         ..SetupError::model("modelCopilotChooseModel")
     }
 }

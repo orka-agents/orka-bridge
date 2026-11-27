@@ -253,11 +253,17 @@ pub struct SetupError {
     diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cleanup: Option<(&'static str, &'static str)>,
-    /// Copilot preflight only: the GitHub login read with the sign-in, never an e-mail.
+    /// Copilot preflight outcomes and the model choice only, boxed to keep errors small.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    copilot: Option<Box<CopilotDetail>>,
+}
+#[derive(Debug, Default, Serialize)]
+struct CopilotDetail {
+    /// The GitHub login read with the sign-in, never an e-mail.
     #[serde(skip_serializing_if = "Option::is_none")]
     account: Option<String>,
-    /// Copilot only: the model that is no longer offered, the account's usable models
-    /// for the AI card's picker, and the row it starts on. The person still confirms.
+    /// The model that is no longer offered, the account's usable models for the AI
+    /// card's picker, and the row it starts on. The person still confirms.
     #[serde(skip_serializing_if = "Option::is_none")]
     wanted: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -346,10 +352,7 @@ impl SetupError {
             diagnostic: None,
             native: None,
             recovery: None,
-            account: None,
-            wanted: None,
-            models: None,
-            preselected: None,
+            copilot: None,
         }
     }
 }
@@ -362,10 +365,7 @@ fn storage_error() -> SetupError {
         diagnostic: None,
         native: None,
         recovery: None,
-        account: None,
-        wanted: None,
-        models: None,
-        preselected: None,
+        copilot: None,
     }
 }
 

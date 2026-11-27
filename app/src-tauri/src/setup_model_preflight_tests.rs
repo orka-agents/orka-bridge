@@ -71,7 +71,10 @@ fn first_connect_refused_by_the_preflight_saves_and_delivers_nothing() {
             drop(client);
             let traffic = worker.join().unwrap();
             assert_eq!(error.kind, kind);
-            assert_eq!(error.account.as_deref(), Some(LOGIN));
+            assert_eq!(
+                error.copilot.as_ref().and_then(|c| c.account.as_deref()),
+                Some(LOGIN)
+            );
             assert_eq!(traffic.publications(), 0);
             assert_eq!(traffic.frames.len(), 1, "only the idle probe");
             assert!(!tmp.path().join("setup-v1/model-v1").exists());
@@ -79,9 +82,25 @@ fn first_connect_refused_by_the_preflight_saves_and_delivers_nothing() {
             assert!(!status.associated && !status.unknown);
             assert_no_token(&error);
             if kind == "modelCopilotModelNotOffered" {
-                assert_eq!(error.wanted.as_deref(), Some("gpt-5.6-terra"));
-                assert_eq!(error.preselected.as_deref(), Some("other-model"));
-                assert_eq!(error.models.as_ref().map(Vec::len), Some(1));
+                assert_eq!(
+                    error.copilot.as_ref().and_then(|c| c.wanted.as_deref()),
+                    Some("gpt-5.6-terra")
+                );
+                assert_eq!(
+                    error
+                        .copilot
+                        .as_ref()
+                        .and_then(|c| c.preselected.as_deref()),
+                    Some("other-model")
+                );
+                assert_eq!(
+                    error
+                        .copilot
+                        .as_ref()
+                        .and_then(|c| c.models.as_ref())
+                        .map(Vec::len),
+                    Some(1)
+                );
             }
         }
         assert_eq!(vault.counts(), (0, 0, 0));
@@ -374,8 +393,17 @@ fn a_saved_choice_no_longer_offered_asks_to_pick_again_without_mutation() {
     drop(client);
     assert_eq!(worker.join().unwrap().publications(), 0);
     assert_eq!(error.kind, "modelCopilotModelNotOffered");
-    assert_eq!(error.wanted.as_deref(), Some("gpt-6.1-terra"));
-    assert_eq!(error.preselected.as_deref(), Some("gpt-4.1"));
+    assert_eq!(
+        error.copilot.as_ref().and_then(|c| c.wanted.as_deref()),
+        Some("gpt-6.1-terra")
+    );
+    assert_eq!(
+        error
+            .copilot
+            .as_ref()
+            .and_then(|c| c.preselected.as_deref()),
+        Some("gpt-4.1")
+    );
     assert_eq!(
         read_binding(setup.root.as_deref().unwrap())
             .unwrap()
