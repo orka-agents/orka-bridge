@@ -1483,7 +1483,36 @@ for character in "Changed fixture instructions.".utf16 {
 }
 Thread.sleep(forTimeInterval: 1)
 require((attribute(editor, "AXValue") as? String)?.contains("Changed fixture instructions.") == true, "Native keystrokes did not edit Instructions")
-require(exactTextIsVisible("Saved"), "A completed edit/save must acknowledge Saved")
+// The save starts 500 ms after the last keystroke, so a fixed one-second wait leaves a slow runner little margin.
+let saveDeadline = Date().addingTimeInterval(10)
+let saveLabels = ["Saved", "Not saved", "Saving…", "Unsaved changes"]
+var saveLabel = "no save label"
+repeat {
+    let pollStarted = Date()
+    // Read the status bar once per poll: separate searches can each miss a label that changes between them.
+    // Only the window's footer landmark counts; the file toolbar shows the same pending and error labels.
+    let current = window()
+    require(current != nil, "Fixture window disappeared while waiting for Saved")
+    let frame = current!.1
+    var footer = nativeElements().filter { attribute($0, "AXSubrole") as? String == "AXLandmarkContentInfo" }
+    var index = 0
+    while index < footer.count && footer.count < 400 {
+        for item in attribute(footer[index], "AXChildren") as? [AXUIElement] ?? [] where !footer.contains(where: { CFEqual($0, item) }) { footer.append(item) }
+        index += 1
+    }
+    let visible = Set(footer.compactMap { element -> String? in
+        guard attribute(element, "AXRole") as? String == "AXStaticText", let value = attribute(element, "AXValue") as? String,
+            saveLabels.contains(value), let bounds = nativeBounds(element), bounds.width > 1, bounds.height > 1, frame.contains(bounds) else { return nil }
+        return value
+    })
+    saveLabel = saveLabels.first(where: visible.contains) ?? "no save label"
+    if saveLabel == "Saved" || saveLabel == "Not saved" { break }
+    // Time out only after a poll that started at or past the deadline: a poll that starts just before it can
+    // read the footer just before the save finishes, so one more poll follows it.
+    if pollStarted >= saveDeadline { break }
+    Thread.sleep(forTimeInterval: min(0.1, max(0, saveDeadline.timeIntervalSinceNow)))
+} while true
+require(saveLabel == "Saved", "A completed edit/save must acknowledge Saved; showing \(saveLabel)")
 // Focusing Instructions scrolls below the compact test card; return to its start.
 scroll(4000)
 _ = try seek("Not run since your edit", -250)

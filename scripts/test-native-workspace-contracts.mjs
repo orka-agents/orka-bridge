@@ -313,6 +313,13 @@ assert.ok(savedConnectionCopy, 'read actual saved-connection copy from the rende
 assert.ok(mac.includes(`waitForNativeText(["${savedConnectionCopy}"])`), 'eligible-credential must wait for actual saved-connection copy');
 assert.ok(mac.includes(`!nativeTextExists("${savedConnectionCopy}")`), 'eligible-absent must reject saved-connection copy');
 assert.ok(fixtureSource.includes('match upgrade_refresh_bytes(key, refresh, &mut ack.1)'), 'Mac IPC must use the executable producer');
+// A new scene's reload must wait for a held refresh's reply, or Tauri resends the
+// cancelled refresh into that scene. The handler must hold, release and consult the gate.
+assert.ok(fixtureSource.includes('upgrade_reload_allowed(*upgrade_held.lock().unwrap(), std::time::Instant::now())'), 'scene reload must consult the held-refresh gate');
+assert.ok(fixtureSource.includes('*upgrade_held.lock().unwrap() = Some(None);'), 'holding a refresh must close the gate');
+assert.ok(/resolver\.resolve\(status\);\s*\*held\.lock\(\)\.unwrap\(\) = Some\(Some\(std::time::Instant::now\(\)\)\);/.test(fixtureSource), 'the held reply must record when it resolved');
+const reloadGate = fixtureSource.match(/fn upgrade_reload_allowed\([\s\S]*?\n\}/)?.[0];
+assert.ok(reloadGate, 'Mac fixture needs an executable reload gate');
 // Compile and execute the real dependency-free Mac fixture metadata producer.
 // This is not a native renderer/SDK run: it checks rejection/read ordering only.
 const witnessProducer = fixtureSource.match(/fn upgrade_refresh_bytes\([\s\S]*?\n\}/)?.[0];
@@ -324,7 +331,7 @@ const { join } = await import('node:path');
 const scratch = await mkdtemp(join(tmpdir(), 'bridge-witness-'));
 const executable = join(scratch, process.platform === 'win32' ? 'witness.exe' : 'witness');
 try {
-  const main = `${witnessProducer}\nfn main() {
+  const main = `${witnessProducer}\n${reloadGate}\nfn main() {
     for (key, error) in [("refresh-busy", "refreshBusy"), ("refresh-io", "Synthetic owner I/O failure")] {
       let mut failed = false;
       let before = upgrade_refresh_bytes(key, false, &mut failed).unwrap();
@@ -337,6 +344,13 @@ try {
     let mut failed = false;
     assert_eq!(upgrade_refresh_bytes("refresh-pending", true, &mut failed), Ok(1200000000));
     assert!(!failed);
+    let resolved = std::time::Instant::now();
+    let after = |ms| resolved + std::time::Duration::from_millis(ms);
+    assert!(upgrade_reload_allowed(None, resolved));
+    assert!(!upgrade_reload_allowed(Some(None), after(10_000)));
+    assert!(!upgrade_reload_allowed(Some(Some(resolved)), resolved));
+    assert!(!upgrade_reload_allowed(Some(Some(resolved)), after(499)));
+    assert!(upgrade_reload_allowed(Some(Some(resolved)), after(500)));
   }`;
   await writeFile(`${scratch}/main.rs`, main);
   execFileSync('rustc', ['--edition=2021', `${scratch}/main.rs`, '-o', executable]);

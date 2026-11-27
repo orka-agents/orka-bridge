@@ -72,11 +72,18 @@ if (!$trayMenu -or !$trayPoint -or
 }
 Write-Host 'PASS tray menu bounds native retries, returns exact items and preserves unrelated failures'
 # Timestamp writes must stay off the success pipeline: callers return controls/handles.
-foreach ($name in @('Write-StartupEvent', 'Test-NativeReady')) {
+foreach ($name in @('Write-StartupEvent', 'Test-NativeReady', 'Wait-NativeReady')) {
     $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if (!$definition) { throw "$name missing" }
     . ([scriptblock]::Create($definition.Extent.Text))
 }
+# The Clusters wait must start only after native readiness, so Start-Bridge must wait for it.
+$startBridge = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Start-Bridge' }, $true)
+$calls = @($startBridge.Body.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true))
+$observed = @($calls | Where-Object { $_.GetCommandName() -eq 'Write-StartupEvent' -and $_.Extent.Text -match "'frame-observed'" })
+$wait = @($calls | Where-Object { $_.GetCommandName() -eq 'Wait-NativeReady' })
+if ($observed.Count -ne 1 -or $wait.Count -ne 1 -or $wait[0].Extent.StartOffset -lt $observed[0].Extent.EndOffset) { throw 'Start-Bridge must wait for native ready after observing the frame' }
+Write-Host 'PASS Start-Bridge waits for native ready after observing the frame'
 $script:themeOutput = Join-Path ([IO.Path]::GetTempPath()) "bridge-startup-test-$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory $script:themeOutput | Out-Null
 $script:startupLog = Join-Path $script:themeOutput 'app.err.log'
@@ -99,6 +106,26 @@ try {
     $ready = @(Test-NativeReady)
     if ($ready.Count -ne 1 -or $ready[0] -ne $true) { throw 'Timestamped readiness prefix no longer yields exactly one Boolean' }
     Write-Host 'PASS startup readiness still requires the existing ready marker with timestamp suffixes'
+
+    $timeline = Join-Path $script:themeOutput 'startup-timeline.jsonl'
+    $output = @(Wait-NativeReady 1000)
+    $events = @(Get-Content $timeline | ConvertFrom-Json | ForEach-Object event)
+    if ($output.Count -or ($events[-2..-1] -join ',') -cne 'native-ready-wait-begin,native-ready-wait-ended') { throw 'Ready wait leaked output or did not record its bounds' }
+    Write-Host 'PASS native ready wait returns once the ready marker exists'
+
+    [IO.File]::WriteAllText($script:startupLog, "bridge-startup: main epoch_ms=1`n")
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    try { Wait-NativeReady 300; throw 'Ready wait accepted a startup log without ready' }
+    catch { if ($_.Exception.Message -cne 'Native startup was not ready within 0.3 s') { throw } }
+    if ($clock.ElapsedMilliseconds -lt 300 -or (Get-Content $timeline | ConvertFrom-Json)[-1].event -cne 'native-ready-wait-failed') { throw 'Ready wait ended early or did not record its failure' }
+    Write-Host 'PASS native ready wait is bounded and records its failure'
+
+    $script:app = [pscustomobject]@{ Id = 123; HasExited = $true; ExitCode = 3 }
+    try { Wait-NativeReady 1500; throw 'Ready wait ignored an exited process' }
+    catch { if ($_.Exception.Message -cne 'Bridge exited with code 3 before native startup was ready') { throw } }
+    if ((Get-Content $timeline | ConvertFrom-Json)[-1].event -cne 'native-ready-wait-failed') { throw 'Exited ready wait did not record its failure' }
+    $script:app = [pscustomobject]@{ Id = 123 }
+    Write-Host 'PASS native ready wait stops when Bridge exits before ready'
 
     # A missing destination makes the best-effort diagnostic write fail, not the walk.
     $script:themeOutput = Join-Path $script:themeOutput 'absent'

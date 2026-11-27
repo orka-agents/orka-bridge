@@ -199,6 +199,27 @@ function Test-NativeReady {
     try { $startup = $reader.ReadToEnd() } finally { $reader.Dispose() }
     return $startup.Contains('bridge-startup: ready')
 }
+# Tauri builds the configured window, including WebView2's environment and
+# controller, before the setup hook writes `ready`. With a new WebView2 profile
+# on a hosted runner that has taken 6-35 s; with an existing profile, under 1 s.
+# Bound native readiness on its own, so the Clusters wait still measures only
+# the frontend after native setup.
+function Wait-NativeReady([int]$TimeoutMs = 60000) {
+    Write-StartupEvent 'native-ready-wait-begin'
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while (!(Test-NativeReady)) {
+        if ($script:app.HasExited) {
+            Write-StartupEvent 'native-ready-wait-failed'
+            throw "Bridge exited with code $($script:app.ExitCode) before native startup was ready"
+        }
+        if ($clock.ElapsedMilliseconds -ge $TimeoutMs) {
+            Write-StartupEvent 'native-ready-wait-failed'
+            throw "Native startup was not ready within $($TimeoutMs / 1000) s"
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    Write-StartupEvent 'native-ready-wait-ended'
+}
 function Start-Bridge {
     if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared; refusing to resume a VM' }
     $script:window = $null
@@ -210,6 +231,8 @@ function Start-Bridge {
     $script:startupLog = Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log"
     Write-StartupEvent 'launch-begin'
     $script:app = Start-Process $Executable -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError $script:startupLog
+    # Cache the process handle now, so ExitCode stays readable after an early exit.
+    $null = $script:app.Handle
     Write-StartupEvent 'launch-returned'
     # Process.MainWindowHandle can select Tao's hidden event target. Identify
     # the real app frame by its configured title and this launch's process ID.
@@ -224,6 +247,7 @@ function Start-Bridge {
     }
     # This is first observation of the frame, not its producer-side creation time.
     Write-StartupEvent 'frame-observed'
+    Wait-NativeReady
 }
 function Find-ReadyClusters {
     if (!$script:window) {
