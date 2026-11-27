@@ -11,9 +11,9 @@ Bridge runs an AI agent on your own computer and checks its answer with a test. 
 - About 65 GB free disk on a Mac, or 60 GB on Windows.
 - Windows: turn on **Windows Hypervisor Platform** in Turn Windows features on or off, and install the [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) if it's missing.
 
-**Install and first open.** The app isn't signed by a known developer, so your computer asks once:
+**Install and first open.** The app isn't signed by a known developer, so your computer asks before opening it:
 
-- Mac: open the download in Finder and move Bridge to Applications, or to an Applications folder in your home folder if you aren't an administrator. Open it once; macOS says it can't verify Bridge. Then open System Settings > Privacy & Security, choose Open Anyway and confirm Open. If your account isn't an administrator, macOS asks for an administrator's name and password: ask whoever manages your Mac, or your IT team.
+- Mac: open the download in Finder and move Bridge to Applications, or to an Applications folder in your home folder if you aren't an administrator. Open it once; macOS says it can't verify Bridge. Then open System Settings > Privacy & Security, choose Open Anyway and confirm Open. If your account isn't an administrator, macOS asks for an administrator's name and password: ask whoever manages your Mac, or your IT team. macOS asks again for every Bridge you download, updates included, so on that account each new version needs an administrator too.
 - Windows: use Extract All, keep the whole folder, and open `orka-bridge.exe` from it, not from inside the ZIP. If SmartScreen says it protected your PC, choose More info, then Run anyway.
 
 If macOS says Bridge is damaged, or offers no Open Anyway, stop and [report it](https://github.com/orka-agents/orka-bridge/blob/main/docs/preview.md#report-a-problem). Don't turn off Gatekeeper.

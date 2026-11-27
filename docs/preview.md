@@ -90,7 +90,9 @@ you meant to download from this repository; keep system protections enabled.
    Settings > Privacy & Security**, find Bridge and choose **Open Anyway**.
    Confirm **Open** and authenticate if asked; wording varies by macOS version.
    If your account isn't an administrator, macOS asks for an administrator's
-   name and password: ask whoever manages your Mac, or your IT team.
+   name and password: ask whoever manages your Mac, or your IT team. macOS
+   asks again for every Bridge you download, updates included, so on that
+   account each new version needs an administrator too.
 3. If no exception is offered, or macOS reports malware or a damaged app,
    [ask for help](#report-a-problem). Don't remove quarantine or disable Gatekeeper.
 

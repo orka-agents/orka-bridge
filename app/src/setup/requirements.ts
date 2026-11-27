@@ -36,13 +36,19 @@ export function setupTime(requirements: WorkspaceRequirements | null | undefined
   return `${download}, then about ${minutes} minute${minutes === 1 ? '' : 's'} to start`;
 }
 
+// The card answers "do I have room?" with one disk figure; diskDetail keeps the rest.
 export function setupNeeds(requirements: WorkspaceRequirements) {
   const download = requirements.downloadBytes === null ? '' : `Downloads about ${formatRequirementGB(requirements.downloadBytes)}. `;
   const memory = `${formatRequirementGB(requirements.memoryBytes)} of memory`;
-  const needs = requirements.freeDiskBytes === null || requirements.setupDiskBytes === null
+  const needs = requirements.freeDiskBytes === null
     ? `Needs virtualization and ${memory}.`
-    : `Needs virtualization, ${memory} and ${formatNeededGB(requirements.freeDiskBytes)} of free disk; about ${formatRequirementGB(requirements.setupDiskBytes)} stays in use.`;
-  return `${download}${needs} Data disk can grow to ${formatRequirementGB(requirements.stateDiskBytes)}.`;
+    : `Needs virtualization, ${memory} and ${formatNeededGB(requirements.freeDiskBytes)} of free disk.`;
+  return `${download}${needs}`;
+}
+
+export function diskDetail(requirements: WorkspaceRequirements) {
+  const kept = requirements.setupDiskBytes === null ? '' : `About ${formatRequirementGB(requirements.setupDiskBytes)} stays in use after setup. `;
+  return `${kept}Data disk can grow to ${formatRequirementGB(requirements.stateDiskBytes)}.`;
 }
 
 export function formatSize(bytes: number) {

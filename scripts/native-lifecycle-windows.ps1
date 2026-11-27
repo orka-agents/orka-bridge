@@ -390,9 +390,9 @@ try {
         $requirements = Wait-For 'Computer requirements panel missing' { Find-Control $script:window 'Computer requirements' $null }
         Wait-For 'Computer requirements did not settle' {
             $lines = (Get-UiNames $requirements) -join ' '
-            $lines.Contains('These checks do not change this computer.') -or $lines.Contains('This computer has') -or $lines.Contains('Virtualization:') -or $lines.Contains("Bridge couldn't check")
+            $lines.Contains('These checks do not change this computer.') -or $lines.Contains('Bridge checks virtualization and memory when the workspace starts.') -or $lines.Contains('This computer has') -or $lines.Contains('Virtualization:') -or $lines.Contains("Bridge couldn't check")
         } | Out-Null
-        # Required RAM and maximum data-disk growth stay visible; the disclosure opens.
+        # Required RAM stays on the card; opening the disclosure shows data-disk growth.
         Press (Wait-For 'Workspace details disclosure missing' { Find-Control $script:window "What's inside" $button })
         Wait-For 'Local size facts did not settle' {
             $names = Get-UiNames $script:window
