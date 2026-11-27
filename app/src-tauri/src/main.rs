@@ -425,6 +425,28 @@ async fn agent_run(
     let folder = document_folder(agents.inner().clone(), document_id).await?;
     Ok(state.start_document(vm.inner().clone(), folder))
 }
+/// Drafts, runs and reviews the saved job. Status, Stop and the cancellation check
+/// use the agent_run commands with the job's id.
+#[tauri::command]
+async fn job_run_start(
+    id: DocumentId,
+    prompt: String,
+    agents: tauri::State<'_, Arc<Agents>>,
+    state: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> Result<bridge_engine::example_run::RunSnapshot, &'static str> {
+    if !vm.model_connected() {
+        return Err("Connect the AI before running the job.");
+    }
+    // A job's id never names an agent, so it can't take over an agent's results.
+    if document_folder(agents.inner().clone(), id).await.is_ok() {
+        return Err("The job is invalid.");
+    }
+    state.start_job(
+        vm.inner().clone(),
+        bridge_engine::example_run::JobInput { id, prompt },
+    )
+}
 
 #[tauri::command]
 fn agent_chat_status(
@@ -905,6 +927,7 @@ fn main() {
             agent_run,
             agent_run_cancel,
             agent_run_check_cancellation,
+            job_run_start,
             agent_chat_status,
             agent_chat_send,
             agent_chat_reconnect,
