@@ -108,6 +108,29 @@ describe('preview backend replies', () => {
     expect(await sendPreflight(remote.targetId, remote.providerId, SAMPLE_DOCUMENT_ID)).toMatchObject({ canSend: false });
   });
 
+  it('runs Try a task and the Navigator on a cluster connected in this run', async () => {
+    await preview('scenario=clusterReady&speed=1000');
+    const selected = await selectCluster('team-dev');
+    const place = { targetId: selected.target.id, providerId: selected.providers[0].id };
+    expect(await chatCall('agent_chat_send', SAMPLE_DOCUMENT_ID, 'Read https://example.com', place)).toMatchObject({ ok: true, snapshot: { busy: true, denied: null, keptOnCluster: false } });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const task = await chatCall('agent_chat_status', SAMPLE_DOCUMENT_ID);
+    expect(task).toMatchObject({ ok: true, snapshot: { versions: [{ turns: [{ phase: 'Succeeded', tools: [{ name: 'web_fetch' }, { name: 'web_fetch' }] }] }] } });
+    expect(await navigatorCall('agent_chat_send', '', 'What is a Task?', place)).toMatchObject({ ok: true, thinksWith: { kind: 'cluster' } });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    // The second message continues the same conversation on the same cluster.
+    expect(await navigatorCall('agent_chat_send', '', 'And a Session?', place)).toMatchObject({ ok: true });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const nav = await navigatorCall('agent_chat_status', '');
+    expect(nav.ok && nav.snapshot.versions.map(version => version.turns.length)).toEqual([2]);
+  });
+
+  it('refuses a cluster conversation before the cluster is connected in this run', async () => {
+    await preview('scenario=connected');
+    const place = { targetId: '00000000-0000-4000-8000-000000000001', providerId: '00000000-0000-4000-8000-000000000002' };
+    expect(await chatCall('agent_chat_send', SAMPLE_DOCUMENT_ID, 'Read it', place)).toEqual({ ok: false, message: 'Bridge couldn’t reach the selected cluster. Reconnect it in Clusters, then try again.' });
+  });
+
   it('opens memoryLow with insufficient installed memory', async () => {
     await preview('scenario=memoryLow');
     expect(await readPreflight(6 * 1024 ** 3)).toMatchObject({ memory: 'insufficient', virtualization: 'ready' });

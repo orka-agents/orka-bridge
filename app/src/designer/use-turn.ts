@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { type ChatCall, type ChatCommand, type ChatSnapshot, chatCall } from './chat-api';
+import { type ChatCall, type ChatCommand, type ChatPlace, type ChatSnapshot, chatCall } from './chat-api';
 
 // A submitted message waiting to appear as a turn. scrollTop and readerMovedAway belong to the caller's scrolling.
 export type PendingTurn = { message: string; count: number; scrollTop?: number; uncertain?: boolean; readerMovedAway?: boolean };
@@ -10,6 +10,8 @@ export type TurnOptions = {
   scrollTop?: () => number | undefined;
   // The native command set to use; Try a task's by default. The Navigator has its own.
   call?: ChatCall;
+  // Where a send runs: a connected cluster, or this computer when absent.
+  place?: ChatPlace;
 };
 
 // Polls one agent's native turn state and reconciles commands against it. A lost reply is never treated as a
@@ -78,7 +80,7 @@ export function useTurn(documentId: string, blocked: string | undefined, options
       setAwaitingTurn(true);
     }
     const operation = action === 'agent_chat_reconnect' && pending.current?.uncertain ? 'agent_chat_status' : action;
-    const result = await (hooks.current.call ?? chatCall)(operation, documentId, pending.current?.message);
+    const result = await (hooks.current.call ?? chatCall)(operation, documentId, pending.current?.message, hooks.current.place);
     if (!alive.current || request !== epoch.current) return;
     if (result.ok) {
       if (action === 'agent_chat_send') hooks.current.resumeFollow?.();

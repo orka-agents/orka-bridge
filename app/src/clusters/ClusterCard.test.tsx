@@ -100,7 +100,7 @@ test('failed context discovery leaves local Run and Try a task usable without re
     if (command === 'cluster_discover') return Promise.reject({ check: 'clusterApi', result: 'connectionFailed' });
     if (command === 'agent_open') return { documentId, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks' };
     if (command === 'agent_run_status' || command === 'agent_run') return { documentId, busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
-    if (command === 'agent_chat_status' || command === 'agent_chat_send' || command === 'agent_chat_new') return { documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+    if (command === 'agent_chat_status' || command === 'agent_chat_send' || command === 'agent_chat_new') return { documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();

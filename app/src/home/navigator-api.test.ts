@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
 import { NAVIGATOR_ID, isNavigatorSnapshot, navigatorCall } from './navigator-api';
 
-const chat = { documentId: NAVIGATOR_ID, state: 'ready', busy: false, canSend: true, versions: [{ turns: [{ message: 'Hi', answer: 'Hello', phase: 'Succeeded', tools: [{ name: 'x', callId: 'c', phase: 'ToolCallCompleted' }], contextRetained: true, terminationUnconfirmed: false, stopUnconfirmed: false, startedAt: 1, finishedAt: 2 }] }], error: null };
+const chat = { documentId: NAVIGATOR_ID, state: 'ready', busy: false, canSend: true, versions: [{ turns: [{ message: 'Hi', answer: 'Hello', phase: 'Succeeded', tools: [{ name: 'x', callId: 'c', phase: 'ToolCallCompleted' }], contextRetained: true, terminationUnconfirmed: false, stopUnconfirmed: false, startedAt: 1, finishedAt: 2 }] }], error: null, denied: null, keptOnCluster: false };
 const reply = { chat, thinksWith: { kind: 'copilot', model: 'gpt-5.6-terra' } };
 beforeEach(() => { vi.stubGlobal('isTauri', true); });
 afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
@@ -32,4 +32,12 @@ test('commands map to the Navigator set, and native errors read as Navigator wor
   // An unexpected reply is never taken as a refusal: the outcome is uncertain.
   expect(await navigatorCall('agent_chat_stop', 'ignored')).toMatchObject({ ok: false, uncertain: true });
   expect(seen).toEqual([['navigator_status', {}], ['navigator_send', { message: 'Hello' }], ['navigator_stop', {}]]);
+});
+
+test('a cluster AI connection thinks with its model, and a send names the cluster', async () => {
+  const calls: unknown[] = [];
+  mockIPC((name, args) => { calls.push([name, args]); return { chat, thinksWith: { kind: 'cluster', model: 'fixture-model' } }; });
+  expect(await navigatorCall('agent_chat_send', '', 'Hi', { targetId: 'a', providerId: 'b' })).toMatchObject({ ok: true, thinksWith: { kind: 'cluster', model: 'fixture-model' } });
+  expect(calls).toEqual([['navigator_send', { message: 'Hi', targetId: 'a', providerId: 'b' }]]);
+  expect(isNavigatorSnapshot({ chat: { ...chat, keptOnCluster: undefined }, thinksWith: null })).toBe(false);
 });

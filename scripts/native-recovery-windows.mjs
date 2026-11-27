@@ -856,7 +856,7 @@ try {
           return { status: 'allowed', checks: [['agents', ['create', 'get', 'list']], ['tasks', ['create', 'get', 'list']], ['providers', ['get', 'list']], ['tools', ['get', 'list']]].flatMap(([resource, verbs]) => verbs.map(verb => ({ resource, verb, status: 'allowed' }))) };
         }
         // A complete idle snapshot, so the blocked Try a task check proves Ready is suppressed, not merely that no status loaded.
-        if (designer && !name.startsWith('chat-') && command === 'agent_chat_status') return { documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+        if (designer && !name.startsWith('chat-') && command === 'agent_chat_status') return { documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
         if (command === 'send_status') {
           if (!sendScene) return { documentId, view: null, busy: null };
           if (name === 'send-ready' || name === 'send-blocked') return { documentId, view: null, busy: null };
@@ -891,7 +891,7 @@ try {
           const confirming = name === 'chat-session-null' || name === 'chat-session-answer';
           const waiting = name === 'chat-pending' || name === 'chat-running';
           const turn = { message: 'What did the page say?', answer: waiting || name === 'chat-session-null' ? null : 'The page says fixture-checksum.', phase: waiting ? name === 'chat-pending' ? 'Pending' : 'Running' : 'Succeeded', tools: ['chat-answer', 'chat-long'].includes(name) ? [{ name: 'web_fetch', callId: 'fixture-call', phase: 'Succeeded' }] : [], contextRetained: !waiting && !confirming, terminationUnconfirmed: false, stopUnconfirmed: false, startedAt: 1767225600000, finishedAt: waiting ? null : 1767225612000 };
-          return { documentId, state: confirming ? 'waitingForSession' : waiting ? 'working' : 'ready', busy: waiting || confirming, canSend: !waiting && !confirming, versions: name === 'chat-empty' ? [] : name === 'chat-long' ? [{ turns: Array.from({ length: 20 }, (_, i) => ({ ...turn, message: 'Earlier message ' + (i + 1) + ': What did the page say?', answer: 'The page says fixture-checksum. ' + 'This synthetic paragraph keeps a long transcript available for reading without a live model. '.repeat(4) })) }] : name === 'chat-two-versions' ? [{ turns: [{ ...turn, message: 'Keep this earlier conversation.' }] }, { turns: [turn] }] : [{ turns: [turn] }], error: null };
+          return { documentId, state: confirming ? 'waitingForSession' : waiting ? 'working' : 'ready', busy: waiting || confirming, canSend: !waiting && !confirming, versions: name === 'chat-empty' ? [] : name === 'chat-long' ? [{ turns: Array.from({ length: 20 }, (_, i) => ({ ...turn, message: 'Earlier message ' + (i + 1) + ': What did the page say?', answer: 'The page says fixture-checksum. ' + 'This synthetic paragraph keeps a long transcript available for reading without a live model. '.repeat(4) })) }] : name === 'chat-two-versions' ? [{ turns: [{ ...turn, message: 'Keep this earlier conversation.' }] }, { turns: [turn] }] : [{ turns: [turn] }], error: null, denied: null, keptOnCluster: false };
         }
         if (name.startsWith('cluster-') && command === 'cluster_contexts') return [context, { ...context, id: '00000000-0000-4000-8000-000000000004', name: 'team-west', current: false }];
         if (name.startsWith('cluster-') && command === 'cluster_discover') {
@@ -1625,10 +1625,11 @@ try {
           await until(() => evaluate(`!!document.querySelector('.try-task')?.getClientRects().length && !document.body.innerText.includes('Opening Try a task')`), 'Try a task snapshot');
           const chat = await evaluate(`(() => { const root = document.querySelector('.try-task'); return { text: root.innerText, run: root.querySelector('button[type="submit"]')?.disabled }; })()`);
           await writeFile(join(output, `${theme}-${size}-${name}-chat-state.json`), JSON.stringify(chat, null, 2));
-          // Remote is parent-blocked; the idle ready snapshot must not be shown as Ready. Unblocked state is recorded only.
+          // A connected cluster with its AI connection runs Try a task there. The idle snapshot is still not shown as
+          // Ready, and Run task waits for a task. Local state is recorded only.
           if (name === 'designer-remote') {
-            if (/\bReady\b/.test(chat.text) || chat.run !== true || !chat.text.includes('Try a task runs on the workspace. Choose This computer in Clusters.')) throw Error(`Blocked Try a task must not say Ready and must disable Run task: ${JSON.stringify(chat)}`);
-            await shoot('chat-blocked');
+            if (/\bReady\b/.test(chat.text) || chat.run !== true || chat.text.includes('Choose This computer') || !chat.text.includes('Runs once on team-dev. It does not change test results.')) throw Error(`Remote Try a task must run on team-dev without claiming Ready: ${JSON.stringify(chat)}`);
+            await shoot('chat-remote');
             // Top-level tab navigation retains the last view.
             await evaluate(`document.querySelector('nav[aria-label="Main"] button[aria-label="Overview"]').click()`);
             await until(() => evaluate(`!document.querySelector('.try-task')?.getClientRects().length`), 'Try a task hidden while on Overview');

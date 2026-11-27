@@ -1041,17 +1041,18 @@ _ = try seek("Use this cluster", -150)
 click("Use this cluster", [])
 _ = try seek("Open your agent", -150)
 click("Open your agent", [])
-// A remote place blocks Try a task: no Ready claim and a disabled Run task, at both sizes.
+// A connected remote place runs Try a task there: no Ready claim and Run task waits for a task, at both sizes.
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     waitForButton("Try a task"); click("Try a task", [])
-    waitForChatText("Try a task on this computer before you rely on it.")
-    require(!nativeChatTextIsVisible("Ready for a task."), "Blocked Try a task must not say Ready")
-    require(anyButton("Run task") && enabledButton("Run task") == nil, "Blocked Try a task must disable Run task")
-    _ = try capture("local-shell-chat-blocked-\(size)", ["Try a task on this computer before you rely on it."])
-    _ = try seek("Try a task runs on the workspace", -150)
-    scroll(-100) // Keep the reason clear of the fixed footer.
-    _ = try capture("local-shell-chat-blocked-status-\(size)", ["Try a task runs on the workspace. Choose This computer in Clusters."])
+    waitForChatText("before you rely on it.")
+    require(!nativeChatTextIsVisible("Try a task on this computer"), "Remote Try a task must name the cluster")
+    require(!nativeChatTextIsVisible("Ready for a task."), "Remote Try a task must not say Ready")
+    require(anyButton("Run task") && enabledButton("Run task") == nil, "Remote Try a task must wait for a task")
+    _ = try capture("local-shell-chat-remote-\(size)", ["before you rely on it."])
+    _ = try seek("Runs once on", -150)
+    scroll(-100) // Keep the hint clear of the fixed footer.
+    _ = try capture("local-shell-chat-remote-hint-\(size)", ["It does not change test results."])
     scroll(4000)
     click("Agent", [])
 }

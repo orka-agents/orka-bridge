@@ -3,6 +3,7 @@ pub mod agent_reveal;
 pub mod agents;
 pub mod catalog;
 pub mod chat;
+pub mod chat_cluster;
 pub mod clusters;
 pub mod copilot_environment;
 #[cfg(debug_assertions)]

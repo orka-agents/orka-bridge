@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod chat;
 mod client;
 mod credentials;
 #[cfg(test)]

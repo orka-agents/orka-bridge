@@ -9,12 +9,12 @@ import { type Card, type ExplainCard, parseReply, sourceLabel } from './cards';
 import { type CardRecord, updateConversation, useConversation } from './conversation-store';
 import { NAVIGATOR_ID, type NavigatorResult, type ThinksWith, navigatorCall, navigatorErrors } from './navigator-api';
 import Prose from './Prose';
-import TaskCard, { runLine } from './TaskCard';
+import TaskCard, { runLine, type TaskPlace } from './TaskCard';
 import './home.css';
 
-// What stands between the person and the Navigator. It thinks with the model of the selected Orka, which for now
-// is the workspace on this computer.
-export type NavigatorGate = { kind: 'ready' } | { kind: 'waiting' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'elsewhere'; name: string };
+// What stands between the person and the Navigator. It thinks with the model of the selected place: the workspace on
+// this computer, or a connected cluster's chosen AI connection (`place`).
+export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string };
 export type HomePage = 'Overview' | 'Designer' | 'Clusters';
 type Props = {
   active: boolean; revision: number; gate: NavigatorGate;
@@ -31,7 +31,7 @@ const starters: { label: string; message: string }[] = [
   { label: 'Set up an agent', message: 'Help me set up a new agent.' },
   { label: 'Explain Orka to me', message: 'I’m new to Orka. What is a Task, and how is it different from an agent?' },
 ];
-const vendors: Record<ThinksWith['kind'], string> = { copilot: 'GitHub Copilot', openai: 'OpenAI', anthropic: 'Anthropic' };
+const vendors: Record<Exclude<ThinksWith['kind'], 'cluster'>, string> = { copilot: 'GitHub Copilot', openai: 'OpenAI', anthropic: 'Anthropic' };
 
 export default function Home(props: Props) {
   const { gate } = props;
@@ -62,9 +62,9 @@ function Gated({ gate, onOpenPage, onThisComputer, onManageClusters }: Props & {
     body: `The Navigator thinks with the model on the Orka you have selected, so it can’t answer until ${gate.name ?? 'the cluster'} is reachable. Nothing on the cluster has changed. Your agent files are on this computer and still open in Designer.`,
     actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Check again</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>{onManageClusters && <Button type="button" kind="quiet" onClick={onManageClusters}>Open Clusters</Button>}</>,
   } : {
-    title: 'The Navigator works with This computer for now.', line: 'works with This computer for now',
-    body: `It thinks with the model in the workspace on this computer. Bridge doesn’t set up the Navigator on a cluster yet, so it can’t answer for ${gate.name}. Nothing on ${gate.name} has changed.`,
-    actions: <><Button type="button" kind="primary" onClick={onThisComputer}>Switch to This computer</Button><Button type="button" kind="quiet" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button></>,
+    title: `Choose an AI connection for ${gate.name}.`, line: 'no AI connection chosen',
+    body: `The Navigator thinks with the AI connection you choose for ${gate.name}, so it can answer once one is chosen in Clusters. Nothing on ${gate.name} has changed.`,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button></>,
   };
   return <section className="home home-start" aria-labelledby="page-title">
     <Hero lede={false} />
@@ -98,7 +98,8 @@ const heldCopy: Partial<Record<ChatSnapshot['state'], [string, string]>> = {
   contextUnavailable: ['This conversation could not be confirmed.', 'Start a new conversation. Nothing was created or changed.'],
 };
 
-function Navigator({ active, revision, onOpenPage, onOpenAgent, onAgentCreated, blockedFor }: Props) {
+function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCreated, blockedFor }: Props) {
+  const place = gate.kind === 'ready' ? gate.place : undefined;
   const fieldId = useId();
   const field = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
@@ -112,7 +113,8 @@ function Navigator({ active, revision, onOpenPage, onOpenAgent, onAgentCreated, 
     }
     return result;
   }, []);
-  const { snapshot, draft, setDraft, error, readError, command, awaitingTurn, pending, act } = useTurn(NAVIGATOR_ID, undefined, { call });
+  const { snapshot, draft, setDraft, error, readError, command, awaitingTurn, pending, act } = useTurn(NAVIGATOR_ID, undefined,
+    { call, place: place && { targetId: place.targetId, providerId: place.providerId } });
   const conversation = useConversation();
   // Saved agents, for the task card's choices. Unreadable means none to offer.
   const [agents, setAgents] = useState<AgentEntry[]>([]);
@@ -164,7 +166,9 @@ function Navigator({ active, revision, onOpenPage, onOpenAgent, onAgentCreated, 
     const card = turn.answer && turn.phase !== 'Failed' ? parseReply(turn.answer).card : undefined;
     if (card && card.kind !== 'explain') latest.set(card.kind, String(turn.startedAt));
   });
-  const line = thinksWith ? <><span className="nav-line-wide">thinks with {vendors[thinksWith.kind]} · </span>{thinksWith.model}</> : undefined;
+  // On a cluster the line says where it runs; the model is the one its last answer used.
+  const line = place ? <>runs on {place.name}{thinksWith?.kind === 'cluster' && <span className="nav-line-wide"> · thinks with {thinksWith.model}</span>}</>
+    : thinksWith && thinksWith.kind !== 'cluster' ? <><span className="nav-line-wide">thinks with {vendors[thinksWith.kind]} · </span>{thinksWith.model}</> : undefined;
   const failure = error?.message ?? readError;
   const composer = <form className={`nav-composer${empty ? ' nav-composer-start' : ''}`} aria-label="Chat" onSubmit={event => { event.preventDefault(); void send(draft); }}>
     <label className="sr-only" htmlFor={fieldId}>Message</label>
@@ -199,7 +203,7 @@ function Navigator({ active, revision, onOpenPage, onOpenAgent, onAgentCreated, 
         record={conversation.cards[String(turn.startedAt)]} actionable={kind => latest.get(kind) === String(turn.startedAt)}
         agents={agents} onAsk={message => { void send(message); }} onRetry={() => { void send(turn.message); }}
         onReconnect={() => { void act('agent_chat_reconnect'); }} onStartOver={() => { void startOver(); }}
-        onOpenPage={onOpenPage} onOpenAgent={onOpenAgent} onAgentCreated={onAgentCreated} blockedFor={blockedFor} />)}
+        onOpenPage={onOpenPage} onOpenAgent={onOpenAgent} onAgentCreated={onAgentCreated} blockedFor={blockedFor} place={place} />)}
       {awaitingTurn && <li className="nav-turn"><p className="nav-user">{pending.current?.message}</p><Thinking /></li>}
     </ol>
     <div ref={end} />
@@ -215,8 +219,9 @@ type TurnProps = {
   turn: ChatTurn; newest: boolean; snapshot?: ChatSnapshot; record?: CardRecord; actionable: (kind: string) => boolean; agents: AgentEntry[];
   onAsk: (message: string) => void; onRetry: () => void; onReconnect: () => void; onStartOver: () => void;
   onOpenPage: (page: HomePage) => void; onOpenAgent: (documentId: string) => void; onAgentCreated: () => void; blockedFor?: (documentId: string) => string | undefined;
+  place?: TaskPlace;
 };
-function Turn({ turn, newest, snapshot, record, actionable, agents, onAsk, onRetry, onReconnect, onStartOver, onOpenPage, onOpenAgent, onAgentCreated, blockedFor }: TurnProps) {
+function Turn({ turn, newest, snapshot, record, actionable, agents, onAsk, onRetry, onReconnect, onStartOver, onOpenPage, onOpenAgent, onAgentCreated, blockedFor, place }: TurnProps) {
   const view = turnView(turn, newest, snapshot);
   return <li className="nav-turn">
     <p className="nav-user">{turn.message}</p>
@@ -232,27 +237,27 @@ function Turn({ turn, newest, snapshot, record, actionable, agents, onAsk, onRet
         : <Button type="button" kind="primary" onClick={onReconnect}>Reconnect</Button>}</div>
     </article>}
     {view.kind === 'answer' && <Answer cardKey={String(turn.startedAt)} reply={view.reply} record={record ?? { status: 'proposed' }} actionable={actionable}
-      agents={agents} onAsk={onAsk} onOpenPage={onOpenPage} onOpenAgent={onOpenAgent} onAgentCreated={onAgentCreated} blockedFor={blockedFor} />}
+      agents={agents} onAsk={onAsk} onOpenPage={onOpenPage} onOpenAgent={onOpenAgent} onAgentCreated={onAgentCreated} blockedFor={blockedFor} place={place} />}
   </li>;
 }
 
-function Answer({ cardKey, reply, record, actionable, agents, onAsk, onOpenPage, onOpenAgent, onAgentCreated, blockedFor }: {
+function Answer({ cardKey, reply, record, actionable, agents, onAsk, onOpenPage, onOpenAgent, onAgentCreated, blockedFor, place }: {
   cardKey: string; reply: ReturnType<typeof parseReply>; record: CardRecord; actionable: (kind: string) => boolean; agents: AgentEntry[];
   onAsk: (message: string) => void; onOpenPage: (page: HomePage) => void; onOpenAgent: (documentId: string) => void; onAgentCreated: () => void;
-  blockedFor?: (documentId: string) => string | undefined;
+  blockedFor?: (documentId: string) => string | undefined; place?: TaskPlace;
 }) {
   const card: Card | undefined = record.edited ?? reply.card;
   const task = card?.kind === 'task' && record.status === 'created' ? record.task : undefined;
   // Once a task exists, Bridge's own line about it replaces the proposal's words: the card now shows the Task.
   const outcome = task?.outcome;
-  const words = task ? runLine[!outcome ? 'Running' : outcome.stopped || outcome.phase === 'Cancelled' ? 'Cancelled'
-    : outcome.phase === 'Succeeded' ? 'Succeeded' : outcome.phase === 'Failed' ? 'Failed' : 'Unknown'] : reply.prose;
+  const words = task ? runLine(!outcome ? 'Running' : outcome.stopped || outcome.phase === 'Cancelled' ? 'Cancelled'
+    : outcome.phase === 'Succeeded' ? 'Succeeded' : outcome.phase === 'Failed' ? 'Failed' : 'Unknown', task.where) : reply.prose;
   return <>
     <div className="nav-reply">
       <p className="section-label">Navigator</p>
       {words && <Prose text={words} />}
     </div>
-    {card?.kind === 'task' && <TaskCard cardKey={cardKey} proposal={card} record={record} actionable={actionable('task')} agents={agents} blockedFor={blockedFor} onOpenAgent={onOpenAgent} onAsk={onAsk} />}
+    {card?.kind === 'task' && <TaskCard cardKey={cardKey} proposal={card} record={record} actionable={actionable('task')} agents={agents} blockedFor={blockedFor} onOpenAgent={onOpenAgent} onAsk={onAsk} place={place} />}
     {card?.kind === 'agent' && <AgentCard cardKey={cardKey} proposal={card} record={record} actionable={actionable('agent')} agents={agents}
       onCreated={onAgentCreated} onOpenAgent={onOpenAgent} />}
     {card?.kind === 'explain' && <Explain card={card} onAsk={onAsk} onOpenPage={onOpenPage} />}

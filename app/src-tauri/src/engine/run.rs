@@ -192,6 +192,11 @@ impl ResourceId {
         }
         Ok(())
     }
+    /// `Agent` or `Task`.
+    #[cfg_attr(test, allow(dead_code))] // Harnesses without the chat owner omit its cleanup.
+    pub(crate) fn kind(&self) -> &'static str {
+        self.kind
+    }
     pub(crate) fn path(&self) -> String {
         format!(
             "{}/{}",

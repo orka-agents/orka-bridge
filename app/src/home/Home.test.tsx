@@ -14,10 +14,10 @@ const turn = (message: string, answer: string | null, extra: Partial<Turn> = {})
 const card = (value: unknown) => '```navigator-card\n' + JSON.stringify(value) + '\n```';
 const webReader = '---\nname: web-reader\ndescription: Answers from the web page named in the request\nmodel: gpt-5.6-terra\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools: []\n---\nRead pages.';
 
-let nav: { turns: Turn[]; busy: boolean; state: string; error: string | null };
+let nav: { turns: Turn[]; busy: boolean; state: string; error: string | null; cluster?: boolean };
 let task: { turns: Turn[]; busy: boolean };
 const calls: { command: string; args: Record<string, unknown> }[] = [];
-const navSnapshot = () => ({ chat: { documentId: NAVIGATOR_ID, state: nav.state, busy: nav.busy, canSend: !nav.busy, versions: [{ turns: nav.turns }], error: nav.error }, thinksWith: { kind: 'copilot', model: 'gpt-5.6-terra' } });
+const navSnapshot = () => ({ chat: { documentId: NAVIGATOR_ID, state: nav.state, busy: nav.busy, canSend: !nav.busy, versions: [{ turns: nav.turns }], error: nav.error, denied: null, keptOnCluster: false }, thinksWith: nav.cluster ? { kind: 'cluster', model: 'fixture-model' } : { kind: 'copilot', model: 'gpt-5.6-terra' } });
 beforeEach(() => {
   resetConversation(); calls.length = 0;
   nav = { turns: [], busy: false, state: 'ready', error: null }; task = { turns: [], busy: false };
@@ -29,13 +29,13 @@ beforeEach(() => {
       case 'agents_list': return [{ id: SAMPLE_DOCUMENT_ID, name: 'web-reader', path: null, available: true }];
       case 'agent_open': return { documentId: SAMPLE_DOCUMENT_ID, name: 'web-reader', agent: webReader, tests, source: { agent: 'a'.repeat(64), tests: 'b'.repeat(64) } };
       case 'navigator_status': case 'navigator_reconnect': return navSnapshot();
-      case 'navigator_send': nav.turns.push(turn(String(args.message), null)); nav.busy = true; nav.state = 'working'; return navSnapshot();
+      case 'navigator_send': nav.turns.push(turn(String(args.message), null)); nav.busy = true; nav.state = 'working'; nav.cluster = 'targetId' in args; return navSnapshot();
       case 'navigator_stop': nav.turns.at(-1)!.terminationUnconfirmed = true; nav.busy = false; nav.state = 'ready'; return navSnapshot();
       case 'navigator_new': return navSnapshot();
-      case 'agent_chat_status': case 'agent_chat_new': return { documentId: args.documentId, state: task.busy ? 'working' : 'ready', busy: task.busy, canSend: !task.busy, versions: [{ turns: task.turns }], error: null };
+      case 'agent_chat_status': case 'agent_chat_new': return { documentId: args.documentId, state: task.busy ? 'working' : 'ready', busy: task.busy, canSend: !task.busy, versions: [{ turns: task.turns }], error: null, denied: null, keptOnCluster: false };
       case 'agent_chat_send':
         task.turns.push(turn(String(args.message), null, { phase: 'Pending', startedAt: Date.now() })); task.busy = true;
-        return { documentId: args.documentId, state: 'working', busy: true, canSend: false, versions: [{ turns: task.turns }], error: null };
+        return { documentId: args.documentId, state: 'working', busy: true, canSend: false, versions: [{ turns: task.turns }], error: null, denied: null, keptOnCluster: false };
       default: throw Error(`unexpected ${command}`);
     }
   });
@@ -183,7 +183,7 @@ test('an explanation card can ask a follow-up or open a page', async () => {
 test.each<[NavigatorGate, string, string]>([
   [{ kind: 'noModel' }, 'Connect the AI first', 'Navigator · no model connected'],
   [{ kind: 'unreachable' }, 'Can’t reach the selected cluster. Check your network or VPN.', 'Navigator · can’t reach the cluster'],
-  [{ kind: 'elsewhere', name: 'team-dev' }, 'The Navigator works with This computer for now.', 'Navigator · works with This computer for now'],
+  [{ kind: 'noConnection', name: 'team-dev' }, 'Choose an AI connection for team-dev.', 'Navigator · no AI connection chosen'],
   [{ kind: 'waiting' }, 'Waiting for the workspace to start.', 'Navigator · waiting for the workspace'],
 ])('when it cannot answer (%o) the message box is disabled and a card says why', (gate, title, line) => {
   home(gate);
@@ -193,6 +193,29 @@ test.each<[NavigatorGate, string, string]>([
   expect(screen.getByRole('button', { name: 'Send' }).matches(':disabled')).toBe(true);
   expect(screen.queryByRole('textbox')).toBeNull();
   expect(calls.some(call => call.command.startsWith('navigator_'))).toBe(false);
+});
+
+const cluster = { name: 'team-dev', targetId: '00000000-0000-4000-8000-000000000001', providerId: '00000000-0000-4000-8000-000000000002' };
+test('on a connected cluster the Navigator sends there and says where it runs', async () => {
+  const user = userEvent.setup(); home({ kind: 'ready', place: cluster });
+  expect(await screen.findByText('runs on team-dev', { exact: false })).toBeTruthy();
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'What is a Session?');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() => expect(calls.find(call => call.command === 'navigator_send')?.args).toEqual({ message: 'What is a Session?', targetId: cluster.targetId, providerId: cluster.providerId }));
+  // Its answers come from the cluster's AI connection, named by the model it used.
+  await waitFor(() => expect(document.querySelector('.nav-line')?.textContent).toBe('Navigator · runs on team-dev · thinks with fixture-model'));
+});
+
+test('on a cluster a proposed task runs there, while the agent card still writes the file here', async () => {
+  nav.turns = [turn('Check a page', 'Here is a task.\n\n' + card({ kind: 'task', agent: 'web-reader', task: 'Read https://example.com' }))];
+  const user = userEvent.setup(); home({ kind: 'ready', place: cluster });
+  const proposed = await screen.findByRole('article', { name: 'Proposed task' });
+  expect(within(proposed).getByText('Runs on').nextElementSibling?.textContent).toBe('team-dev');
+  const create = within(proposed).getByRole('button', { name: 'Create task' });
+  await waitFor(() => expect(create.matches(':disabled')).toBe(false));
+  await user.click(create);
+  await waitFor(() => expect(calls.find(call => call.command === 'agent_chat_send')?.args).toEqual({ documentId: SAMPLE_DOCUMENT_ID, message: 'Read https://example.com', targetId: cluster.targetId, providerId: cluster.providerId }));
+  expect(await screen.findByText('Created. It is running on team-dev.')).toBeTruthy();
 });
 
 test('an unreachable cluster offers This computer', async () => {

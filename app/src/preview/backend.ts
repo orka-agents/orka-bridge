@@ -181,7 +181,10 @@ function runSnapshot(documentId: string) {
 // One scripted task per conversation, as Try a task uses it: New, then Send. Phases advance with time; web-reader
 // fetches the page it was given. Stop deletes the task, as the native path does, and leaves its phase as last seen.
 type Turn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean; sentAt: number; startedAt: number; finishedAt: number | null; stopped: boolean; hold?: boolean };
-type Chat = { versions: Turn[][]; fresh: boolean };
+// `cluster`: the conversation's last message ran on a connected cluster, as native records its channel.
+type Chat = { versions: Turn[][]; fresh: boolean; cluster?: boolean };
+// A cluster whose access this run confirmed, so Try a task and the Navigator can run on it.
+let clusterConfirmed = scenario === 'clusterReady';
 const chats = new Map<string, Chat>();
 const chatPhases = [[0.1, 'Pending'], [0.3, 'Scheduled'], [0.5, 'Running'], [0.85, 'Finalizing']] as const;
 // The workspace admits one conversation turn at a time, Navigator or Try a task, as native authoring does.
@@ -215,9 +218,9 @@ function chatSnapshot(documentId: string) {
     }
   }
   const busy = turns.some(working);
-  const canSend = ready() && modelConnected && !anyWorking();
+  const canSend = (ready() && modelConnected || clusterConfirmed) && !anyWorking();
   return {
-    documentId, state: busy ? 'working' : 'ready', busy, canSend, error: null,
+    documentId, state: busy ? 'working' : 'ready', busy, canSend, error: null, denied: null, keptOnCluster: false,
     versions: chat.versions.map(version => ({ turns: version.map(turn => ({ message: turn.message, answer: turn.answer, phase: turn.phase, tools: turn.tools, contextRetained: turn.contextRetained, terminationUnconfirmed: turn.terminationUnconfirmed, stopUnconfirmed: turn.stopUnconfirmed, startedAt: turn.startedAt, finishedAt: turn.finishedAt })) })),
   };
 }
@@ -271,7 +274,8 @@ const navSeed: Partial<Record<Scenario, Turn[]>> = {
 const navTurns = navSeed[scenario];
 if (navTurns) chats.set(NAVIGATOR_ID, { versions: [navTurns], fresh: false });
 function navigatorSnapshot() {
-  return { chat: chatSnapshot(NAVIGATOR_ID), thinksWith: modelConnected ? { kind: 'copilot', model: 'gpt-5.6-terra' } : null };
+  const cluster = chats.get(NAVIGATOR_ID)?.cluster;
+  return { chat: chatSnapshot(NAVIGATOR_ID), thinksWith: cluster ? { kind: 'cluster', model: 'gpt-5.6-terra' } : modelConnected ? { kind: 'copilot', model: 'gpt-5.6-terra' } : null };
 }
 function chatNew(id: string) {
   if (chatSnapshot(id).busy) throw 'busy';
@@ -280,11 +284,16 @@ function chatNew(id: string) {
 function chatStop(id: string) {
   for (const turn of chats.get(id)?.versions.flat() ?? []) if (turn.answer === null && turn.phase !== 'Failed') { turn.stopped = true; turn.hold = false; turn.terminationUnconfirmed = true; }
 }
-function chatSend(id: string, message: string) {
+// A send names a cluster by its target and AI connection ids, as the app passes them; none means this computer.
+function chatSend(id: string, message: string, args?: Record<string, unknown>) {
+  const cluster = typeof args?.targetId === 'string' && typeof args?.providerId === 'string';
+  if (cluster && !clusterConfirmed) throw 'clusterUnavailable';
+  if (!cluster && !(ready() && modelConnected)) throw 'busy';
   if (!chatSnapshot(id).canSend) throw 'busy';
   const chat = chats.get(id) ?? { versions: [], fresh: true };
-  if (chat.fresh || !chat.versions.length) chat.versions.push([]);
-  chat.fresh = false;
+  // Another place is another conversation, as native binds one to its channel.
+  if (chat.fresh || !chat.versions.length || !!chat.cluster !== cluster) chat.versions.push([]);
+  chat.fresh = false; chat.cluster = cluster;
   chat.versions.at(-1)!.push({ message, answer: null, phase: '', tools: [], contextRetained: false, terminationUnconfirmed: false, stopUnconfirmed: false, sentAt: now(), startedAt: Date.now(), finishedAt: null, stopped: false, hold: scenario === 'navThinking' });
   chats.set(id, chat);
 }
@@ -455,7 +464,7 @@ async function contextReply(command: string, args?: Record<string, unknown>): Pr
       const item = targets.find(candidate => candidate.target.id === args?.targetId);
       if (!item) throw { check: 'configuration', result: 'unknown' };
       if (item.serviceAccount && !args?.saName) return { status: 'needServiceAccount', providers: [], failure: null };
-      usedTarget = item;
+      usedTarget = item; clusterConfirmed = true;
       return { status: 'connected', providers: [contextProvider], failure: null };
     }
     case 'cluster_service_accounts': await wait(0.3); return { names: ['bridge-user', 'default', 'orka-reader'], truncated: false };
@@ -554,7 +563,7 @@ async function scenarioReply(command: string, args?: Record<string, unknown>): P
       await wait(1);
       if (scenario === 'clusterDenied') return deniedAccess;
       if (scenario === 'clusterUnreachable') return { status: 'unavailable', providers: [], failure: unreachableCluster };
-      clusterChecked = true;
+      clusterChecked = true; clusterConfirmed = true;
       return { status: 'connected', providers: [clusterProvider], failure: null };
     case 'cluster_select':
       if (!remoteScenario) break;
@@ -691,11 +700,11 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
     case 'agent_chat_status': case 'agent_chat_reconnect': return chatSnapshot(documentId(args));
     case 'agent_chat_new': chatNew(documentId(args)); return chatSnapshot(documentId(args));
     case 'agent_chat_stop': chatStop(documentId(args)); return chatSnapshot(documentId(args));
-    case 'agent_chat_send': chatSend(documentId(args), String(args?.message ?? '')); return chatSnapshot(documentId(args));
+    case 'agent_chat_send': chatSend(documentId(args), String(args?.message ?? ''), args); return chatSnapshot(documentId(args));
     case 'navigator_status': case 'navigator_reconnect': return navigatorSnapshot();
     case 'navigator_new': chatNew(NAVIGATOR_ID); return navigatorSnapshot();
     case 'navigator_stop': chatStop(NAVIGATOR_ID); return navigatorSnapshot();
-    case 'navigator_send': chatSend(NAVIGATOR_ID, String(args?.message ?? '')); return navigatorSnapshot();
+    case 'navigator_send': chatSend(NAVIGATOR_ID, String(args?.message ?? ''), args); return navigatorSnapshot();
     case 'overview_files': return savedFiles();
     case 'overview_agents': return ready()
       ? { state: 'complete', installation, agents: [], observedAt: Math.floor(Date.now() / 1000), observation: null, runActive: false, reason: null }

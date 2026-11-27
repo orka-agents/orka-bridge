@@ -4,7 +4,7 @@ import { type Status, StatusIcon, StatusPill } from '../components/DesignSystem'
 import { agentCall } from '../designer/agent-api';
 import { readForm } from '../designer/agent-form';
 import { builtInTools } from '../designer/built-in-tools';
-import type { ChatTurn } from '../designer/chat-api';
+import type { ChatPlace, ChatTurn } from '../designer/chat-api';
 import type { AgentEntry } from '../designer/documents-api';
 import { testDefinitions } from '../designer/test-definitions';
 import { duration } from '../designer/TryTask';
@@ -12,8 +12,8 @@ import { useTurn } from '../designer/use-turn';
 import type { TaskProposal } from './cards';
 import { type CardRecord, type TaskOutcome, type TaskRun, updateCard } from './conversation-store';
 
-// A proposed task runs exactly as Try a task does: one new conversation on the chosen saved agent, on this
-// computer. The card then follows that Task: Pending, Scheduled, Running, Finalizing, then how it ended.
+// A proposed task runs exactly as Try a task does: one new conversation on the chosen saved agent, on the selected
+// place. The card then follows that Task: Pending, Scheduled, Running, Finalizing, then how it ended.
 const steps = ['Pending', 'Scheduled', 'Running', 'Finalizing'] as const;
 function stepIndex(phase: string) {
   if (['', 'Pending', 'Queued'].includes(phase)) return 0;
@@ -34,13 +34,19 @@ const pill: Record<Ending, [Status, string]> = {
   Running: ['running', 'Running'], Succeeded: ['passed', 'Succeeded'], Failed: ['failed', 'Failed'], Cancelled: ['stale', 'Cancelled'], Unknown: ['stale', 'Result unknown'],
 };
 // The words Bridge says above the card once the task exists. They describe the Task, not the Navigator's view of it.
-export const runLine: Record<Ending, string> = {
-  Running: 'Created. It is running on this computer.',
-  Succeeded: 'Created. It ran on this computer and finished.',
-  Failed: 'It failed. Your agent file and its test results are unchanged.',
-  Cancelled: 'Stopped.',
-  Unknown: 'Created. Bridge could not confirm how it ended.',
-};
+// `where` is the cluster it was created on, or undefined for this computer.
+export function runLine(end: Ending, where?: string) {
+  const on = where ?? 'this computer';
+  return {
+    Running: `Created. It is running on ${on}.`,
+    Succeeded: `Created. It ran on ${on} and finished.`,
+    Failed: 'It failed. Your agent file and its test results are unchanged.',
+    Cancelled: 'Stopped.',
+    Unknown: 'Created. Bridge could not confirm how it ended.',
+  }[end];
+}
+// Where the Navigator's tasks run: the selected cluster with its AI connection, or this computer when absent.
+export type TaskPlace = ChatPlace & { name: string };
 
 function Phases({ outcome, end }: { outcome: TaskOutcome; end: Ending }) {
   const at = end === 'Running' ? Math.max(stepIndex(outcome.phase), 0) : end === 'Succeeded' ? steps.length : outcome.reached;
@@ -76,6 +82,7 @@ type Props = {
   cardKey: string; proposal: TaskProposal; record: CardRecord; actionable: boolean; agents: AgentEntry[];
   // Designer's reason an agent can't take a task now, such as unsaved edits; the task runs the saved file.
   blockedFor?: (documentId: string) => string | undefined; onOpenAgent: (documentId: string) => void; onAsk: (message: string) => void;
+  place?: TaskPlace;
 };
 export default function TaskCard(props: Props) {
   const { record } = props;
@@ -88,7 +95,7 @@ export default function TaskCard(props: Props) {
 
 function chosenAgent(agents: AgentEntry[], name: string) { return agents.find(agent => agent.name === name); }
 
-function ProposedTask({ cardKey, proposal, record, actionable, agents, blockedFor, onAsk }: Props) {
+function ProposedTask({ cardKey, proposal, record, actionable, agents, blockedFor, onAsk, place }: Props) {
   const agent = chosenAgent(agents, proposal.agent);
   const facts = useAgentFacts(agent?.id);
   const open = actionable && record.status === 'proposed';
@@ -99,12 +106,12 @@ function ProposedTask({ cardKey, proposal, record, actionable, agents, blockedFo
     <dl className="nav-rows">
       <div><dt>Agent</dt><dd>{agent ? <><code>{agent.name}</code>{facts?.description && <> · {facts.description}</>}</> : <><code>{proposal.agent}</code> · not found</>}</dd></div>
       <div><dt>Task</dt><dd className="nav-task-text">{proposal.task}</dd></div>
-      <div><dt>Runs on</dt><dd>This computer</dd></div>
+      <div><dt>Runs on</dt><dd>{place?.name ?? 'This computer'}</dd></div>
       {facts?.test && <div><dt>Checked by</dt><dd>the agent’s test: {facts.test}</dd></div>}
     </dl>
     {error && <div className="alert alert-failed"><p className="alert-title" role="alert">{error}</p></div>}
     {open && <div className="nav-actions">
-      <CreateTask documentId={agent?.id} message={proposal.task} reason={reason} cardKey={cardKey} agentName={agent?.name} onError={setError} />
+      <CreateTask documentId={agent?.id} message={proposal.task} reason={reason} cardKey={cardKey} agentName={agent?.name} onError={setError} place={place} />
       <Button type="button" kind="secondary" onClick={() => updateCard(cardKey, current => ({ ...current, status: 'editing' }))}>Edit</Button>
       <Button type="button" kind="quiet" onClick={() => { updateCard(cardKey, current => ({ ...current, status: 'dismissed' })); onAsk('Just answer here, without creating a task.'); }}>Just answer here</Button>
     </div>}
@@ -114,17 +121,18 @@ function ProposedTask({ cardKey, proposal, record, actionable, agents, blockedFo
 
 type Kind = 'primary' | 'secondary' | 'quiet';
 // Create task starts the Task the way Try a task does: a fresh conversation on that agent, then one message.
-function CreateTask({ documentId, message, reason, cardKey, agentName, onError, label = 'Create task', kind = 'primary' }: {
+function CreateTask({ documentId, message, reason, cardKey, agentName, onError, label = 'Create task', kind = 'primary', place }: {
   documentId?: string; message: string; reason?: string; cardKey: string; agentName?: string; onError: (message?: string) => void;
-  label?: string; kind?: Kind;
+  label?: string; kind?: Kind; place?: TaskPlace;
 }) {
   if (!documentId || !agentName) return <Button type="button" kind={kind} disabled title={reason}>{label}</Button>;
-  return <CreateTaskOn documentId={documentId} message={message} reason={reason} cardKey={cardKey} agentName={agentName} onError={onError} label={label} kind={kind} />;
+  return <CreateTaskOn documentId={documentId} message={message} reason={reason} cardKey={cardKey} agentName={agentName} onError={onError} label={label} kind={kind} place={place} />;
 }
-function CreateTaskOn({ documentId, message, reason, cardKey, agentName, onError, label, kind }: {
+function CreateTaskOn({ documentId, message, reason, cardKey, agentName, onError, label, kind, place }: {
   documentId: string; message: string; reason?: string; cardKey: string; agentName: string; onError: (message?: string) => void; label: string; kind: Kind;
+  place?: TaskPlace;
 }) {
-  const { snapshot, act, command, error } = useTurn(documentId, reason);
+  const { snapshot, act, command, error } = useTurn(documentId, reason, { place: place && { targetId: place.targetId, providerId: place.providerId } });
   const busy = !snapshot || snapshot.busy || !!command || !snapshot.canSend && snapshot.state !== 'contextUnavailable';
   const why = reason ?? (busy ? 'Wait for this agent’s current task or test to finish.' : undefined);
   useEffect(() => { onError(error?.message); }, [error, onError]);
@@ -133,12 +141,12 @@ function CreateTaskOn({ documentId, message, reason, cardKey, agentName, onError
     const requestedAt = Date.now();
     if (await act('agent_chat_new') !== true) return;
     if (await act('agent_chat_send', message) !== true) return;
-    updateCard(cardKey, current => ({ ...current, status: 'created', task: { documentId, agent: agentName, message, requestedAt } }));
+    updateCard(cardKey, current => ({ ...current, status: 'created', task: { documentId, agent: agentName, message, requestedAt, ...(place && { where: place.name }) } }));
   };
   return <Button type="button" kind={kind} disabled={!!why} aria-busy={command ? 'true' : undefined} title={why} onClick={() => { void create(); }}>{label}</Button>;
 }
 
-function EditTask({ cardKey, proposal, agents }: Props) {
+function EditTask({ cardKey, proposal, agents, place }: Props) {
   const id = useId();
   const [agentName, setAgentName] = useState(chosenAgent(agents, proposal.agent)?.name ?? '');
   const [task, setTask] = useState(proposal.task);
@@ -154,7 +162,7 @@ function EditTask({ cardKey, proposal, agents }: Props) {
         </select>
       </label>
       <label className="nav-field" htmlFor={`${id}-place`}><span>Runs on</span>
-        <select id={`${id}-place`} className="field" defaultValue="thisComputer" title="Tasks from the Navigator run on this computer for now."><option value="thisComputer">This computer</option></select>
+        <select id={`${id}-place`} className="field" defaultValue="selected" title="Tasks from the Navigator run where the Navigator does: the place selected in Clusters."><option value="selected">{place?.name ?? 'This computer'}</option></select>
       </label>
     </div>
     <label className="nav-field" htmlFor={`${id}-task`}><span>Task</span>
@@ -190,7 +198,7 @@ function LiveTaskRun(props: Props & { run: TaskRun }) {
     onStop={() => { void act('agent_chat_stop'); }} onReconnect={held ? () => { void act('agent_chat_reconnect'); } : undefined} error={error?.message} />;
 }
 
-function TaskRunCard({ cardKey, run, live = false, stopping, onStop, onReconnect, error, blockedFor, onOpenAgent }: Props & {
+function TaskRunCard({ cardKey, run, live = false, stopping, onStop, onReconnect, error, blockedFor, onOpenAgent, place }: Props & {
   run: TaskRun & { outcome?: TaskOutcome }; live?: boolean; stopping?: boolean; onStop?: () => void; onReconnect?: () => void; error?: string;
 }) {
   const outcome = run.outcome!;
@@ -206,7 +214,7 @@ function TaskRunCard({ cardKey, run, live = false, stopping, onStop, onReconnect
     {end === 'Running' && <div className="nav-card-section">
       <h4 className="section-label">So far</h4>
       {outcome.tools.length ? <p><UsedTools names={outcome.tools} /></p> : <p className="muted">No tools used yet.</p>}
-      <p className="muted">{stopping ? 'Stopping…' : `Running for ${took ?? 'a moment'} on this computer`}</p>
+      <p className="muted">{stopping ? 'Stopping…' : `Running for ${took ?? 'a moment'} on ${run.where ?? 'this computer'}`}</p>
     </div>}
     {end === 'Succeeded' && <div className="nav-card-section">
       <h4 className="section-label">Result</h4>
@@ -225,14 +233,14 @@ function TaskRunCard({ cardKey, run, live = false, stopping, onStop, onReconnect
       </>}
       {end === 'Succeeded' && <>
         <Button type="button" kind="secondary" onClick={() => onOpenAgent(run.documentId)}>See in Designer</Button>
-        <Rerun cardKey={cardKey} run={run} blocked={blocked} kind="quiet" label="Run again" onError={setFailure} />
+        <Rerun cardKey={cardKey} run={run} blocked={blocked} kind="quiet" label="Run again" onError={setFailure} place={place} />
       </>}
       {end === 'Failed' && <>
-        <Rerun cardKey={cardKey} run={run} blocked={blocked} kind="primary" label="Try again" onError={setFailure} />
+        <Rerun cardKey={cardKey} run={run} blocked={blocked} kind="primary" label="Try again" onError={setFailure} place={place} />
         <Button type="button" kind="secondary" onClick={() => onOpenAgent(run.documentId)}>Open {run.agent}</Button>
       </>}
       {(end === 'Cancelled' || end === 'Unknown') && <>
-        <Rerun cardKey={cardKey} run={run} blocked={blocked} kind="secondary" label="Run again" onError={setFailure} />
+        <Rerun cardKey={cardKey} run={run} blocked={blocked} kind="secondary" label="Run again" onError={setFailure} place={place} />
         <Button type="button" kind="quiet" onClick={() => onOpenAgent(run.documentId)}>See in Designer</Button>
       </>}
     </div>
@@ -240,6 +248,7 @@ function TaskRunCard({ cardKey, run, live = false, stopping, onStop, onReconnect
 }
 
 // Running again replaces this card's Task with a new one on the same agent and message.
-function Rerun({ cardKey, run, blocked, kind, label, onError }: { cardKey: string; run: TaskRun; blocked?: string; kind: Kind; label: string; onError: (message?: string) => void }) {
-  return <CreateTask documentId={run.documentId} message={run.message} reason={blocked} cardKey={cardKey} agentName={run.agent} onError={onError} label={label} kind={kind} />;
+// It runs on the selected place, which may differ from where the first one ran.
+function Rerun({ cardKey, run, blocked, kind, label, onError, place }: { cardKey: string; run: TaskRun; blocked?: string; kind: Kind; label: string; onError: (message?: string) => void; place?: TaskPlace }) {
+  return <CreateTask documentId={run.documentId} message={run.message} reason={blocked} cardKey={cardKey} agentName={run.agent} onError={onError} label={label} kind={kind} place={place} />;
 }

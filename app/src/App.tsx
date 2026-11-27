@@ -405,8 +405,7 @@ export default function App() {
       setDocumentAction({ id: ++actionSequence.current, documentId: id, action: action === 'run' ? 'send' : 'open' });
       return;
     }
-    // Local tests stay local; Try a task needs the workspace, while Open keeps the selected Send destination.
-    if (remote && action === 'chat') choosePlace({ kind: 'thisComputer' });
+    // Local tests stay local; Try a task and Open keep the selected place.
     openDesigner(id);
     setDocumentAction({ id: ++actionSequence.current, documentId: id, action });
   };
@@ -490,7 +489,9 @@ export default function App() {
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
         {page === 'Home' && <Home active revision={agentsRevision}
-          gate={remote ? place.target ? { kind: 'elsewhere', name: place.target.context_name } : { kind: 'unreachable' }
+          // On a cluster the Navigator thinks with its chosen AI connection, once it is connected in this run.
+          gate={remote ? !place.target ? { kind: 'unreachable' } : !place.providerId ? { kind: 'noConnection', name: place.target.context_name }
+            : { kind: 'ready', place: { name: place.target.context_name, targetId: place.target.id, providerId: place.providerId } }
             : !workspaceReady || workspaceBusy ? { kind: 'waiting' } : setup?.model !== 'available' || aiObserved === false ? { kind: 'noModel' } : { kind: 'ready' }}
           onOpenPage={next => next === 'Designer' ? openDesigner() : setPage(next)}
           // The task card's results are the agent's Try a task results, so Designer opens on that view.

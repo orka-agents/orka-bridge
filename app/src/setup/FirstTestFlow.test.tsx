@@ -87,7 +87,7 @@ test.each(['sourceSelected', 'restoring'] as const)('recovery %s blocks local De
   ipc.mockImplementation((command, args) => command === 'setup_status'
     ? { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true }
     : command === 'workspace_upgrade_status' ? { ...consumedUpgrade, state, canReplace: state === 'sourceSelected' }
-    : command === 'agent_chat_status' ? { documentId: sample, state: 'ready', busy: false, canSend: true, versions: [], error: null }
+    : command === 'agent_chat_status' ? { documentId: sample, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false }
     : command === 'agent_run_status' ? { ...idle, model: 'capable-run-snapshot' }
     : original(command, args));
   localStorage.setItem('bridge.firstTest.v1', 'attempted');
@@ -111,7 +111,7 @@ test.each(['hung', 'failed'] as const)('unreadable upgrade blocks capable local 
       if (observation === 'failed') throw Error('Lost upgrade status');
       return new Promise(() => {});
     }
-    if (command === 'agent_chat_status') return { documentId: sample, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+    if (command === 'agent_chat_status') return { documentId: sample, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
     if (command === 'agent_run_status') return { ...idle, model: 'capable-run-snapshot' };
     return original(command, args);
   });

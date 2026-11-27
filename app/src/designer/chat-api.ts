@@ -14,9 +14,33 @@ export const chatErrors = {
   contextUnavailable: 'The task could not be confirmed. You can run a new task.',
   workspaceChanged: 'The workspace changed. Run the task again if you still need it.',
   interrupted: 'The task was interrupted. It may still be running.',
+  permission: 'Your access to this cluster doesn’t allow this task. Ask the cluster’s administrator for access.',
+  sessionsUnsupported: 'This cluster’s Orka is too old for Try a task. It needs Orka v0.4.0 or later.',
+  clusterUnavailable: 'Bridge couldn’t reach the selected cluster. Reconnect it in Clusters, then try again.',
 } as const;
+// The Orka permission a cluster refused (chat_cluster.rs ChatPermission), as the person's administrator grants it.
+export const chatPermissions = {
+  createAgents: 'create agents', getAgents: 'get agents', deleteAgents: 'delete agents',
+  createTasks: 'create tasks', getTasks: 'get tasks', deleteTasks: 'delete tasks',
+  getSessions: 'get sessions', deleteSessions: 'delete sessions', getProviders: 'get providers',
+} as const;
+export type ChatPermission = keyof typeof chatPermissions;
+export function deniedMessage(permission: ChatPermission) {
+  return `Your access to this cluster doesn’t allow “${chatPermissions[permission]}” in its namespace. Ask the cluster’s administrator to add it.`;
+}
+// The native error for a snapshot, naming the refused permission when the cluster said which.
+export function snapshotErrorMessage(snapshot: ChatSnapshot, errors: Record<keyof typeof chatErrors, string> = chatErrors) {
+  if (!snapshot.error) return undefined;
+  return snapshot.error === 'permission' && snapshot.denied ? deniedMessage(snapshot.denied) : errors[snapshot.error];
+}
 export type ChatTurn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean; startedAt: number; finishedAt: number | null };
-export type ChatSnapshot = { documentId: string; state: typeof chatStates[number]; busy: boolean; canSend: boolean; versions: { turns: ChatTurn[] }[]; error: keyof typeof chatErrors | null };
+export type ChatSnapshot = {
+  documentId: string; state: typeof chatStates[number]; busy: boolean; canSend: boolean; versions: { turns: ChatTurn[] }[]; error: keyof typeof chatErrors | null;
+  // With error `permission` on a cluster: what it refused. `keptOnCluster` latches once a cluster refused to delete a replaced conversation.
+  denied: ChatPermission | null; keptOnCluster: boolean;
+};
+// A connected cluster and AI connection, by the opaque ids native already confirmed. Absent means this computer.
+export type ChatPlace = { targetId: string; providerId: string };
 export type ChatCommand = 'agent_chat_status' | 'agent_chat_send' | 'agent_chat_reconnect' | 'agent_chat_stop' | 'agent_chat_new';
 // Unix milliseconds from the native clock.
 const millis = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
@@ -25,6 +49,7 @@ export function isChatSnapshot(value: unknown): value is ChatSnapshot {
   return object(value) && isDocumentId(value.documentId) && chatStates.includes(value.state as ChatSnapshot['state'])
     && typeof value.busy === 'boolean' && typeof value.canSend === 'boolean'
     && (value.error === null || typeof value.error === 'string' && Object.hasOwn(chatErrors, value.error))
+    && (value.denied === null || typeof value.denied === 'string' && Object.hasOwn(chatPermissions, value.denied)) && typeof value.keptOnCluster === 'boolean'
     && Array.isArray(value.versions) && value.versions.every(version => object(version) && Array.isArray(version.turns) && version.turns.every(turn =>
       object(turn) && typeof turn.message === 'string' && (turn.answer === null || typeof turn.answer === 'string') && typeof turn.phase === 'string'
       && ['contextRetained', 'terminationUnconfirmed', 'stopUnconfirmed'].every(key => typeof turn[key] === 'boolean')
@@ -32,11 +57,12 @@ export function isChatSnapshot(value: unknown): value is ChatSnapshot {
       && Array.isArray(turn.tools) && turn.tools.every(tool => object(tool) && typeof tool.name === 'string' && typeof tool.callId === 'string' && typeof tool.phase === 'string')));
 }
 export type ChatResult = { ok: true; snapshot: ChatSnapshot } | { ok: false; message: string; uncertain?: true };
-export type ChatCall = (command: ChatCommand, documentId: string, message?: string) => Promise<ChatResult>;
-export async function chatCall(command: ChatCommand, documentId: string, message?: string): Promise<ChatResult> {
+export type ChatCall = (command: ChatCommand, documentId: string, message?: string, place?: ChatPlace) => Promise<ChatResult>;
+// Only a send names the place; Reconnect, Stop and New act where that conversation was started.
+export async function chatCall(command: ChatCommand, documentId: string, message?: string, place?: ChatPlace): Promise<ChatResult> {
   if (!isTauri()) return { ok: false, message: 'Try a task is available only in the native app.' };
   try {
-    const value = await invoke<unknown>(command, { documentId, ...(command === 'agent_chat_send' ? { message } : {}) });
+    const value = await invoke<unknown>(command, { documentId, ...(command === 'agent_chat_send' ? { message, ...place } : {}) });
     if (isChatSnapshot(value) && value.documentId === documentId) return { ok: true, snapshot: value };
   } catch (error) {
     if (typeof error === 'string' && Object.hasOwn(chatErrors, error)) return { ok: false, message: chatErrors[error as keyof typeof chatErrors] };

@@ -7,8 +7,10 @@ import Example from './Example';
 const id = '9b2b93c4-375c-4815-9717-39852a96e411';
 const source = '---\nname: reader\nmodel: listed\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  soul: {inline: old, digest: sha256:old}\n  tools: []\n---\nRead a page.\n';
 const pair = { documentId: id, name: 'reader', agent: source, tests: 'Tests stay separate' };
-const idle = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null };
-let sent: { documentId: string; message: string; saved: string }[]; let calls: string[];
+const target = { id: '00000000-0000-4000-8000-000000000011', context_id: '00000000-0000-4000-8000-000000000012', context_name: 'team-dev', service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka-agents/orka:0.4.0' };
+const provider = { id: '00000000-0000-4000-8000-000000000013', name: 'team-model', ready: true };
+const idle = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
+let sent: { documentId: string; message: string; saved: string; targetId?: string; providerId?: string }[]; let calls: string[];
 function native(save?: (content: string) => unknown) {
   sent = []; calls = []; let saved = source; vi.stubGlobal('isTauri', true);
   mockIPC(async (command, args) => {
@@ -24,6 +26,8 @@ function native(save?: (content: string) => unknown) {
     if (command.startsWith('agent_run')) return { documentId: id, busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
     if (command === 'send_history') return [];
     if (command === 'send_status') return { documentId: id, view: null, busy: null };
+    // A cluster place also reads its catalog and Send checks; neither matters to Try a task.
+    if (command === 'cluster_catalog' || command === 'send_preflight') throw 'unavailable';
     throw Error(`Unexpected ${command}`);
   });
 }
@@ -138,12 +142,25 @@ test('while a pending save holds a document switch Try a task remains bound to t
 });
 test.each([
   [{ setupPending: true }, 'Connect the workspace and the AI in Clusters before trying a task.'],
-  [{ remote: true }, 'Try a task runs on the workspace. Choose This computer in Clusters.'],
+  [{ remote: true }, 'Connect this cluster in Clusters to try a task on it.'],
+  [{ remote: true, place: { kind: 'cluster', target } }, 'Choose an AI connection for team-dev in Clusters to try a task on it.'],
   [{ workspaceReady: false }, 'Waiting for the workspace to start.'],
-])('Try a task shows the gate reason for %j', async (props, reason) => {
+] as const)('Try a task shows the gate reason for %j', async (props, reason) => {
   native(); render(<Example {...props} />); await tryTask(); compose();
   expect(screen.getByRole('button', { name: 'Run task' }).getAttribute('title')).toBe(reason);
   expect(within(screen.getByRole('region', { name: 'Try a task' })).getByText(reason)).toBeTruthy();
+  // One message: the status line does not repeat that Try a task can't run.
+  expect(screen.queryByText('Try a task is unavailable.')).toBeNull();
+});
+test('on a connected cluster with an AI connection, Try a task runs there', async () => {
+  native(); render(<Example remote place={{ kind: 'cluster', target, providers: [provider], providerId: provider.id }} />);
+  const user = await tryTask(); compose();
+  expect(screen.getByText('Try a task on team-dev before you rely on it.')).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'Try a task on team-dev' })).toBeTruthy();
+  expect(screen.getByText('Runs once on team-dev. It does not change test results.')).toBeTruthy();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run task' }).hasAttribute('disabled')).toBe(false));
+  await user.click(screen.getByRole('button', { name: 'Run task' }));
+  await waitFor(() => expect(sent).toEqual([{ documentId: id, message: 'A question', targetId: target.id, providerId: provider.id, saved: source }]));
 });
 test('Try a task asks for instructions before it runs', async () => {
   native(); render(<Example />);

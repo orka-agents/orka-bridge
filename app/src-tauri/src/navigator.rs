@@ -1,7 +1,8 @@
 //! The Navigator on Home: a Bridge-owned agent with fixed instructions, a bundled digest of
-//! the Bridge and Orka documentation and no tools. It runs on the local workspace through the
-//! chat path under its own `bridge-nav-*` names. Its replies are data: the renderer validates
-//! any proposal it contains and nothing happens until the person confirms a card.
+//! the Bridge and Orka documentation and no tools. It runs on the selected place, the local
+//! workspace or a connected cluster, through the chat path under its own `bridge-nav-*` names.
+//! Its replies are data: the renderer validates any proposal it contains and nothing happens
+//! until the person confirms a card.
 use crate::{
     agent_folder::DocumentId,
     agents::Agents,
@@ -81,7 +82,8 @@ fn saved_agent_line(name: &str, description: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinksWith {
-    /// `copilot`, `openai` or `anthropic`.
+    /// `copilot`, `openai` or `anthropic` on this computer, or `cluster` for a cluster's AI
+    /// connection, whose vendor Bridge does not know.
     pub kind: &'static str,
     pub model: String,
 }
@@ -101,9 +103,17 @@ pub struct NavigatorSnapshot {
     pub thinks_with: Option<ThinksWith>,
 }
 pub fn snapshot(owner: &ChatOwner, chat: ChatSnapshot) -> NavigatorSnapshot {
+    let cluster = owner.thinks_on_cluster();
     NavigatorSnapshot {
         chat,
-        thinks_with: owner.thinks_with().as_ref().map(ThinksWith::from),
+        thinks_with: owner.thinks_with().as_ref().map(|selection| ThinksWith {
+            kind: if cluster {
+                "cluster"
+            } else {
+                ThinksWith::from(selection).kind
+            },
+            model: selection.model.clone(),
+        }),
     }
 }
 

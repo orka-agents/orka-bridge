@@ -2,7 +2,7 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { afterEach, expect, test, vi } from 'vitest';
 import { chatCall, isChatSnapshot, type ChatSnapshot } from './chat-api';
 const id = '9b2b93c4-375c-4815-9717-39852a96e411';
-const idle: ChatSnapshot = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+const idle: ChatSnapshot = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false };
 const turn = { message: 'Hello', answer: null, phase: 'Pending', tools: [], contextRetained: false, terminationUnconfirmed: false, stopUnconfirmed: false, startedAt: 1_700_000_000_000, finishedAt: null };
 afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
 test.each(['agent_chat_status', 'agent_chat_send', 'agent_chat_reconnect', 'agent_chat_stop', 'agent_chat_new'] as const)('uses document-scoped %s without resource authority', async command => {
@@ -43,4 +43,17 @@ test('hides unknown native exception contents', async () => {
 test('browser preview cannot dispatch or claim a native conversation', async () => {
   vi.stubGlobal('isTauri', false);
   expect(await chatCall('agent_chat_status', id)).toEqual({ ok: false, message: 'Try a task is available only in the native app.' });
+});
+
+test('a cluster send names the place by its ids, and the snapshot carries what a cluster refused', async () => {
+  vi.stubGlobal('isTauri', true); const calls: unknown[] = [];
+  const denied = { ...idle, state: 'contextUnavailable', canSend: false, error: 'permission', denied: 'createTasks' };
+  mockIPC((name, args) => { calls.push([name, args]); return denied; });
+  const place = { targetId: 'a', providerId: 'b' };
+  expect(await chatCall('agent_chat_send', id, 'Hello', place)).toEqual({ ok: true, snapshot: denied });
+  expect(await chatCall('agent_chat_stop', id, undefined, place)).toEqual({ ok: true, snapshot: denied });
+  expect(calls).toEqual([['agent_chat_send', { documentId: id, message: 'Hello', targetId: 'a', providerId: 'b' }], ['agent_chat_stop', { documentId: id }]]);
+  expect(isChatSnapshot({ ...idle, denied: 'createSecrets' })).toBe(false);
+  expect(isChatSnapshot({ ...idle, keptOnCluster: 'yes' })).toBe(false);
+  expect(isChatSnapshot(Object.fromEntries(Object.entries(idle).filter(([key]) => key !== 'denied')))).toBe(false);
 });
