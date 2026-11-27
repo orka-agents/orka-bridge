@@ -24,7 +24,7 @@ use tokio::sync::watch;
 
 #[path = "workspace_upgrade_retry.rs"]
 mod retry;
-const STORE: &str = "workspace-upgrades-v1";
+pub(crate) const STORE: &str = "workspace-upgrades-v1";
 type MetadataFiles<'a> = [(&'static str, &'a Option<Vec<u8>>); 2];
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1047,6 +1047,8 @@ impl WorkspaceUpgrade {
         space: impl FnOnce(&Dir) -> Result<u64, ImageError>,
     ) -> Result<UpgradeStatus, RuntimeError> {
         cancelled(closed)?;
+        // An unfinished fresh workspace owns local-vm-v1's name until it settles.
+        crate::workspace_fresh::admit(&self.local)?;
         let previous = self.read_intent()?;
         if let Some(intent) = &previous {
             if intent.phase != Phase::Restored
@@ -1281,6 +1283,7 @@ impl WorkspaceUpgrade {
         transaction: Uuid,
         point: impl Fn(&str) -> Result<(), RuntimeError>,
     ) -> Result<UpgradeStatus, RuntimeError> {
+        crate::workspace_fresh::admit(&self.local)?;
         self.reconcile_removed()?;
         let mut intent = self.read_intent()?.ok_or(RuntimeError::RetainedState)?;
         if intent.transaction != transaction || intent.phase == Phase::Restored {
@@ -1444,6 +1447,7 @@ pub(crate) fn validate_transaction(
     if transaction.is_nil() || !local.join(STORE).try_exists()? {
         return Err(RuntimeError::RetainedState);
     }
+    crate::workspace_fresh::admit(local)?;
     let owner = WorkspaceUpgrade::open(data, local)?;
     let intent = owner
         .read_intent()?
@@ -1483,6 +1487,7 @@ pub(crate) fn has_transaction(data: &Path, local: &Path) -> Result<bool, Runtime
     Ok(!owner.intents()?.is_empty())
 }
 pub(crate) fn validate_new_replacement(data: &Path, local: &Path) -> Result<(), RuntimeError> {
+    crate::workspace_fresh::admit(local)?;
     if !local.join(STORE).try_exists()? {
         return Ok(());
     }

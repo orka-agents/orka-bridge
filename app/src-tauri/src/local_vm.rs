@@ -170,7 +170,24 @@ pub trait LocalFactory: Send + Sync {
     ) -> Result<(), RuntimeError> {
         Err(RuntimeError::Unavailable)
     }
+    /// Whether first install can reuse the cached image for a fresh workspace. Read-only.
+    fn fresh_image(&self) -> crate::workspace_fresh::FreshImage {
+        crate::workspace_fresh::FreshImage::Unknown
+    }
+    /// Before a fresh workspace stops or retires anything: when first install must download
+    /// the image, refuse if the download cannot be reached or does not fit, with the free
+    /// space it needs.
+    fn fresh_download_check(&self) -> FreshCheck<'_> {
+        Box::pin(async { Ok(()) })
+    }
 }
+pub type FreshCheck<'a> = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<(), (crate::workspace_fresh::Refusal, Option<u64>)>>
+            + Send
+            + 'a,
+    >,
+>;
 pub trait LocalSession: Send {
     /// From the installed guest build metadata, never a probing guest request.
     fn run_cancel_supported(&self) -> bool {
@@ -395,6 +412,9 @@ mod progress_tests {
     }
 }
 #[cfg(test)]
+#[path = "local_vm_fresh_tests.rs"]
+mod fresh_tests;
+#[cfg(test)]
 #[path = "local_vm_model_tests.rs"]
 mod model_tests;
 
@@ -563,6 +583,10 @@ pub struct LocalVm {
     workspace_replaced_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// The last Start a fresh workspace in this run, as the setup snapshot reports it.
     fresh: Mutex<Option<crate::workspace_fresh::FreshStatusDto>>,
+    /// App-data and local data folders, for the fresh-workspace status.
+    fresh_root: Mutex<Option<(std::path::PathBuf, std::path::PathBuf)>>,
+    /// Whether the action can start, refreshed at most every two seconds while polled.
+    fresh_plan: Mutex<Option<(std::time::Instant, crate::workspace_fresh::FreshPlan)>>,
 }
 /// Keep native launch admission and setup choice serialized through the switch.
 pub(crate) struct UpgradeQuiescence<'a> {
@@ -639,6 +663,8 @@ impl LocalVm {
             upgrade_cache_revision: std::sync::atomic::AtomicU64::new(0),
             workspace_replaced_observer: Mutex::new(None),
             fresh: Mutex::new(None),
+            fresh_root: Mutex::new(None),
+            fresh_plan: Mutex::new(None),
         })
     }
     pub fn new(factory: Arc<dyn LocalFactory>) -> Arc<Self> {
@@ -1319,40 +1345,134 @@ impl LocalVm {
         dto: crate::workspace_fresh::FreshStatusDto,
     ) -> crate::workspace_fresh::FreshStatusDto {
         *self.fresh.lock().unwrap() = Some(dto.clone());
+        *self.fresh_plan.lock().unwrap() = None;
         dto
     }
-    /// A transaction finished at launch, or one whose retired workspace still needs deleting.
+    /// A refusal: nothing was moved or deleted. Folders an earlier fresh workspace left behind
+    /// stay reported.
+    fn publish_refusal(
+        &self,
+        reason: crate::workspace_fresh::Refusal,
+        restarted: bool,
+        needed_bytes: Option<u64>,
+    ) -> crate::workspace_fresh::FreshStatusDto {
+        use crate::workspace_fresh::FreshStatusDto as Fresh;
+        let mut fresh = self.fresh.lock().unwrap();
+        let reclaimable = match fresh.as_ref() {
+            Some(Fresh::Replaced { reclaimable, .. } | Fresh::Refused { reclaimable, .. }) => {
+                reclaimable.clone()
+            }
+            _ => vec![],
+        };
+        let dto = Fresh::Refused {
+            reason,
+            restarted,
+            needed_bytes,
+            reclaimable,
+        };
+        *fresh = Some(dto.clone());
+        *self.fresh_plan.lock().unwrap() = None;
+        dto
+    }
+    /// A second press while the action runs, or while cleanup holds its owner, is answered as
+    /// busy without replacing the status that says what is happening.
+    fn publish_busy(&self) -> crate::workspace_fresh::FreshStatusDto {
+        use crate::workspace_fresh::{FreshStatusDto as Fresh, Refusal};
+        let current = self.fresh.lock().unwrap().clone();
+        match current {
+            Some(Fresh::Refused { .. }) | None => self.publish_refusal(Refusal::Busy, false, None),
+            Some(_) => Fresh::refused(Refusal::Busy),
+        }
+    }
+    /// A transaction finished at launch, one whose retired workspace still needs deleting, or
+    /// one that could not be finished.
     pub fn seed_fresh(&self, dto: crate::workspace_fresh::FreshStatusDto) {
+        if dto.blocks_launch() {
+            self.block_fresh();
+        }
         self.publish_fresh(dto);
     }
-    /// Start a fresh workspace. The workspace is stopped through the ordinary stop path and
-    /// its native custody released first; if that stop is not confirmed nothing is moved.
-    /// The transaction then retires the workspace, resets the saved AI connection and lets
-    /// first install build the new workspace from the cached image. Every refusal leaves the
-    /// workspace on this computer as it was. The owned task keeps going if IPC is dropped.
+    /// An unfinished fresh workspace keeps the workspace stopped until Bridge finishes it.
+    fn block_fresh(&self) {
+        self.recovery_blocked
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.inner.fail(
+            "Bridge must finish starting a fresh workspace before starting the local cluster."
+                .into(),
+            &RuntimeError::RetainedState,
+            WorkspaceOperation::Verify,
+            false,
+        );
+    }
+    /// Where the fresh-workspace status reads its plan. Native-selected, set once at launch.
+    pub fn set_fresh_root(&self, data: std::path::PathBuf, local: std::path::PathBuf) {
+        *self.fresh_root.lock().unwrap() = Some((data, local));
+        *self.fresh_plan.lock().unwrap() = None;
+    }
+    /// Lock-free, so a status poll never makes another action busy.
+    fn fresh_plan(&self) -> Option<crate::workspace_fresh::FreshPlan> {
+        let (_, local) = self.fresh_root.lock().unwrap().clone()?;
+        let factory = self.factory.as_ref()?;
+        let mut cache = self.fresh_plan.lock().unwrap();
+        if let Some((at, plan)) = cache.as_ref() {
+            if at.elapsed() < std::time::Duration::from_secs(2) {
+                return Some(*plan);
+            }
+        }
+        let plan = crate::workspace_fresh::FreshPlan {
+            blocked: crate::workspace_fresh::blocked(&local),
+            image: factory.fresh_image(),
+        };
+        *cache = Some((std::time::Instant::now(), plan));
+        Some(plan)
+    }
+    /// Start a fresh workspace. Every check that can refuse without changing anything runs
+    /// first, before the workspace is stopped: another action or cleanup, update history, and
+    /// whether a needed download can be reached and fits. The workspace is then stopped through
+    /// the ordinary stop path and its native custody released; if that stop is not confirmed
+    /// nothing is moved. The transaction retires the workspace, resets the saved AI connection
+    /// and lets first install build the new workspace. A refusal leaves the workspace as it was
+    /// and starts it again if it was running; a failure after the workspace was set aside keeps
+    /// it stopped and is reported as interrupted, never as unchanged. The owned task keeps going
+    /// if IPC is dropped.
     pub async fn start_fresh_workspace(
         self: &Arc<Self>,
         data: std::path::PathBuf,
         local: std::path::PathBuf,
         setup: Arc<crate::setup::SetupStore>,
     ) -> crate::workspace_fresh::FreshStatusDto {
-        use crate::workspace_fresh::{FreshStatusDto as Fresh, Refusal};
-        let refused = |reason| Fresh::Refused { reason };
+        use crate::workspace_fresh::{Failure, FreshStatusDto as Fresh, FreshWorkspace, Refusal};
         let choice = match self.reserve_upgrade_choice() {
             Ok(choice) => choice,
-            Err(RuntimeError::Closed) => return self.publish_fresh(refused(Refusal::Unavailable)),
-            Err(_) => return self.publish_fresh(refused(Refusal::Busy)),
+            Err(RuntimeError::Closed) => {
+                return self.publish_refusal(Refusal::Unavailable, false, None)
+            }
+            Err(_) => return self.publish_busy(),
         };
         if self.upgrade_idle().is_err() {
-            return self.publish_fresh(refused(Refusal::Busy));
+            return self.publish_busy();
         }
-        if self.factory.is_none() {
-            return self.publish_fresh(refused(Refusal::Unavailable));
-        }
+        let Some(factory) = self.factory.clone() else {
+            return self.publish_refusal(Refusal::Unavailable, false, None);
+        };
         // Denial-only, before anything is stopped.
         if let Some(reason) = crate::workspace_fresh::preflight(&data, &local) {
-            return self.publish_fresh(refused(reason));
+            return self.publish_refusal(reason, false, None);
         }
+        // Held from here: cleanup of an earlier fresh workspace refuses now, not after the stop.
+        let mut owner = match FreshWorkspace::open(&data, &local) {
+            Ok(owner) => owner,
+            Err(Refusal::Busy) => return self.publish_busy(),
+            Err(reason) => return self.publish_refusal(reason, false, None),
+        };
+        // Finishing an interrupted transaction needs no download check: its workspace is
+        // already set aside.
+        if crate::workspace_fresh::admit(&local).is_ok() {
+            if let Err((reason, needed)) = factory.fresh_download_check().await {
+                return self.publish_refusal(reason, false, needed);
+            }
+        }
+        let was_running = self.status() == LocalVmStatus::Ready;
         self.publish_fresh(Fresh::Replacing);
         let vm = self.clone();
         tokio::spawn(async move {
@@ -1360,25 +1480,47 @@ impl LocalVm {
             // the quiescence guard keeps the workspace quarantined as for any other action.
             let quiesced = match vm.quiesce_with_choice(choice).await {
                 Ok(quiesced) => quiesced,
-                Err(_) => return vm.publish_fresh(refused(Refusal::StopUnconfirmed)),
+                Err(_) => return vm.publish_refusal(Refusal::StopUnconfirmed, false, None),
             };
-            let (worker_data, worker_local) = (data.clone(), local.clone());
+            let worker_local = local.clone();
             let result = tokio::task::spawn_blocking(move || {
-                let mut owner =
-                    crate::workspace_fresh::FreshWorkspace::open(&worker_data, &worker_local)?;
                 let settled =
-                    owner.replace(&setup, &crate::runtime::credential_store::OsCredentialStore)?;
-                let paths = owner.display_paths(&settled.reclaimable);
-                Ok((settled, paths))
+                    owner.replace(&setup, &crate::runtime::credential_store::OsCredentialStore);
+                settled.map(|settled| {
+                    let paths = owner.display_paths(&settled.reclaimable);
+                    (settled, paths)
+                })
             })
             .await
-            .unwrap_or(Err(Refusal::Unavailable));
+            // Whatever a panic interrupted, the launch gate decides what may start.
+            .unwrap_or_else(|_| Err(crate::workspace_fresh::after_panic(&worker_local)));
             let (settled, reclaimable) = match result {
                 Ok(value) => value,
-                Err(reason) => {
-                    // The workspace stays where it was, stopped; Start again reopens it.
+                Err(Failure::Refused(reason)) => {
+                    // Nothing moved. Start the workspace again if the action stopped it.
                     drop(quiesced);
-                    return vm.publish_fresh(refused(reason));
+                    let restarted = was_running && {
+                        let mut state = vm.inner.state.lock().unwrap();
+                        if !state.terminal {
+                            state.phase = LocalVmStatus::Cancelled;
+                            state.progress = None;
+                            vm.start_locked(&mut state);
+                        }
+                        state.phase == LocalVmStatus::Preparing
+                    };
+                    return vm.publish_refusal(reason, restarted, None);
+                }
+                Err(failure) => {
+                    // Set aside but not finished: no workspace may start until Bridge finishes.
+                    drop(quiesced);
+                    vm.block_fresh();
+                    return vm.publish_fresh(match failure {
+                        Failure::Conflict(found) => Fresh::Conflict {
+                            found: crate::workspace_fresh::display_names(&local, &found),
+                        },
+                        Failure::Interrupted(transaction) => Fresh::Interrupted { transaction },
+                        Failure::Refused(_) => unreachable!(),
+                    });
                 }
             };
             // The old workspace's conversations, runs and tasks went with it.
@@ -1418,12 +1560,11 @@ impl LocalVm {
             dto
         })
         .await
-        .unwrap_or(Fresh::Refused {
-            reason: Refusal::Unavailable,
-        })
+        .unwrap_or_else(|_| Fresh::refused(Refusal::Unavailable))
     }
     /// Delete retired workspaces in the background. What cannot be deleted stays reported as
-    /// reclaimable space; it never fails the action that retired it.
+    /// reclaimable space, whichever fresh-workspace status is showing; it never fails the
+    /// action that retired it.
     pub fn clean_fresh_workspace(
         self: &Arc<Self>,
         data: std::path::PathBuf,
@@ -1431,19 +1572,27 @@ impl LocalVm {
     ) {
         let vm = self.clone();
         tokio::task::spawn_blocking(move || {
+            use crate::workspace_fresh::FreshStatusDto as Fresh;
             let remaining = crate::workspace_fresh::FreshWorkspace::open(&data, &local)
                 .and_then(|owner| owner.clean().map(|names| owner.display_paths(&names)));
             let mut fresh = vm.fresh.lock().unwrap();
-            if let Some(crate::workspace_fresh::FreshStatusDto::Replaced {
-                reclaimable,
-                cleaning,
-                ..
-            }) = fresh.as_mut()
-            {
-                *cleaning = false;
-                if let Ok(paths) = remaining {
-                    *reclaimable = paths;
+            match fresh.as_mut() {
+                Some(Fresh::Replaced {
+                    reclaimable,
+                    cleaning,
+                    ..
+                }) => {
+                    *cleaning = false;
+                    if let Ok(paths) = remaining {
+                        *reclaimable = paths;
+                    }
                 }
+                Some(Fresh::Refused { reclaimable, .. }) => {
+                    if let Ok(paths) = remaining {
+                        *reclaimable = paths;
+                    }
+                }
+                _ => {}
             }
         });
     }
@@ -1530,9 +1679,11 @@ impl LocalVm {
         self.inner.state.lock().unwrap().model_connected = false;
     }
     fn snapshot(&self, mut snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
+        let plan = self.fresh_plan();
         let state = self.inner.state.lock().unwrap();
         snapshot.workspace_replaced = self.workspace_replaced();
         snapshot.workspace_fresh = self.fresh.lock().unwrap().clone();
+        snapshot.workspace_fresh_plan = plan;
         snapshot.workspace_progress = state.progress.as_ref().map(ProgressClock::snapshot);
         snapshot.preflight_failure = if state.phase == LocalVmStatus::Failed {
             state.preflight_failure

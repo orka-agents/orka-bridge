@@ -1020,6 +1020,8 @@ fn main() {
                 app.path().app_data_dir().ok(),
                 app.path().app_local_data_dir().ok(),
             );
+            // A settled fresh workspace never blocks a launch; an unfinished one keeps the
+            // workspace stopped and says what Bridge found (seed_fresh blocks it).
             let vm = if recovery.is_ok() && fresh.is_ok() {
                 vm
             } else {
@@ -1044,6 +1046,7 @@ fn main() {
                 (app.path().app_data_dir(), app.path().app_local_data_dir())
             {
                 vm.seed_upgrade_status(&data, &local);
+                vm.set_fresh_root(data, local);
             }
             #[cfg(debug_assertions)]
             startup_marker("local VM configured");

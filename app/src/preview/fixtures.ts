@@ -33,6 +33,11 @@ export const workspaceFailures = {
     workspaceFailure: { operation: 'verify', cause: 'workspaceVersionUnsupported', codes: [] },
     localVmError: 'Starting the local VM failed: Runtime operation failed: Image(WorkspaceVersionUnsupported)',
   },
+  // A fresh workspace set aside but not finished: native keeps the workspace stopped until it is.
+  freshUnfinished: {
+    workspaceFailure: { operation: 'verify', cause: 'preparation', codes: [] },
+    localVmError: 'Bridge must finish starting a fresh workspace before starting the local cluster.',
+  },
   // Start a fresh workspace stopped the workspace, but its stop could not be confirmed (no scenario of its own).
   stopUnconfirmed: {
     workspaceFailure: { operation: 'stop', cause: 'stopUnconfirmed', codes: [] },

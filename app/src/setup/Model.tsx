@@ -6,6 +6,7 @@ import { StatusPill } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
 import { checkCopilot, companies, connectKey, connectModel, type CopilotCatalog, isPreflightCategory, type KeyVendor, keyFailure, type ModelConnection, type ModelFailure, type ModelRecovery, removeModel, resetModel, validKey } from './modelState';
 import type { HelpTopic } from './recovery-info';
+import type { FreshRefusal } from './fresh';
 
 // `checking` and `checked` are a Copilot choice checked on this computer while the workspace is still on its way.
 export type ModelState = 'idle' | 'queued' | 'checking' | 'checked' | 'connecting' | 'removing' | 'resetting' | 'resetFailed' | 'removalFailed' | 'connected' | 'failed';
@@ -28,9 +29,10 @@ function preflightStep(error: ModelFailure, hasSignIn: boolean): { summary: stri
 // `setupCard` is first setup's own AI card beside the steps: a Copilot failure takes the card, as its own story.
 // `diagnostic` is the workspace card's detail line (the guest's typed Connect diagnostic), copied for help.
 // `helpLines` are further finite lines for help, such as a fresh workspace's outcome.
-// `onFreshWorkspace` asks for Start a fresh workspace, the way out when the workspace refuses cleanup.
-export default function Model({ title = 'Connect the AI', enabled, queueable = false, paused = false, away = false, primary = true, changeRequest = 0, sharedConnection = false, recoveryTarget, choiceTarget, inline = false, onPlaceCard = false, setupCard = false, diagnostic, helpLines, onState, onSettled, onConnectRequest, onFreshWorkspace }: {
-  sharedConnection?: boolean; title?: string; choiceTarget?: HTMLElement | null; inline?: boolean; setupCard?: boolean; diagnostic?: string | null; helpLines?: string[]; onFreshWorkspace?: () => void;
+// `onFreshWorkspace` asks for Start a fresh workspace, the way out when the workspace refuses cleanup;
+// `freshBlocked` is native's reason it can't start, and then the card keeps its own retry instead.
+export default function Model({ title = 'Connect the AI', enabled, queueable = false, paused = false, away = false, primary = true, changeRequest = 0, sharedConnection = false, recoveryTarget, choiceTarget, inline = false, onPlaceCard = false, setupCard = false, diagnostic, helpLines, onState, onSettled, onConnectRequest, onFreshWorkspace, freshBlocked }: {
+  sharedConnection?: boolean; title?: string; choiceTarget?: HTMLElement | null; inline?: boolean; setupCard?: boolean; diagnostic?: string | null; helpLines?: string[]; onFreshWorkspace?: () => void; freshBlocked?: FreshRefusal;
   enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; primary?: boolean; changeRequest?: number; recoveryTarget?: HTMLElement | null; onPlaceCard?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void; onConnectRequest?: () => void;
 }) {
   // In-memory consent only. It never carries a credential and is consumed once.
@@ -381,9 +383,11 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   // Cleanup refused twice in a row, after one Check again or Retry removal: a host-only reset can't clear the workspace's
   // own record of the old connection, so the card offers a fresh workspace instead of another round.
   const stuck = error?.category === 'modelReconnect' && reconnectFailures >= 2;
-  const freshAction = stuck && !!onFreshWorkspace && !sharedConnection;
+  const freshAction = stuck && !!onFreshWorkspace && !sharedConnection && !freshBlocked;
   const summary = preflight?.summary ?? error?.message;
   const nextStep = preflight?.step ?? (stuck ? freshAction ? "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace is the sure way back: Bridge replaces the workspace on this computer, keeps your agent files, and you connect the AI again."
+    : freshBlocked === 'updateHistory' ? "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace would, but this workspace came from a workspace update and Bridge keeps the earlier workspace so it can be restored, so it can't start one over that yet. Try again later, or copy the details for whoever helps you with Bridge. Your agent files are kept."
+    : freshBlocked ? "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace isn't available right now. Try again later, or copy the details for whoever helps you with Bridge. Your agent files are kept."
     : "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace is the sure way back. Copy the details for whoever helps you with Bridge. Your agent files are kept."
     : cliUnavailable ? 'Install GitHub CLI if needed, then sign in to github.com in your terminal:'
     : signInCheck ? 'Check your GitHub CLI sign-in in your terminal:'

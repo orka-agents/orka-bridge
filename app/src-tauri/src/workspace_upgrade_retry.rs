@@ -186,6 +186,7 @@ impl WorkspaceUpgrade {
         space: impl FnOnce(&Dir) -> Result<u64, ImageError>,
     ) -> Result<UpgradeStatus, RuntimeError> {
         cancelled(closed)?;
+        crate::workspace_fresh::admit(&self.local)?;
         let mut intent = self.read_intent()?.ok_or(RuntimeError::RetainedState)?;
         if intent.transaction != transaction || intent.restore.is_some() {
             return Err(RuntimeError::RetainedState);

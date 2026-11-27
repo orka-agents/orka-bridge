@@ -81,7 +81,7 @@ impl Scene {
     fn owner(&self) -> FreshWorkspace {
         FreshWorkspace::open(&self.data, &self.local).unwrap()
     }
-    fn replace(&self, store: &Store, stop_at: Option<&str>) -> Result<Settled, Refusal> {
+    fn replace(&self, store: &Store, stop_at: Option<&str>) -> Result<Settled, Failure> {
         self.owner().replace_with(&self.setup, store, |point| {
             if Some(point) == stop_at {
                 Err(RuntimeError::Closed)
@@ -121,8 +121,20 @@ impl Scene {
         assert!(self.data.join("setup-v1/local-vm").exists());
     }
 }
+fn refused(reason: Refusal) -> Result<(), Failure> {
+    Err(Failure::Refused(reason))
+}
+fn earlier(intent: &Intent) -> Vec<Uuid> {
+    intent.earlier.iter().map(|e| e.transaction).collect()
+}
+/// As the transaction reads it: opened relative to its parent, without following links, so
+/// the tests take the real Windows path (a plain `File::open` cannot open a directory there).
 fn directory_identity(path: &Path) -> FileIdentity {
-    file_identity(&File::open(path).unwrap()).unwrap()
+    let parent =
+        Dir::open_ambient_dir(path.parent().unwrap(), cap_std::ambient_authority()).unwrap();
+    entry_identity(&parent, path.file_name().unwrap().to_str().unwrap())
+        .unwrap()
+        .unwrap()
 }
 fn files(root: &Path) -> Vec<(String, Vec<u8>)> {
     fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
@@ -210,12 +222,13 @@ fn a_crash_at_every_point_leaves_the_old_workspace_or_a_state_recovery_finishes(
             assert_eq!(scene.intact(), before, "{point}");
             assert!(scene.discarded().is_empty(), "{point}");
         }
-        // Until it settles, no workspace may be opened or created in its place.
-        let settled_on_disk = point == "settled";
-        assert_eq!(admit(&scene.local).is_ok(), settled_on_disk, "{point}");
+        // Until it settles, no workspace may be opened or created in its place, unless the
+        // intent provably moved nothing: then the old workspace may start as it was.
+        let admitted = matches!(point, "intent" | "rename" | "settled");
+        assert_eq!(admit(&scene.local).is_ok(), admitted, "{point}");
         assert_eq!(
             crate::workspace_upgrade::admit(&scene.data, &scene.local.join(CANONICAL)).is_ok(),
-            settled_on_disk,
+            admitted,
             "{point}"
         );
         // Next launch: an unmoved workspace is kept and the intent withdrawn; a moved one is
@@ -284,7 +297,7 @@ fn a_held_workspace_lock_refuses_and_leaves_everything_in_place() {
     let live = Journal::open(&scene.local.join(CANONICAL)).unwrap();
     assert_eq!(
         scene.replace(&Store::default(), None).map(|_| ()),
-        Err(Refusal::InUse)
+        refused(Refusal::InUse)
     );
     drop(live);
     assert_eq!(scene.intact(), before);
@@ -319,7 +332,7 @@ fn a_directory_that_is_not_a_workspace_is_refused_untouched() {
         let before = scene.intact();
         assert_eq!(
             scene.replace(&Store::default(), None).map(|_| ()),
-            Err(Refusal::Layout),
+            refused(Refusal::Layout),
             "{name}"
         );
         assert_eq!(scene.intact(), before, "{name}");
@@ -332,7 +345,7 @@ fn a_directory_that_is_not_a_workspace_is_refused_untouched() {
     fs::write(scene.local.join(CANONICAL), b"not a workspace").unwrap();
     assert_eq!(
         scene.replace(&Store::default(), None).map(|_| ()),
-        Err(Refusal::Layout)
+        refused(Refusal::Layout)
     );
     assert_eq!(
         fs::read(scene.local.join(CANONICAL)).unwrap(),
@@ -362,7 +375,7 @@ fn a_record_less_creation_is_a_workspace_bridge_can_retire() {
     fs::write(root.join("state.disk"), b"written").unwrap();
     assert_eq!(
         scene.replace(&Store::default(), None).map(|_| ()),
-        Err(Refusal::Layout)
+        refused(Refusal::Layout)
     );
 }
 
@@ -377,7 +390,7 @@ fn symlinks_are_never_followed_out_of_the_local_data_folder() {
     let before = files(&elsewhere);
     assert_eq!(
         scene.replace(&Store::default(), None).map(|_| ()),
-        Err(Refusal::Layout)
+        refused(Refusal::Layout)
     );
     assert!(fs::symlink_metadata(scene.local.join(CANONICAL))
         .unwrap()
@@ -394,7 +407,7 @@ fn symlinks_are_never_followed_out_of_the_local_data_folder() {
     let before = scene.intact();
     assert_eq!(
         scene.replace(&Store::default(), None).map(|_| ()),
-        Err(Refusal::Layout)
+        refused(Refusal::Layout)
     );
     assert_eq!(scene.intact(), before);
     // Deleting a retired workspace removes a link inside it, never what it points to.
@@ -422,7 +435,7 @@ fn a_refused_rename_withdraws_the_intent_and_keeps_the_workspace() {
     fs::set_permissions(&scene.local, fs::Permissions::from_mode(0o500)).unwrap();
     let result = scene.replace(&Store::default(), None).map(|_| ());
     fs::set_permissions(&scene.local, fs::Permissions::from_mode(0o700)).unwrap();
-    assert_eq!(result, Err(Refusal::InUse));
+    assert_eq!(result, refused(Refusal::InUse));
     assert_eq!(scene.intact(), before);
     assert!(scene.intent().is_none());
     assert!(scene.discarded().is_empty());
@@ -452,7 +465,7 @@ fn a_failed_deletion_leaves_reclaimable_space_without_failing_the_action() {
     // A later fresh workspace keeps reporting it and retries its deletion.
     let second = scene.replace(&Store::default(), None).unwrap();
     assert_eq!(second.reclaimable[0], name);
-    assert_eq!(scene.intent().unwrap().earlier, vec![first.transaction]);
+    assert_eq!(earlier(&scene.intent().unwrap()), vec![first.transaction]);
     assert!(scene.owner().clean().unwrap().is_empty());
     assert!(scene.discarded().is_empty());
     assert!(scene.intent().unwrap().earlier.is_empty());
@@ -483,6 +496,17 @@ fn an_unconfirmed_credential_removal_keeps_the_record_and_still_settles() {
     let fresh = Journal::create(&scene.local.join(CANONICAL), BackendKind::Apple, vec![1]).unwrap();
     let installation = fresh.record().installation_id;
     drop(fresh);
+    // Connecting on the new workspace names the mismatch, which is what offers Reset.
+    let offered = scene.setup.reset_mismatched_model(
+        installation,
+        &Store {
+            fail: true,
+            ..Store::default()
+        },
+    );
+    let offered = serde_json::to_value(offered.unwrap_err()).unwrap();
+    assert_eq!(offered["kind"], "modelStore");
+    assert!(offered["recovery"].is_object());
     let retry = Store::default();
     scene
         .setup
@@ -490,6 +514,8 @@ fn an_unconfirmed_credential_removal_keeps_the_record_and_still_settles() {
         .unwrap();
     assert_eq!(*retry.deleted.lock().unwrap(), vec![scene.slot]);
     assert!(!scene.data.join("setup-v1/model-v1").exists());
+    // Reset forgets the login it showed for that slot, as a fresh workspace does.
+    assert!(!scene.data.join("setup-v1/model-account-v1").exists());
 }
 
 #[test]
@@ -549,7 +575,7 @@ fn update_records_refuse_before_anything_is_touched() {
     );
     assert_eq!(
         scene.replace(&Store::default(), None).map(|_| ()),
-        Err(Refusal::UpdateHistory)
+        refused(Refusal::UpdateHistory)
     );
     assert_eq!(scene.intact(), before);
     assert!(scene.intent().is_none());
@@ -565,11 +591,41 @@ fn unexpected_directories_are_a_conflict_left_exactly_as_found() {
     drop(other);
     let before = scene.intact();
     let retired = scene.discarded();
-    assert!(recover_startup(&scene.data, &scene.local, &scene.setup, &store).is_err());
+    // Launch says what Bridge found, by path, and keeps the workspace stopped.
+    let Some(FreshStatusDto::Conflict { found }) =
+        recover_startup(&scene.data, &scene.local, &scene.setup, &store).unwrap()
+    else {
+        panic!("a conflict must be reported");
+    };
+    assert_eq!(
+        found,
+        vec![
+            scene.local.join(CANONICAL).display().to_string(),
+            scene.local.join(&retired[0]).display().to_string()
+        ]
+    );
+    assert!(FreshStatusDto::Conflict { found }.blocks_launch());
     assert!(admit(&scene.local).is_err());
+    // The action reports the same conflict, and update actions refuse it too.
+    assert!(matches!(
+        scene.replace(&store, None),
+        Err(Failure::Conflict(_))
+    ));
+    assert!(crate::workspace_upgrade::validate_new_replacement(&scene.data, &scene.local).is_err());
     assert_eq!(scene.intact(), before);
     assert_eq!(scene.discarded(), retired);
     assert!(store.deleted.lock().unwrap().is_empty());
+    // Moving both folders away, as the screen says, lets Bridge finish on the next launch.
+    let aside = scene.temp.path().join("aside");
+    fs::create_dir(&aside).unwrap();
+    fs::rename(scene.local.join(CANONICAL), aside.join(CANONICAL)).unwrap();
+    fs::rename(scene.local.join(&retired[0]), aside.join(&retired[0])).unwrap();
+    assert!(matches!(
+        recover_startup(&scene.data, &scene.local, &scene.setup, &store).unwrap(),
+        Some(FreshStatusDto::Replaced { .. })
+    ));
+    admit(&scene.local).unwrap();
+    assert_eq!(*store.deleted.lock().unwrap(), vec![scene.slot]);
 }
 
 #[test]
@@ -579,10 +635,20 @@ fn an_unreadable_intent_blocks_launch_and_is_never_guessed_past() {
     fs::write(scene.local.join(STORE).join("intent.json"), b"garbage").unwrap();
     let before = scene.intact();
     assert!(admit(&scene.local).is_err());
-    assert!(recover_startup(&scene.data, &scene.local, &scene.setup, &Store::default()).is_err());
+    assert_eq!(
+        recover_startup(&scene.data, &scene.local, &scene.setup, &Store::default()).unwrap(),
+        Some(FreshStatusDto::Conflict {
+            found: vec![scene
+                .local
+                .join(STORE)
+                .join("intent.json")
+                .display()
+                .to_string()]
+        })
+    );
     assert_eq!(
         scene.replace(&Store::default(), None).map(|_| ()),
-        Err(Refusal::Layout)
+        Err(Failure::Conflict(vec![INTENT.into()]))
     );
     assert_eq!(scene.intact(), before);
 }
@@ -600,14 +666,438 @@ fn the_reply_names_only_native_paths_and_finite_states() {
         serde_json::json!({"state":"replaced","transaction":Uuid::nil(),"ai":"kept","reclaimable":["/native/discarded"],"cleaning":true})
     );
     assert_eq!(
+        serde_json::to_value(FreshStatusDto::refused(Refusal::StopUnconfirmed)).unwrap(),
+        serde_json::json!({"state":"refused","reason":"stopUnconfirmed","restarted":false})
+    );
+    assert_eq!(
         serde_json::to_value(FreshStatusDto::Refused {
-            reason: Refusal::StopUnconfirmed
+            reason: Refusal::NoSpace,
+            restarted: false,
+            needed_bytes: Some(7),
+            reclaimable: vec!["/native/discarded".into()]
         })
         .unwrap(),
-        serde_json::json!({"state":"refused","reason":"stopUnconfirmed"})
+        serde_json::json!({"state":"refused","reason":"noSpace","restarted":false,"neededBytes":7,"reclaimable":["/native/discarded"]})
+    );
+    assert_eq!(
+        serde_json::to_value(FreshStatusDto::Interrupted {
+            transaction: Uuid::nil()
+        })
+        .unwrap(),
+        serde_json::json!({"state":"interrupted","transaction":Uuid::nil()})
+    );
+    assert_eq!(
+        serde_json::to_value(FreshStatusDto::Conflict {
+            found: vec!["/native/local-vm-v1".into()]
+        })
+        .unwrap(),
+        serde_json::json!({"state":"conflict","found":["/native/local-vm-v1"]})
+    );
+    assert_eq!(
+        serde_json::to_value(FreshPlan {
+            blocked: Some(Refusal::UpdateHistory),
+            image: FreshImage::Download { bytes: Some(9) }
+        })
+        .unwrap(),
+        serde_json::json!({"blocked":"updateHistory","image":{"kind":"download","bytes":9}})
+    );
+    assert_eq!(
+        serde_json::to_value(FreshPlan {
+            blocked: None,
+            image: FreshImage::Cached
+        })
+        .unwrap(),
+        serde_json::json!({"image":{"kind":"cached"}})
     );
     assert_eq!(
         serde_json::to_value(FreshStatusDto::Replacing).unwrap(),
         serde_json::json!({"state":"replacing"})
     );
+}
+
+#[test]
+fn every_durable_step_is_flushed_in_order() {
+    let scene = Scene::new();
+    let mut owner = scene.owner();
+    owner
+        .replace_with(&scene.setup, &Store::default(), |_| Ok(()))
+        .unwrap();
+    // Each record is flushed before it replaces the last one, and the store after; the rename
+    // is flushed before the intent says it happened; the AI is reset only once the retirement
+    // is durable, and recorded as settled only after.
+    assert_eq!(
+        *owner.trace.lock().unwrap(),
+        [
+            "flush intent",
+            "record intent",
+            "flush store intent",
+            "rename",
+            "flush rename",
+            "flush retired",
+            "record retired",
+            "flush store retired",
+            "reset ai",
+            "flush settled",
+            "record settled",
+            "flush store settled",
+        ]
+    );
+}
+
+#[test]
+fn a_failure_after_the_rename_is_interrupted_never_unchanged() {
+    for step in [
+        "flush rename",
+        "flush retired",
+        "record retired",
+        "flush store retired",
+        "flush settled",
+        "record settled",
+        "flush store settled",
+    ] {
+        let scene = Scene::new();
+        let before = scene.intact();
+        let store = Store::default();
+        fail_once(&scene.local, step);
+        let result = scene.replace(&store, None);
+        let Err(Failure::Interrupted(transaction)) = result else {
+            panic!("{step}: {result:?}")
+        };
+        // The workspace really is set aside: that is what the reply must say.
+        assert!(!scene.local.join(CANONICAL).exists(), "{step}");
+        assert_eq!(
+            directory_identity(&scene.local.join(discarded(transaction))),
+            before.identity,
+            "{step}"
+        );
+        // A settled record that reached disk admits first install; anything earlier does not.
+        let settled = scene.intent().unwrap().phase == Phase::Settled;
+        assert_eq!(admit(&scene.local).is_ok(), settled, "{step}");
+        // Bridge finishes it on the next try, as recovery does.
+        let finished = scene.owner().resume(&scene.setup, &store).unwrap();
+        assert_eq!(finished.transaction, transaction, "{step}");
+        assert_eq!(scene.intent().unwrap().phase, Phase::Settled, "{step}");
+        admit(&scene.local).unwrap();
+    }
+}
+
+#[test]
+fn the_action_retries_recovery_once_before_reporting_an_interruption() {
+    // One failure past the rename: the action's own retry finishes it.
+    let scene = Scene::new();
+    fail_once(&scene.local, "record retired");
+    let settled = scene
+        .owner()
+        .replace(&scene.setup, &Store::default())
+        .unwrap();
+    assert_eq!(scene.intent().unwrap().transaction, settled.transaction);
+    admit(&scene.local).unwrap();
+    // The same failure twice: interrupted, and launch finishes it.
+    let scene = Scene::new();
+    fail_once(&scene.local, "record retired");
+    fail_once(&scene.local, "record retired");
+    let result = scene.owner().replace(&scene.setup, &Store::default());
+    let Err(Failure::Interrupted(transaction)) = result else {
+        panic!("{result:?}")
+    };
+    assert!(admit(&scene.local).is_err());
+    let Some(FreshStatusDto::Replaced {
+        transaction: finished,
+        ..
+    }) = recover_startup(&scene.data, &scene.local, &scene.setup, &Store::default()).unwrap()
+    else {
+        panic!("launch must finish it");
+    };
+    assert_eq!(finished, transaction);
+    admit(&scene.local).unwrap();
+}
+
+#[test]
+fn a_failure_before_the_rename_reports_nothing_changed_and_never_blocks_launch() {
+    for steps in [
+        &["flush intent"][..],
+        &["record intent"],
+        &["flush store intent"],
+        // The withdrawal fails too: the intent stays, but it provably moved nothing.
+        &["flush store intent", "withdraw"],
+    ] {
+        let scene = Scene::new();
+        let before = scene.intact();
+        for step in steps {
+            fail_once(&scene.local, step);
+        }
+        assert_eq!(
+            scene.replace(&Store::default(), None).map(|_| ()),
+            refused(Refusal::Unavailable),
+            "{steps:?}"
+        );
+        assert_eq!(scene.intact(), before, "{steps:?}");
+        assert!(scene.discarded().is_empty(), "{steps:?}");
+        admit(&scene.local).unwrap();
+        crate::workspace_upgrade::admit(&scene.data, &scene.local.join(CANONICAL)).unwrap();
+        crate::workspace_upgrade::validate_new_replacement(&scene.data, &scene.local).unwrap();
+        // Launch withdraws a leftover intent and reports nothing.
+        assert_eq!(
+            recover_startup(&scene.data, &scene.local, &scene.setup, &Store::default()).unwrap(),
+            None,
+            "{steps:?}"
+        );
+        assert!(scene.intent().is_none(), "{steps:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_workspace_lock_is_held_through_the_rename_where_renaming_allows_it() {
+    let scene = Scene::new();
+    let root = scene.local.join(CANONICAL);
+    let held = std::cell::Cell::new(None);
+    scene
+        .owner()
+        .replace_with(&scene.setup, &Store::default(), |point| {
+            if point == "rename" {
+                held.set(Some(Journal::recovery_owner(&root).is_err()));
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(held.get(), Some(true));
+}
+
+#[test]
+fn deletion_leaves_anything_that_is_not_the_recorded_directory() {
+    let scene = Scene::new();
+    let settled = scene.replace(&Store::default(), None).unwrap();
+    let name = discarded(settled.transaction);
+    // Something else now has the retired name.
+    let aside = scene.temp.path().join("aside");
+    fs::rename(scene.local.join(&name), &aside).unwrap();
+    fs::create_dir(scene.local.join(&name)).unwrap();
+    fs::write(scene.local.join(&name).join("precious"), b"keep").unwrap();
+    assert_eq!(scene.owner().clean().unwrap(), vec![name.clone()]);
+    assert_eq!(
+        fs::read(scene.local.join(&name).join("precious")).unwrap(),
+        b"keep"
+    );
+    // The recorded directory is deleted once it is back under its name.
+    fs::remove_dir_all(scene.local.join(&name)).unwrap();
+    fs::rename(&aside, scene.local.join(&name)).unwrap();
+    assert!(scene.owner().clean().unwrap().is_empty());
+}
+
+#[test]
+fn a_settled_transaction_never_blocks_launch_whatever_it_left_behind() {
+    let scene = Scene::new();
+    let settled = scene.replace(&Store::default(), None).unwrap();
+    let name = discarded(settled.transaction);
+    // A plain file where the retired directory was.
+    fs::remove_dir_all(scene.local.join(&name)).unwrap();
+    fs::write(scene.local.join(&name), b"odd").unwrap();
+    admit(&scene.local).unwrap();
+    let Some(FreshStatusDto::Replaced {
+        reclaimable,
+        cleaning,
+        ..
+    }) = recover_startup(&scene.data, &scene.local, &scene.setup, &Store::default()).unwrap()
+    else {
+        panic!("leftovers are reported, not blocking");
+    };
+    assert_eq!(
+        reclaimable,
+        vec![scene.local.join(&name).display().to_string()]
+    );
+    assert!(cleaning);
+    // Cleanup leaves what is not the recorded directory and keeps reporting it.
+    assert_eq!(scene.owner().clean().unwrap(), vec![name.clone()]);
+    assert_eq!(fs::read(scene.local.join(&name)).unwrap(), b"odd");
+    // A later fresh workspace still starts.
+    scene.replace(&Store::default(), None).unwrap();
+}
+
+#[test]
+fn update_actions_refuse_while_a_fresh_workspace_is_unfinished() {
+    let scene = Scene::new();
+    assert!(scene.replace(&Store::default(), Some("renamed")).is_err());
+    fs::create_dir(scene.local.join("workspace-upgrades-v1")).unwrap();
+    assert!(crate::workspace_upgrade::validate_new_replacement(&scene.data, &scene.local).is_err());
+    assert!(crate::workspace_upgrade::validate_transaction(
+        &scene.data,
+        &scene.local,
+        Uuid::new_v4()
+    )
+    .is_err());
+    scene.replace(&Store::default(), None).unwrap();
+    crate::workspace_upgrade::validate_new_replacement(&scene.data, &scene.local).unwrap();
+}
+
+#[test]
+fn a_saved_record_with_unusable_connection_fields_is_still_forgotten() {
+    let scene = Scene::new();
+    let installation = scene.installation;
+    let invalid = serde_json::json!({"slot":scene.slot,"installation":installation,"phase":"connected","nonce":Uuid::new_v4(),
+        "connection":{"id":Uuid::nil(),"generation":Uuid::nil(),"selection":{"provider":"copilot","model":"gpt-5"}}});
+    fs::write(
+        scene.data.join("setup-v1/model-v1"),
+        serde_json::to_vec(&invalid).unwrap(),
+    )
+    .unwrap();
+    let store = Store::default();
+    assert_eq!(scene.replace(&store, None).unwrap().ai, AiOutcome::Removed);
+    assert_eq!(*store.deleted.lock().unwrap(), vec![scene.slot]);
+    assert!(!scene.data.join("setup-v1/model-v1").exists());
+    // If even that removal is unconfirmed, the reply does not promise a Reset it can't offer.
+    let scene = Scene::new();
+    fs::write(
+        scene.data.join("setup-v1/model-v1"),
+        serde_json::to_vec(&invalid).unwrap(),
+    )
+    .unwrap();
+    let failing = Store {
+        fail: true,
+        ..Store::default()
+    };
+    assert_eq!(
+        scene.replace(&failing, None).unwrap().ai,
+        AiOutcome::Unconfirmed
+    );
+}
+
+#[test]
+fn the_status_plan_reads_update_history_without_taking_any_lock() {
+    let scene = Scene::new();
+    assert_eq!(blocked(&scene.local), None);
+    let store_dir = scene.local.join("workspace-upgrades-v1");
+    fs::create_dir(&store_dir).unwrap();
+    assert_eq!(blocked(&scene.local), None);
+    fs::write(
+        store_dir.join(format!("completed-{}.json", Uuid::new_v4())),
+        b"{}",
+    )
+    .unwrap();
+    assert_eq!(blocked(&scene.local), Some(Refusal::UpdateHistory));
+    // While the upgrade owner is held, the plan still answers.
+    let held = crate::workspace_upgrade::WorkspaceUpgrade::open(&scene.data, &scene.local);
+    assert_eq!(blocked(&scene.local), Some(Refusal::UpdateHistory));
+    drop(held);
+    // Finishing an interrupted fresh workspace is never blocked.
+    let scene = Scene::new();
+    assert!(scene.replace(&Store::default(), Some("renamed")).is_err());
+    fs::create_dir(scene.local.join("workspace-upgrades-v1")).unwrap();
+    fs::write(scene.local.join("workspace-upgrades-v1/intent.json"), b"{}").unwrap();
+    assert_eq!(blocked(&scene.local), None);
+    assert_eq!(preflight(&scene.data, &scene.local), None);
+}
+
+#[test]
+fn the_cached_image_and_download_sizes_come_from_the_pinned_release() {
+    use crate::runtime::image_types::ImageTarget;
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().join("image-cache-v1");
+    let sha = "a".repeat(64);
+    assert!(!image_cached(&cache, &sha));
+    fs::create_dir_all(cache.join("images/v2").join(&sha)).unwrap();
+    assert!(!image_cached(&cache, &sha));
+    fs::write(cache.join("images/v2").join(&sha).join("ready.json"), b"{}").unwrap();
+    assert!(image_cached(&cache, &sha));
+    assert!(!image_cached(&cache, "../a"));
+    for (target, manifest, disk) in [
+        (
+            ImageTarget::MacosArm64,
+            include_bytes!("../../../images/release/macos-arm64.json").as_slice(),
+            17_179_869_184,
+        ),
+        (
+            ImageTarget::WindowsAmd64,
+            include_bytes!("../../../images/release/windows-amd64.json").as_slice(),
+            3_765_960_704,
+        ),
+    ] {
+        let (download, needed) = download_sizes(manifest).unwrap();
+        assert_eq!(Some(download), crate::catalog::image_download_bytes(target));
+        // The cache's own check: the download plus the whole decoded disk.
+        assert_eq!(needed, download + disk);
+    }
+    assert_eq!(space_check(Some(10), 11), Err(Refusal::NoSpace));
+    assert_eq!(space_check(Some(11), 11), Ok(()));
+    assert_eq!(space_check(None, 11), Ok(()));
+}
+
+#[tokio::test]
+async fn the_download_check_refuses_before_anything_changes() {
+    use crate::runtime::image_types::{ImagePin, ImageTarget, TransferLimits};
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().join("image-cache-v1");
+    // The cache folder need not exist yet: its parent's free space counts.
+    assert!(available_space(&cache).is_some());
+    let pin = ImagePin {
+        release_id: "fixture".into(),
+        manifest_url: "https://fixture.invalid/manifest.json".into(),
+        manifest_sha256: "a".repeat(64),
+        accepted_schema_sha256: "a".repeat(64),
+        target: ImageTarget::WindowsAmd64,
+        asset_base: "https://fixture.invalid/".into(),
+        redirect_origins: vec![],
+        limits: TransferLimits {
+            compressed_bytes: 1,
+            disk_bytes: 1,
+            kernel_bytes: 1,
+            initrd_bytes: 1,
+        },
+    };
+    assert_eq!(
+        download_check(&cache, &pin, u64::MAX).await,
+        Err(Refusal::NoSpace)
+    );
+    // A download that cannot be reached.
+    assert_eq!(download_check(&cache, &pin, 0).await, Err(Refusal::Offline));
+}
+
+/// A junction where the workspace should be: Windows' unprivileged directory link.
+#[cfg(windows)]
+#[test]
+fn a_junction_is_never_followed_out_of_the_local_data_folder() {
+    let scene = Scene::new();
+    let elsewhere = scene.temp.path().join("elsewhere");
+    fs::rename(scene.local.join(CANONICAL), &elsewhere).unwrap();
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(scene.local.join(CANONICAL))
+        .arg(&elsewhere)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    let before = files(&elsewhere);
+    assert_eq!(
+        scene.replace(&Store::default(), None).map(|_| ()),
+        refused(Refusal::Layout)
+    );
+    assert!(scene.local.join(CANONICAL).exists());
+    assert_eq!(files(&elsewhere), before);
+    assert!(scene.data.join("setup-v1/model-v1").exists());
+    assert!(scene.discarded().is_empty());
+}
+
+/// Windows' way to refuse the rename: another handle on the workspace that does not share
+/// deletion, as a process still holding it would.
+#[cfg(windows)]
+#[test]
+fn a_held_directory_handle_refuses_the_rename_and_keeps_the_workspace() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let scene = Scene::new();
+    let before = scene.intact();
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1 | 2) // FILE_SHARE_READ | FILE_SHARE_WRITE, not FILE_SHARE_DELETE
+        .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS: open the directory itself
+        .open(scene.local.join(CANONICAL))
+        .unwrap();
+    assert_eq!(
+        scene.replace(&Store::default(), None).map(|_| ()),
+        refused(Refusal::InUse)
+    );
+    drop(held);
+    assert_eq!(scene.intact(), before);
+    assert!(scene.intent().is_none());
+    assert!(scene.discarded().is_empty());
+    admit(&scene.local).unwrap();
 }

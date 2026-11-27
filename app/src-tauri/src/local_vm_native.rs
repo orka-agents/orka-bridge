@@ -432,6 +432,39 @@ impl LocalFactory for NativeFactory {
             .take();
         Ok(())
     }
+    fn fresh_image(&self) -> crate::workspace_fresh::FreshImage {
+        use crate::workspace_fresh::{download_sizes, image_cached, FreshImage};
+        match &self.source {
+            image::ImageSource::Pinned { profile, .. } => {
+                if image_cached(&self.cache, &profile.pin.manifest_sha256) {
+                    FreshImage::Cached
+                } else {
+                    FreshImage::Download {
+                        bytes: download_sizes(&profile.manifest).map(|(download, _)| download),
+                    }
+                }
+            }
+            #[cfg(debug_assertions)]
+            image::ImageSource::Development => FreshImage::Unknown,
+        }
+    }
+    fn fresh_download_check(&self) -> crate::local_vm::FreshCheck<'_> {
+        use crate::workspace_fresh::{download_check, download_sizes, image_cached};
+        Box::pin(async move {
+            let profile = match &self.source {
+                image::ImageSource::Pinned { profile, .. } => profile,
+                #[cfg(debug_assertions)]
+                image::ImageSource::Development => return Ok(()),
+            };
+            if image_cached(&self.cache, &profile.pin.manifest_sha256) {
+                return Ok(());
+            }
+            let needed = download_sizes(&profile.manifest).map(|(_, needed)| needed);
+            download_check(&self.cache, &profile.pin, needed.unwrap_or(0))
+                .await
+                .map_err(|reason| (reason, needed))
+        })
+    }
     /// Explicit replace/retry already renamed A and created B under this exact
     /// root; keep that live journal so an ordinary later start reuses its
     /// still-live new-only authority instead of reopening from scratch.
