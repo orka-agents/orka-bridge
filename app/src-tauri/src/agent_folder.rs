@@ -17,14 +17,21 @@ const OWNER: &[u8] = b"Bridge web-reader folder v1\n";
 type Result<T> = std::result::Result<T, &'static str>;
 const EXAMPLE_AGENT: &str = include_str!("../example-agent/web-reader.agent.md");
 const EXAMPLE_TESTS: &str = include_str!("../example-agent/web-reader.agent.test.md");
+/// The model line in the bundled template, replaced by the connected model when prepared.
+pub(crate) const EXAMPLE_MODEL: &str = "gpt-5.6-terra";
 
 /// The same closed template is used for setup preparation and first-test admission.
 pub fn example_for_model(model: &str) -> Option<(String, &'static str)> {
-    if !matches!(model, "gpt-5.6-terra" | "gpt-4.1" | "claude-sonnet-5-5") {
+    // Any model the person chose from their account's catalog, or a key company's default.
+    if !crate::copilot_preflight::valid_id(model) {
         return None;
     }
     Some((
-        EXAMPLE_AGENT.replacen("\nmodel: gpt-5.6-terra", &format!("\nmodel: {model}"), 1),
+        EXAMPLE_AGENT.replacen(
+            &format!("\nmodel: {EXAMPLE_MODEL}"),
+            &format!("\nmodel: {model}"),
+            1,
+        ),
         EXAMPLE_TESTS,
     ))
 }
@@ -33,7 +40,7 @@ pub fn example_for_model(model: &str) -> Option<(String, &'static str)> {
 pub(crate) fn created_seed(name: &str, model: Option<&str>) -> io::Result<(String, String)> {
     // JSON string quoting is also YAML scalar quoting, including YAML keywords.
     let quoted_name = serde_json::to_string(name).map_err(|_| invalid())?;
-    let model = serde_json::to_string(model.unwrap_or("gpt-5.6-terra")).map_err(|_| invalid())?;
+    let model = serde_json::to_string(model.unwrap_or(EXAMPLE_MODEL)).map_err(|_| invalid())?;
     let agent = format!(
         "---\nname: {quoted_name}\nmodel: {model}\nkmx:\n  schemaVersion: 1\n  runtime: orka\n---\n\n"
     );

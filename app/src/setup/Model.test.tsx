@@ -291,17 +291,18 @@ test('preview and malformed responses cannot claim ready', async () => {
 });
 
 // Queued intent: in-memory consent to connect once Orka is ready. Credentials are untouched before then.
-test('a choice while the workspace is starting is queued without any credential command', () => {
+test('a choice while the workspace is starting is queued after a check on this computer only', async () => {
   const onState = vi.fn();
   render(<Model enabled={false} queueable onState={onState} />);
   expect(screen.getByRole('heading', { name: 'Connect the AI' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
-  expect(invoke).not.toHaveBeenCalled();
+  // Only the host-side check: no connect, delivery or other credential command reaches the workspace.
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(['setup_check_model']);
   expect(screen.getByText('Queued').closest('button')).toBeNull();
   expect(screen.getByText(/connects when the workspace is ready/i)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
-  expect(onState).toHaveBeenLastCalledWith('queued');
+  await waitFor(() => expect(onState).toHaveBeenLastCalledWith('queued'));
 });
 
 test('queued intent connects exactly once when the model becomes available, without another click', async () => {
@@ -321,14 +322,15 @@ test('queued intent survives the readiness transition and fires only once unpaus
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   // Ready but locked (not yet available): hold, neither fire nor clear.
   view.rerender(<Model enabled={false} queueable={false} />);
-  expect(invoke).not.toHaveBeenCalled();
+  // Only the host-side check ran while waiting.
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([]);
   expect(screen.getByText('Queued')).toBeTruthy();
   // Available but an unreadable observation or mutation pauses: hold.
   view.rerender(<Model enabled paused />);
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([]);
   view.rerender(<Model enabled paused={false} />);
   await screen.findByText(/^Connected$/);
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([['setup_connect_model']]);
 });
 
 test('a locked model that is not queueable offers no queue', () => {
@@ -343,14 +345,14 @@ test('cluster selection and cancelling clear intent so readiness needs fresh con
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   view.rerender(<Model enabled={false} queueable away />);
   view.rerender(<Model enabled queueable={false} away={false} />);
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([]);
   expect(screen.getByRole('button', { name: 'Connect the AI' })).toBeTruthy();
   view.rerender(<Model enabled={false} queueable />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   fireEvent.click(screen.getByRole('button', { name: 'Cancel queued connection' }));
   expect(screen.queryByText('Queued')).toBeNull();
   view.rerender(<Model enabled />);
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([]);
 });
 
 test('a failed queued connection is not retried automatically', async () => {

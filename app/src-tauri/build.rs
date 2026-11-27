@@ -31,6 +31,7 @@ fn main() {
             "setup_change_local",
             "setup_reset_model",
             "setup_example",
+            "setup_check_model",
             "agent_run",
             "agent_run_status",
             "agent_run_cancel",

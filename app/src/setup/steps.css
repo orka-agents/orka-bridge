@@ -241,3 +241,8 @@
 /* The returning AI card while the workspace is not running: its saved-connection action keeps the boards' spacing. */
 .workspace-ai-waiting > .button { margin-top: var(--space-3); }
 .setup .workspace-ai-waiting > .button + p { margin-top: 10px; font: var(--type-caption); }
+
+/* The Copilot model picker lists ids as GitHub names them. */
+.model-picker { display: grid; gap: 6px; }
+.model-picker select { font-family: var(--font-mono); font-variant-ligatures: none; }
+.model-chosen { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

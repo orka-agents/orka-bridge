@@ -414,7 +414,7 @@ mod infrastructure_tests {
             .with_client(|_, _| panic!("credential capture must not be admitted"))
             .await
             .is_err());
-        assert!(vm.connect_model(store).await.is_err());
+        assert!(vm.connect_model(store, None).await.is_err());
         assert_eq!(vm.status(), LocalVmStatus::Starting);
         probe.state.store(1, Ordering::SeqCst);
         phase(&vm, LocalVmStatus::Ready).await;

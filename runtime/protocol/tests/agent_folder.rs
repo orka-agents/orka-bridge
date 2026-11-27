@@ -4,6 +4,8 @@ extern crate self as bridge_engine;
 pub mod agent_folder;
 #[path = "../../../app/src-tauri/src/agents.rs"]
 pub mod agents;
+#[path = "../../../app/src-tauri/src/copilot_preflight.rs"]
+pub mod copilot_preflight;
 #[path = "../../../app/src-tauri/src/runtime/image_cache.rs"]
 pub mod image_cache;
 #[path = "../../../app/src-tauri/src/runtime/image_types.rs"]

@@ -190,6 +190,10 @@ const checkQueued = Function('queued', 'name', queuedGuard);
 const queuedState = { pill: 'Queued', inChoice: false, change: false, cancel: true, text: 'Connect the AI\nQueued\nGitHub Copilot · gpt-5.6-terra\nConnects when the workspace is ready.\nCancel' };
 assert.doesNotThrow(() => checkQueued(queuedState, 'setup-transfer-queued'));
 for (const mutation of [{ cancel: false }, { change: true }, { inChoice: true }, { pill: undefined }, { text: 'Connects through the local cluster.' }]) assert.throws(() => checkQueued({ ...queuedState, ...mutation }, 'setup-transfer-queued'));
+// A choice checked on this computer may offer Change for its model, beside the same Cancel.
+const checkedState = { ...queuedState, change: true, text: 'Connect the AI\nQueued\nGitHub Copilot · gpt-5.6-terra\nGitHub Copilot is ready: signed in as synthetic-user, model gpt-5.6-terra. Connects when the workspace is ready.\nChange\nCancel' };
+assert.doesNotThrow(() => checkQueued(checkedState, 'setup-transfer-queued'));
+assert.throws(() => checkQueued({ ...checkedState, cancel: false }, 'setup-transfer-queued'));
 const welcomeGuard = source.split('\n').find(line => line.includes('if (!welcome.primary'));
 assert.ok(welcomeGuard);
 const checkWelcome = Function('welcome', welcomeGuard);

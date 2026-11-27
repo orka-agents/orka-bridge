@@ -187,11 +187,21 @@ fn key_connect_persists_only_metadata_and_reopens_without_github_capture() {
                 setup
                     .connect_key_model(install, vendor, key, &mut client, &vault)
                     .unwrap();
-                reopened
-                    .connect_stored_model(install, &mut client, &vault, || panic!("no recapture"))
+                reopened.connect_stored_model(
+                    install,
+                    Some("gpt-5.6-terra"),
+                    &mut client,
+                    &vault,
+                    || panic!("no recapture"),
+                )
             } else {
-                reopened
-                    .connect_stored_model(install, &mut client, &vault, || panic!("no recapture"))
+                reopened.connect_stored_model(
+                    install,
+                    Some("gpt-5.6-terra"),
+                    &mut client,
+                    &vault,
+                    || panic!("no recapture"),
+                )
             }
             .unwrap();
             assert!(ready.ready);
@@ -265,7 +275,9 @@ fn reopened_key_failure_carries_only_the_saved_company_for_recovery() {
         Some(key_remote(None, Uuid::new_v4(), ModelPhase::Unknown, None))
     });
     let error = reopened
-        .connect_stored_model(install, &mut client, &vault, || panic!("must not capture"))
+        .connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
+            panic!("must not capture")
+        })
         .unwrap_err();
     let wire = serde_json::to_value(error).unwrap();
     assert_eq!(wire["kind"], "modelGuest");
@@ -298,7 +310,13 @@ fn persisted_kind_vendor_mismatch_cannot_authorize_guest_or_vault_io() {
         let (mut client, worker) = peer(Uuid::new_v4(), |_| panic!("invalid metadata"));
         assert!(setup.model_binding_status().is_err());
         assert!(setup
-            .connect_stored_model(install, &mut client, &vault, || panic!("invalid metadata"))
+            .connect_stored_model(
+                install,
+                Some("gpt-5.6-terra"),
+                &mut client,
+                &vault,
+                || panic!("invalid metadata")
+            )
             .is_err());
         assert!(setup
             .sign_out_model(install, Some(&mut client), &vault)

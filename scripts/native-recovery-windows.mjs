@@ -413,7 +413,7 @@ try {
     if (queue) {
       // The queued connection reads as the board draws it: Queued in the AI card's head, the connection that will be made and Cancel.
       const queued = await evaluate(`(() => { const card = document.querySelector('.setup-side .setup-model.card'); const pill = card?.querySelector('.steps-head .pill'); const change = [...(card?.querySelectorAll('button') ?? [])].find(button => button.textContent === 'Change'); const cancel = card?.querySelector('button[aria-label="Cancel queued connection"]'); return { pill: pill?.textContent, inChoice: !!card?.querySelector('fieldset'), change: !!change, cancel: !!cancel, text: card?.innerText ?? '' }; })()`);
-      if (queued.pill !== 'Queued' || queued.inChoice || !queued.cancel || queued.change || !queued.text.includes('Connects when the workspace is ready.') || /local cluster/.test(queued.text)) throw Error(`${name}: queued AI must be the Queued card with Cancel: ${JSON.stringify(queued)}`);
+      if (queued.pill !== 'Queued' || queued.inChoice || !queued.cancel || (queued.change && !queued.text.includes('GitHub Copilot is ready: ')) || !queued.text.includes('Connects when the workspace is ready.') || /local cluster/.test(queued.text)) throw Error(`${name}: queued AI must be the Queued card with Cancel: ${JSON.stringify(queued)}`);
     }
     await checkLayout(theme, size, name);
     const image = await call('Page.captureScreenshot', { format: 'png' });
@@ -810,10 +810,15 @@ try {
           if (outcome === 'record') throw { kind: 'modelUnavailable', recovery: { ...recovery, resetStage: 'recordRemovalUnconfirmed' } };
           window.__bridgeMismatch = false; return { ready: false };
         }
+        // A fixed Copilot catalog: walks never ask GitHub. No model yet means a saved choice of the first one.
+        if (command === 'setup_check_model') {
+          if (name === 'ai-cli-missing') throw { kind: 'modelCaptureUnavailable' };
+          return { account: ${JSON.stringify(fixtureAccount)}, models: [{ id: 'gpt-5.6-terra' }, { id: 'gpt-6.1-terra' }], preselected: 'gpt-5.6-terra' };
+        }
         if (command === 'setup_connect_model') {
           if (name === 'ai-connecting') return new Promise(() => {});
           if (name === 'ai-cli-missing') throw { kind: 'modelCaptureUnavailable' };
-          connected = true; return { ready: true, connection: { kind: 'copilot', model: 'gpt-5.6-terra', account: ${JSON.stringify(fixtureAccount)} } };
+          connected = true; return { ready: true, connection: { kind: 'copilot', model: args?.model ?? 'gpt-5.6-terra', account: ${JSON.stringify(fixtureAccount)} } };
         }
         if (command === 'overview_files') return { state: 'complete', runActive: false, historyState: 'complete', runAgents: [], files: [{ documentId, name: documentName, state: 'readable', source, summary: { name: documentName, description: null, model: 'fixture-model', tools: [] }, reason: null, localResult: null }] };
         if (command === 'overview_agents' || command === 'overview_places') { window.__bridgeOverviewLiveReads++; throw Error('Synthetic live inventory unavailable'); }
@@ -1582,11 +1587,11 @@ try {
     if (['ai-connected', 'local-completed'].includes(name)) {
       const complete = await evaluate(`({ heading: document.querySelector('h1').textContent, card: document.querySelector('.setup-progress .steps-head h2')?.textContent, pill: document.querySelector('.setup-progress .pill')?.textContent, rows: document.querySelectorAll('[aria-label="Setup steps"] > li').length, text: document.body.innerText, model: document.querySelector('.setup-model').innerText })`);
       if (complete.heading !== readyCardTitle || complete.card !== 'Workspace' || complete.pill !== 'Ready' || /step \d+ of [45]/i.test(complete.text) || complete.rows !== 4 || complete.text.includes('Stop the workspace') || complete.model.includes('GitHub CLI must be installed')) throw Error(`Completed local page is not collapsed: ${JSON.stringify(complete)}`);
-      if (!complete.model.includes(fixtureAccount) || !complete.model.includes('gpt-5.6-terra')) throw Error(`Connected AI must show the verified account and fixed model: ${JSON.stringify(complete)}`);
+      if (!complete.model.includes(fixtureAccount) || !complete.model.includes('gpt-5.6-terra')) throw Error(`Connected AI must show the verified account and the model the native reply named: ${JSON.stringify(complete)}`);
     }
     if (name === 'ai-idle') {
       const idle = await evaluate(`({ model: [...document.querySelectorAll('.setup-model code')].map(code => code.textContent), text: document.querySelector('.setup-model').innerText, pickers: document.querySelectorAll('.setup-model select, .setup-model [role=combobox]').length })`);
-      if (!idle.model.includes('gpt-5.6-terra') || idle.pickers || /Azure|signed in as|Saved GitHub sign-in/i.test(idle.text)) throw Error(`AI choice must show the fixed model without a picker or an unverified account: ${JSON.stringify(idle)}`);
+      if (idle.model.length || idle.pickers || !idle.text.includes('lists the models your Copilot plan offers') || /Azure|signed in as|Saved GitHub sign-in|a good default/i.test(idle.text)) throw Error(`AI choice must name no model before the account lists its own, nor an unverified account: ${JSON.stringify(idle)}`);
     }
     if (name === 'ai-connecting' && await evaluate(`[...document.querySelectorAll('button')].some(button => /^Remove (sign-in|key)$/.test(button.textContent) && button.getClientRects().length)`)) throw Error('Remove is offered while Connecting');
     if (name === 'ai-removal-retry' && !await evaluate(`document.querySelector('h1').textContent === 'This computer' && document.body.innerText.includes("The saved sign-in couldn't be removed") && document.querySelector('#model-title')?.textContent === "Couldn't remove the saved sign-in" && ![...document.querySelectorAll('button')].some(button => button.textContent === 'Remove sign-in' && button.getClientRects().length)`)) throw Error('Removal failure lost its headings or still offers Remove');

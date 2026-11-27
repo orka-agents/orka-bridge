@@ -322,7 +322,7 @@ async fn recovery_blocked_vm_rejects_direct_start_reset_and_connect_without_touc
     tokio::task::yield_now().await;
     assert_eq!(vm.status(), crate::local_vm::LocalVmStatus::Failed);
     assert!(vm.reset_model(setup.clone()).await.is_err());
-    assert!(vm.connect_model(setup.clone()).await.is_err());
+    assert!(vm.connect_model(setup.clone(), None).await.is_err());
     assert!(vm.remove_model(setup).await.is_err());
     assert!(!temp.path().join("setup-v1").exists());
 }
