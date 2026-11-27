@@ -6,17 +6,15 @@ Bridge runs an AI agent on your own computer and checks its answer with a test. 
 **Before you start**
 
 - GitHub CLI, signed in to an account with Copilot (`gh auth login --hostname github.com`). Bridge copies this sign-in into its VM, so use an account you're comfortable sharing with it.
-- Mac: if GitHub CLI isn't installed, download the `.pkg` from the [GitHub CLI releases page](https://github.com/cli/cli/releases/latest). macOS can't verify that installer either, so open it once, then choose Open Anyway in Privacy & Security; on an account that isn't an administrator, both that step and the install ask for an administrator's name and password.
+- Mac: if GitHub CLI isn't installed, download and open the `.pkg` from the [GitHub CLI releases page](https://github.com/cli/cli/releases/latest). If macOS can't verify it, choose Open Anyway in Privacy & Security.
 - 16 GB of memory recommended; the VM uses 6 GB.
 - About 65 GB free disk on a Mac, or 60 GB on Windows.
 - Windows: turn on **Windows Hypervisor Platform** in Turn Windows features on or off, and install the [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) if it's missing.
 
-**Install and first open.** The app isn't signed by a known developer, so your computer asks once:
+**Install and first open.** The app isn't signed by a known developer, so your computer asks before opening it:
 
-- Mac: open the download in Finder and move Bridge to Applications, or to an Applications folder in your home folder if you aren't an administrator. Open it once; macOS says it can't verify Bridge. Then open System Settings > Privacy & Security, choose Open Anyway and confirm Open. If your account isn't an administrator, macOS asks for an administrator's name and password: ask whoever manages your Mac, or your IT team.
-- Windows: use Extract All, keep the whole folder, and open `orka-bridge.exe` from it, not from inside the ZIP. If SmartScreen says it protected your PC, choose More info, then Run anyway.
-
-If macOS says Bridge is damaged, or offers no Open Anyway, stop and [report it](https://github.com/orka-agents/orka-bridge/blob/main/docs/preview.md#report-a-problem). Don't turn off Gatekeeper.
+- Mac: open the download in Finder, move Bridge to Applications and open it. When macOS says it can't verify Bridge, open System Settings > Privacy & Security and choose Open Anyway.
+- Windows: use Extract All and open `orka-bridge.exe` from the extracted folder. If SmartScreen says it protected your PC, choose More info, then Run anyway.
 
 Most of the setup time is the download: 2.4 GB on a Mac, 2.0 GB on Windows. On a Mac, the workspace is ready about 2 minutes after it ends. Follow the [setup guide](https://github.com/orka-agents/orka-bridge/blob/main/docs/preview.md).
 

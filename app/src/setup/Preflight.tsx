@@ -7,27 +7,29 @@ import { formatRequirementGB } from './requirements';
 import { StatusIcon } from '../components/DesignSystem';
 
 export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }: { requiredMemoryBytes: number; onBlocked: (blocked: boolean) => void; onCluster: () => void }) {
-  const [result, setResult] = useState<HostPreflight | null>();
+  const [answer, setAnswer] = useState<HostPreflight | 'atStart' | null>();
   const [checking, setChecking] = useState(true);
   const [attempt, setAttempt] = useState(0);
   const [memoryHelp, setMemoryHelp] = useState(false);
   const [virtualHelp, setVirtualHelp] = useState(false);
   const [notice, setNotice] = useState('');
   const reason = useRef<HTMLParagraphElement>(null);
+  const atStart = answer === 'atStart';
+  const result = atStart ? null : answer;
   const virtualization = result?.virtualization ?? 'unknown';
   const memory = result?.memory ?? 'unknown';
   const failedVirtualization = !['ready', 'unknown'].includes(virtualization);
-  const uncertain = !checking && (virtualization === 'unknown' || memory === 'unknown');
+  const uncertain = !checking && !atStart && (virtualization === 'unknown' || memory === 'unknown');
   const windowsFix = result?.platform === 'windows' && (virtualization === 'disabled' || virtualization === 'hypervisorUnavailable');
   const unchecked = virtualization === 'unknown' && memory === 'unknown' ? 'virtualization or memory' : virtualization === 'unknown' ? 'virtualization' : 'memory';
-  const status = checking ? 'Checking this computer before setup.' : uncertain ? `Bridge couldn't check ${unchecked} yet. It checks again when the workspace starts.` : failedVirtualization || memory === 'insufficient' ? '' : 'These checks do not change this computer.';
+  const status = checking ? 'Checking this computer before setup.' : atStart ? 'Bridge checks virtualization and memory when the workspace starts.' : uncertain ? `Bridge couldn't check ${unchecked} yet. It checks again when the workspace starts.` : failedVirtualization || memory === 'insufficient' ? '' : 'These checks do not change this computer.';
   useEffect(() => {
     let active = true;
     onBlocked(true);
     void readPreflight(requiredMemoryBytes).then(value => {
       if (!active) return;
-      setResult(value); setChecking(false);
-      onBlocked(!!value && (value.memory === 'insufficient' || !['ready', 'unknown'].includes(value.virtualization)));
+      setAnswer(value); setChecking(false);
+      onBlocked(!!value && value !== 'atStart' && (value.memory === 'insufficient' || !['ready', 'unknown'].includes(value.virtualization)));
     });
     return () => { active = false; onBlocked(false); };
   }, [attempt, requiredMemoryBytes, onBlocked]);
@@ -61,7 +63,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }:
           <p>{`Required: ${requiredMemoryBytes.toLocaleString()} bytes.${result?.installedMemoryBytes != null ? ` Installed: ${result.installedMemoryBytes.toLocaleString()} bytes.` : ''}`}</p></div>}</Disclosure>
       </section>}
     </div>
-    <p className={!status || !checking && !uncertain && attempt === 0 ? 'sr-only' : 'muted'} id="preflight-reason" role="status" ref={reason} tabIndex={-1}>{status}</p>
+    <p className={!status || !checking && !uncertain && !atStart && attempt === 0 ? 'sr-only' : 'muted'} id="preflight-reason" role="status" ref={reason} tabIndex={-1}>{status}</p>
     {!checking && (failedVirtualization || memory === 'insufficient') && <div className="workspace-step-actions">
       <Button type="button" kind="secondary" onClick={onCluster}>Use a cluster instead</Button>
       {failedVirtualization && <><Button type="button" kind="secondary" onClick={() => { reason.current?.focus(); onBlocked(true); setChecking(true); setNotice(''); setAttempt(value => value + 1); }}>Check again</Button>
