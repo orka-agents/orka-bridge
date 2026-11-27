@@ -18,5 +18,7 @@ pub mod local_vm;
 pub mod runtime;
 #[path = "../../../app/src-tauri/src/setup.rs"]
 pub mod setup;
+#[path = "../../../app/src-tauri/src/workspace_fresh.rs"]
+pub mod workspace_fresh;
 #[path = "../../../app/src-tauri/src/workspace_upgrade.rs"]
 pub mod workspace_upgrade;
