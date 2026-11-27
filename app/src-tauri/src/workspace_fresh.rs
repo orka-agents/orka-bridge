@@ -1,12 +1,19 @@
 //! Start a fresh workspace: retire the local workspace on this computer so that first install
-//! builds a new one of the same release from the cached image.
+//! builds a new one of the same release. First install reuses the image already in the cache
+//! when it is the current release's; otherwise it downloads it, and the action checks first that
+//! the download can be reached and fits before anything is retired.
 //!
 //! One durable intent in `workspace-fresh-v1` names the directory being retired by its file
 //! identity. The directory is renamed, never copied or deleted in place, to a Bridge-owned
 //! sibling named from the transaction (`discarded-<transaction>`), so every crash leaves either
 //! the original `local-vm-v1` intact or a retired directory the intent recognises. Recovery
 //! reconciles identities, not the last phase label. Only a settled transaction admits an ordinary
-//! launch, and the retired directory is deleted only after the transaction is settled.
+//! launch, apart from an intent that provably moved nothing, and a retired directory is deleted
+//! only after the transaction is settled and only while it is still the recorded directory.
+//!
+//! Once the intent is durable, no failure is reported as "nothing changed" unless the directory
+//! identities prove it: a failure after the rename is an interrupted transaction that Bridge
+//! finishes on the next try or the next launch.
 //!
 //! The caller owns lifecycle quiescence: the VM is stopped and its native custody released before
 //! this backend runs. Acquiring the workspace's own owner lock here proves no native worker still
@@ -31,12 +38,15 @@ use std::{
 
 pub(crate) const STORE: &str = "workspace-fresh-v1";
 const CANONICAL: &str = "local-vm-v1";
+/// The intent file, as a name relative to the local data folder.
+const INTENT: &str = "workspace-fresh-v1/intent.json";
 const MAX_INTENT: u64 = 16 * 1024;
 /// The most retired directories whose deletion stays unconfirmed and is reported.
 const MAX_EARLIER: usize = 8;
 
 /// Why a fresh workspace was not started. In every case the workspace on this computer is left
-/// exactly as it was, apart from the VM having been stopped.
+/// exactly as it was: nothing was moved or deleted. Refusals found after the stop restart a
+/// workspace that was running.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Refusal {
@@ -51,6 +61,10 @@ pub enum Refusal {
     Layout,
     /// A workspace update's records are present; replacing the workspace would strand them.
     UpdateHistory,
+    /// First install must download the image and the download could not be reached.
+    Offline,
+    /// First install must download the image and the computer has too little free space.
+    NoSpace,
     /// Bridge's own storage could not be read or written.
     Unavailable,
 }
@@ -62,12 +76,42 @@ pub enum AiOutcome {
     Removed,
     /// Nothing was saved.
     Absent,
-    /// Removal was not confirmed; the saved record is kept so the existing Reset can retry it.
+    /// Removal was not confirmed. The saved record is kept intact, so connecting on the new
+    /// workspace offers Reset AI connection for the same slot.
     Kept,
+    /// Removal was not confirmed and the saved record could not be read as one Reset can
+    /// remove, so the AI card cannot offer it.
+    Unconfirmed,
+}
+/// What first install needs for the new workspace, for the confirmation's wording.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FreshImage {
+    /// The current release's image is already in the cache.
+    Cached,
+    /// The image must be downloaded: compressed image plus boot files.
+    Download {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+    },
+    /// This build cannot tell (a development image).
+    Unknown,
+}
+/// Whether the action can start, for the renderer to decide whether to offer it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreshPlan {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<Refusal>,
+    pub image: FreshImage,
 }
 /// Nonsecret projection for the renderer. Paths are native-selected and display-only.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "state", rename_all = "camelCase")]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum FreshStatusDto {
     Replacing,
     Replaced {
@@ -78,9 +122,57 @@ pub enum FreshStatusDto {
         /// Deletion of the retired workspace is still running.
         cleaning: bool,
     },
+    /// Nothing was moved or deleted.
     Refused {
         reason: Refusal,
+        /// Bridge started the workspace again after stopping it for the action.
+        restarted: bool,
+        /// Free space first install needs, for `noSpace`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        needed_bytes: Option<u64>,
+        /// Folders an earlier fresh workspace left behind, still reported.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        reclaimable: Vec<String>,
     },
+    /// The workspace was set aside but the transaction did not finish. Bridge finishes it on the
+    /// next try or the next launch; no workspace starts until then.
+    Interrupted {
+        transaction: Uuid,
+    },
+    /// Bridge found folders it did not expect and left everything as it is. The workspace does
+    /// not start until they are moved away.
+    Conflict {
+        found: Vec<String>,
+    },
+}
+impl FreshStatusDto {
+    pub fn refused(reason: Refusal) -> Self {
+        Self::Refused {
+            reason,
+            restarted: false,
+            needed_bytes: None,
+            reclaimable: vec![],
+        }
+    }
+    /// Whether the workspace must stay stopped until the transaction is finished or sorted out.
+    pub fn blocks_launch(&self) -> bool {
+        matches!(self, Self::Interrupted { .. } | Self::Conflict { .. })
+    }
+}
+/// Why `replace` did not settle a transaction.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Failure {
+    /// Nothing was moved or deleted.
+    Refused(Refusal),
+    /// The intent is past the point where nothing changed; recovery finishes it.
+    Interrupted(Uuid),
+    /// Unexpected entries, as names relative to the local data folder; left as found.
+    Conflict(Vec<String>),
+}
+impl From<Refusal> for Failure {
+    fn from(reason: Refusal) -> Self {
+        Self::Refused(reason)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +185,14 @@ enum Phase {
     /// The saved AI connection was reset (or its removal recorded as unconfirmed). Ordinary
     /// first install may now build the new workspace.
     Settled,
+}
+/// An earlier settled transaction whose retired directory still exists, with that directory's
+/// identity so deletion never removes anything else under its name.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Earlier {
+    transaction: Uuid,
+    directory: FileIdentity,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -107,9 +207,8 @@ struct Intent {
     installation: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ai: Option<AiOutcome>,
-    /// Earlier settled transactions whose retired directory still exists.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    earlier: Vec<Uuid>,
+    earlier: Vec<Earlier>,
 }
 impl Intent {
     fn valid(&self) -> bool {
@@ -121,7 +220,15 @@ impl Intent {
             && self
                 .earlier
                 .iter()
-                .all(|t| !t.is_nil() && *t != self.transaction)
+                .all(|e| !e.transaction.is_nil() && e.transaction != self.transaction)
+    }
+    /// Every retired directory this intent may still own, with its recorded identity.
+    fn retired(&self) -> Vec<(Uuid, Option<&FileIdentity>)> {
+        self.earlier
+            .iter()
+            .map(|e| (e.transaction, Some(&e.directory)))
+            .chain(Some((self.transaction, self.directory.as_ref())))
+            .collect()
     }
 }
 fn discarded(transaction: Uuid) -> String {
@@ -139,9 +246,12 @@ pub(crate) struct Settled {
 struct Canonical {
     identity: FileIdentity,
     installation: Option<Uuid>,
-    /// The workspace's own owner lock, proving no native worker holds it. Dropped before the
-    /// rename: Windows denies renaming a directory while a deny-sharing handle inside is open.
-    _owner: crate::runtime::journal::OwnerLock,
+    /// The workspace's own owner lock, proving no native worker holds it.
+    owner: crate::runtime::journal::OwnerLock,
+}
+/// Past the durable intent, a failure is an interrupted transaction.
+fn interrupted<E>(transaction: Uuid) -> impl FnOnce(E) -> Failure {
+    move |_| Failure::Interrupted(transaction)
 }
 fn unavailable<E>(_: E) -> Refusal {
     Refusal::Unavailable
@@ -163,6 +273,26 @@ fn read_small(dir: &Dir, name: &str, max: u64) -> Result<Option<Vec<u8>>, Refusa
     }
     Ok(Some(bytes))
 }
+/// The identity of a directory entry, without following links. Anything but a plain directory
+/// is a layout refusal.
+fn entry_identity(parent: &Dir, name: &str) -> Result<Option<FileIdentity>, Refusal> {
+    match parent.symlink_metadata(name) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Err(Refusal::Layout),
+        Err(_) => return Err(Refusal::Unavailable),
+    }
+    let dir = parent
+        .open_dir_nofollow(name)
+        .map_err(|_| Refusal::Layout)?;
+    let file = dir.into_std_file();
+    image_cache::not_reparse(&file).map_err(|_| Refusal::Layout)?;
+    file_identity(&file).map(Some).map_err(unavailable)
+}
+/// Whether anything at all has this name. Unknown counts as present: never lose sight of one.
+fn entry_present(parent: &Dir, name: &str) -> bool {
+    !matches!(parent.symlink_metadata(name), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+}
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -178,6 +308,19 @@ pub(crate) struct FreshWorkspace {
     directory: Dir,
     owner: File,
     owner_process: u32,
+    /// Every durable step in order, so tests can prove each required flush happens and when.
+    #[cfg(test)]
+    trace: std::sync::Mutex<Vec<String>>,
+}
+/// Steps made to fail once, per local data folder, so tests can fail a real step of a
+/// transaction they do not drive directly.
+#[cfg(test)]
+static FAIL: std::sync::Mutex<Vec<(PathBuf, String)>> = std::sync::Mutex::new(Vec::new());
+#[cfg(test)]
+pub(crate) fn fail_once(local: &Path, step: &str) {
+    FAIL.lock()
+        .unwrap()
+        .push((local.to_owned(), step.to_owned()));
 }
 impl Drop for FreshWorkspace {
     fn drop(&mut self) {
@@ -211,7 +354,27 @@ impl FreshWorkspace {
             directory,
             owner,
             owner_process: std::process::id(),
+            #[cfg(test)]
+            trace: Default::default(),
         })
+    }
+    /// One durable step. Tests see it in the trace and can make it fail once.
+    fn step<T, E>(&self, name: &str, work: impl FnOnce() -> Result<T, E>) -> Result<T, Refusal> {
+        #[cfg(test)]
+        {
+            self.trace.lock().unwrap().push(name.to_owned());
+            let mut fail = FAIL.lock().unwrap();
+            if let Some(index) = fail
+                .iter()
+                .position(|(local, step)| *local == self.local && step == name)
+            {
+                fail.remove(index);
+                return Err(Refusal::Unavailable);
+            }
+        }
+        #[cfg(not(test))]
+        let _ = name;
+        work().map_err(unavailable)
     }
     fn read_intent(&self) -> Result<Option<Intent>, Refusal> {
         read_intent(&self.directory)
@@ -224,6 +387,11 @@ impl FreshWorkspace {
         if bytes.len() as u64 > MAX_INTENT {
             return Err(Refusal::Unavailable);
         }
+        let phase = match intent.phase {
+            Phase::Intent => "intent",
+            Phase::Retired => "retired",
+            Phase::Settled => "settled",
+        };
         let store = self.local.join(STORE);
         let pending = store.join(format!("intent-{}.next", Uuid::new_v4()));
         let mut file = OpenOptions::new()
@@ -232,39 +400,32 @@ impl FreshWorkspace {
             .open(&pending)
             .map_err(unavailable)?;
         file.write_all(&bytes).map_err(unavailable)?;
-        file.sync_all().map_err(unavailable)?;
+        self.step(&format!("flush {phase}"), || file.sync_all())?;
         drop(file);
-        crate::runtime::journal::replace(&pending, &store.join("intent.json"))
-            .map_err(unavailable)?;
-        image_cache::fs::sync(&self.directory).map_err(unavailable)
+        self.step(&format!("record {phase}"), || {
+            crate::runtime::journal::replace(&pending, &store.join("intent.json"))
+        })?;
+        self.step(&format!("flush store {phase}"), || {
+            image_cache::fs::sync(&self.directory)
+        })
     }
     /// Forget an intent that never moved anything, so a refusal leaves no transaction behind.
+    /// Best effort for its callers: an intent left at this phase with nothing moved never
+    /// blocks a launch.
     fn abandon(&self, transaction: Uuid) -> Result<(), Refusal> {
         if self.read_intent()?.is_some_and(|intent| {
             intent.transaction == transaction && intent.phase == Phase::Intent
         }) {
-            self.directory
-                .remove_file("intent.json")
-                .map_err(unavailable)?;
-            image_cache::fs::sync(&self.directory).map_err(unavailable)?;
+            self.step("withdraw", || self.directory.remove_file("intent.json"))?;
+            self.step("flush store withdrawn", || {
+                image_cache::fs::sync(&self.directory)
+            })?;
         }
         Ok(())
     }
     /// The identity of a directory entry in the local data folder, without following links.
     fn identity_of(&self, name: &str) -> Result<Option<FileIdentity>, Refusal> {
-        match self.parent.symlink_metadata(name) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Ok(m) if m.is_dir() => {}
-            Ok(_) => return Err(Refusal::Layout),
-            Err(_) => return Err(Refusal::Unavailable),
-        }
-        let dir = self
-            .parent
-            .open_dir_nofollow(name)
-            .map_err(|_| Refusal::Layout)?;
-        let file = dir.into_std_file();
-        image_cache::not_reparse(&file).map_err(|_| Refusal::Layout)?;
-        file_identity(&file).map(Some).map_err(unavailable)
+        entry_identity(&self.parent, name)
     }
     /// `local-vm-v1`, if present, as a workspace Bridge recognises, with its owner lock held.
     fn canonical(&self) -> Result<Option<Canonical>, Refusal> {
@@ -336,8 +497,16 @@ impl FreshWorkspace {
         Ok(Some(Canonical {
             identity,
             installation,
-            _owner: owner,
+            owner,
         }))
+    }
+    /// Which of the given names exist, for a conflict report.
+    fn present(&self, names: &[&str]) -> Vec<String> {
+        names
+            .iter()
+            .filter(|name| entry_present(&self.parent, name))
+            .map(|name| name.to_string())
+            .collect()
     }
     /// Finish or undo an interrupted transaction. Returns the current intent, if any remains.
     /// Nothing here guesses: an unexpected combination of directories is a conflict and is left
@@ -347,32 +516,44 @@ impl FreshWorkspace {
         setup: &SetupStore,
         store: &impl CredentialStore,
         point: &impl Fn(&str) -> Result<(), RuntimeError>,
-    ) -> Result<Option<Intent>, Refusal> {
-        let Some(mut intent) = self.read_intent()? else {
+    ) -> Result<Option<Intent>, Failure> {
+        let Some(mut intent) = self
+            .read_intent()
+            .map_err(|_| Failure::Conflict(vec![INTENT.into()]))?
+        else {
             return Ok(None);
         };
         if intent.phase == Phase::Settled {
             return Ok(Some(intent));
         }
-        let name = discarded(intent.transaction);
-        let canonical = self.identity_of(CANONICAL)?;
-        let retired = self.identity_of(&name)?;
+        let transaction = intent.transaction;
+        let name = discarded(transaction);
+        let conflict = || Failure::Conflict(self.present(&[CANONICAL, &name]));
+        let identity = |entry: &str| match self.identity_of(entry) {
+            Ok(identity) => Ok(identity),
+            Err(Refusal::Layout) => Err(conflict()),
+            Err(_) => Err(Failure::Interrupted(transaction)),
+        };
+        let canonical = identity(CANONICAL)?;
+        let retired = identity(&name)?;
         match (&intent.directory, &canonical, &retired) {
             // The rename never happened: nothing moved, so the intent is simply withdrawn.
             (Some(directory), Some(current), None)
                 if current == directory && intent.phase == Phase::Intent =>
             {
-                self.abandon(intent.transaction)?;
+                let _ = self.abandon(transaction);
                 return Ok(None);
             }
             (Some(directory), None, Some(moved)) if moved == directory => {}
-            (None, None, None) => {}
-            _ => return Err(Refusal::Layout),
+            // Nothing is in place: whatever happened to the directory, no workspace can be using
+            // the saved connection, and first install may proceed once it is reset.
+            (_, None, None) => {}
+            _ => return Err(conflict()),
         }
         if intent.phase == Phase::Intent {
             intent.phase = Phase::Retired;
-            self.persist(&intent)?;
-            point("retired-recorded").map_err(unavailable)?;
+            self.persist(&intent).map_err(interrupted(transaction))?;
+            point("retired-recorded").map_err(interrupted(transaction))?;
         }
         self.settle(&mut intent, setup, store, point)?;
         Ok(Some(intent))
@@ -383,43 +564,64 @@ impl FreshWorkspace {
         setup: &SetupStore,
         store: &impl CredentialStore,
         point: &impl Fn(&str) -> Result<(), RuntimeError>,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Failure> {
+        let transaction = intent.transaction;
         // The workspace that owned the saved AI connection is gone from its place. Forget it as
         // the installation-mismatch Reset does. An unconfirmed removal keeps the record, so the
         // existing Reset offers it again; it never blocks the new workspace.
+        #[cfg(test)]
+        self.trace.lock().unwrap().push("reset ai".into());
         let ai = match setup.reset_retired_model(store) {
             Ok(true) => AiOutcome::Removed,
             Ok(false) => AiOutcome::Absent,
-            Err(_) => AiOutcome::Kept,
+            Err(crate::setup::RetiredReset::Kept) => AiOutcome::Kept,
+            Err(crate::setup::RetiredReset::Unconfirmed) => AiOutcome::Unconfirmed,
         };
-        point("ai").map_err(unavailable)?;
+        point("ai").map_err(interrupted(transaction))?;
         intent.ai = Some(ai);
         intent.phase = Phase::Settled;
-        self.persist(intent)?;
-        point("settled").map_err(unavailable)
+        self.persist(intent).map_err(interrupted(transaction))?;
+        point("settled").map_err(interrupted(transaction))
     }
+    /// Retire the workspace and settle. A failure past the durable intent is retried once
+    /// through recovery before it is reported as interrupted.
     pub(crate) fn replace(
         &mut self,
         setup: &SetupStore,
         store: &impl CredentialStore,
-    ) -> Result<Settled, Refusal> {
-        self.replace_with(setup, store, |_| Ok(()))
+    ) -> Result<Settled, Failure> {
+        match self.replace_with(setup, store, |_| Ok(())) {
+            Err(Failure::Interrupted(_)) => self.resume(setup, store),
+            other => other,
+        }
     }
+    /// Recovery once more, as after a relaunch.
+    fn resume(&self, setup: &SetupStore, store: &impl CredentialStore) -> Result<Settled, Failure> {
+        match self.recover_with(setup, store, &|_| Ok(()))? {
+            Some(intent) if intent.phase == Phase::Settled => Ok(self.settled(&intent)),
+            Some(intent) => Err(Failure::Interrupted(intent.transaction)),
+            // Recovery proved nothing moved and withdrew the intent.
+            None => Err(Failure::Refused(Refusal::Unavailable)),
+        }
+    }
+    /// `point` names crash points for tests: a failing point ends the call at once, as a crash
+    /// would, with no cleanup.
     fn replace_with(
         &mut self,
         setup: &SetupStore,
         store: &impl CredentialStore,
         point: impl Fn(&str) -> Result<(), RuntimeError>,
-    ) -> Result<Settled, Refusal> {
+    ) -> Result<Settled, Failure> {
         // Never start a second transaction over an unfinished one: finish or undo it first.
-        let interrupted = self
-            .read_intent()?
+        let unfinished = self
+            .read_intent()
+            .map_err(|_| Failure::Conflict(vec![INTENT.into()]))?
             .is_some_and(|intent| intent.phase != Phase::Settled);
         let previous = self.recover_with(setup, store, &point)?;
-        if interrupted {
+        if unfinished {
             if let Some(intent) = previous {
                 // Repeating the action finishes the one already under way.
-                return self.settled(&intent);
+                return Ok(self.settled(&intent));
             }
         }
         if crate::workspace_upgrade::has_transaction(&self.data, &self.local).map_err(|error| {
@@ -428,30 +630,30 @@ impl FreshWorkspace {
                 _ => Refusal::UpdateHistory,
             }
         })? {
-            return Err(Refusal::UpdateHistory);
+            return Err(Refusal::UpdateHistory.into());
         }
-        let mut earlier: Vec<Uuid> = Vec::new();
+        let mut earlier: Vec<Earlier> = Vec::new();
         if let Some(previous) = &previous {
-            for transaction in previous
-                .earlier
-                .iter()
-                .copied()
-                .chain(Some(previous.transaction))
-            {
-                if self.identity_of(&discarded(transaction))?.is_some() {
-                    earlier.push(transaction);
+            for (transaction, directory) in previous.retired() {
+                if let Some(directory) = directory {
+                    if entry_present(&self.parent, &discarded(transaction)) {
+                        earlier.push(Earlier {
+                            transaction,
+                            directory: directory.clone(),
+                        });
+                    }
                 }
             }
         }
         if earlier.len() >= MAX_EARLIER {
             // Too many unconfirmed deletions to keep track of: never lose sight of one.
-            return Err(Refusal::Unavailable);
+            return Err(Refusal::Unavailable.into());
         }
         let canonical = self.canonical()?;
         let transaction = Uuid::new_v4();
         let name = discarded(transaction);
-        if self.identity_of(&name)?.is_some() {
-            return Err(Refusal::Layout);
+        if entry_present(&self.parent, &name) {
+            return Err(Refusal::Layout.into());
         }
         let mut intent = Intent {
             version: 1,
@@ -463,67 +665,83 @@ impl FreshWorkspace {
             ai: None,
             earlier,
         };
-        self.persist(&intent)?;
-        point("intent").map_err(unavailable)?;
-        if let Some(canonical) = canonical {
-            let Canonical {
-                identity, _owner, ..
-            } = canonical;
-            drop(_owner);
+        if let Err(reason) = self.persist(&intent) {
+            // Nothing moved. The intent may or may not have reached disk; withdrawing it is
+            // best effort because an intent that moved nothing never blocks a launch.
+            let _ = self.abandon(transaction);
+            return Err(reason.into());
+        }
+        point("intent").map_err(interrupted(transaction))?;
+        if let Some(Canonical {
+            identity, owner, ..
+        }) = canonical
+        {
+            // Windows refuses to rename a directory while a deny-sharing handle inside it is
+            // open, so the workspace lock is released just before the rename there. Elsewhere
+            // it is held through the rename, so no worker can take the workspace in between.
+            #[cfg(windows)]
+            drop(owner);
             // The name must still be the directory whose lock was held.
-            if self.identity_of(CANONICAL)?.as_ref() != Some(&identity) {
-                self.abandon(transaction)?;
-                return Err(Refusal::Layout);
+            if self.identity_of(CANONICAL).ok().flatten().as_ref() != Some(&identity) {
+                let _ = self.abandon(transaction);
+                return Err(Refusal::Layout.into());
             }
-            point("rename").map_err(unavailable)?;
+            point("rename").map_err(interrupted(transaction))?;
             // Atomic and same-directory: the workspace is either in place or retired, never
             // copied and never half-moved. An existing name is never replaced.
-            if image_cache::fs::publish_named(&self.parent, CANONICAL, &name).is_err() {
-                self.abandon(transaction)?;
-                return Err(Refusal::InUse);
+            if self
+                .step("rename", || {
+                    image_cache::fs::publish_named(&self.parent, CANONICAL, &name)
+                })
+                .is_err()
+            {
+                // Report "nothing changed" only when the identities prove it.
+                let unmoved = self.identity_of(CANONICAL).ok().flatten().as_ref()
+                    == Some(&identity)
+                    && !entry_present(&self.parent, &name);
+                if !unmoved {
+                    return Err(Failure::Interrupted(transaction));
+                }
+                let _ = self.abandon(transaction);
+                return Err(Refusal::InUse.into());
             }
-            point("renamed").map_err(unavailable)?;
-            // A failed flush leaves the intent at Intent; recovery decides by identity.
-            image_cache::fs::sync(&self.parent).map_err(unavailable)?;
+            #[cfg(not(windows))]
+            drop(owner);
+            point("renamed").map_err(interrupted(transaction))?;
+            // Past here the workspace is set aside: every failure is an interrupted transaction.
+            self.step("flush rename", || image_cache::fs::sync(&self.parent))
+                .map_err(interrupted(transaction))?;
         }
         intent.phase = Phase::Retired;
-        self.persist(&intent)?;
-        point("retired-recorded").map_err(unavailable)?;
+        self.persist(&intent).map_err(interrupted(transaction))?;
+        point("retired-recorded").map_err(interrupted(transaction))?;
         self.settle(&mut intent, setup, store, &point)?;
-        self.settled(&intent)
+        Ok(self.settled(&intent))
     }
-    fn settled(&self, intent: &Intent) -> Result<Settled, Refusal> {
-        Ok(Settled {
+    fn settled(&self, intent: &Intent) -> Settled {
+        Settled {
             transaction: intent.transaction,
-            ai: intent.ai.ok_or(Refusal::Unavailable)?,
-            reclaimable: self.reclaimable(intent)?,
-        })
-    }
-    fn reclaimable(&self, intent: &Intent) -> Result<Vec<String>, Refusal> {
-        let mut names = Vec::new();
-        for transaction in intent
-            .earlier
-            .iter()
-            .copied()
-            .chain(Some(intent.transaction))
-        {
-            let name = discarded(transaction);
-            if self.identity_of(&name)?.is_some() {
-                names.push(name);
-            }
+            ai: intent.ai.unwrap_or(AiOutcome::Unconfirmed),
+            reclaimable: self.reclaimable(intent),
         }
-        Ok(names)
     }
-    /// The settled transaction's retired directories, as display paths.
-    pub(crate) fn display_paths(&self, names: &[String]) -> Vec<String> {
-        names
-            .iter()
-            .map(|name| self.local.join(name).display().to_string())
+    /// Best effort: anything under a retired name is reported, whatever it is.
+    fn reclaimable(&self, intent: &Intent) -> Vec<String> {
+        intent
+            .retired()
+            .into_iter()
+            .map(|(transaction, _)| discarded(transaction))
+            .filter(|name| entry_present(&self.parent, name))
             .collect()
     }
+    /// Names relative to the local data folder, as display paths.
+    pub(crate) fn display_paths(&self, names: &[String]) -> Vec<String> {
+        display_names(&self.local, names)
+    }
     /// Delete the retired directories of a settled transaction, relative to the local data
-    /// folder and without following links. A directory that cannot be deleted is left in
-    /// place and reported as reclaimable space; this never fails the action.
+    /// folder and without following links, and only while each is still the recorded
+    /// directory. Anything else under a retired name, or a directory that cannot be deleted,
+    /// is left in place and reported as reclaimable space; this never fails the action.
     pub(crate) fn clean(&self) -> Result<Vec<String>, Refusal> {
         self.clean_with(|parent, name| parent.remove_dir_all(name))
     }
@@ -537,23 +755,39 @@ impl FreshWorkspace {
         if intent.phase != Phase::Settled {
             return Err(Refusal::Busy);
         }
-        for name in self.reclaimable(&intent)? {
-            let _ = remove(&self.parent, &name);
+        for (transaction, recorded) in intent.retired() {
+            let name = discarded(transaction);
+            if recorded.is_some() && self.identity_of(&name).ok().flatten().as_ref() == recorded {
+                let _ = self.step(&format!("delete {name}"), || remove(&self.parent, &name));
+            }
         }
         let _ = image_cache::fs::sync(&self.parent);
-        let remaining = self.reclaimable(&intent)?;
-        let earlier: Vec<Uuid> = intent
+        let remaining = self.reclaimable(&intent);
+        let earlier: Vec<Earlier> = intent
             .earlier
             .iter()
-            .copied()
-            .filter(|t| remaining.contains(&discarded(*t)))
+            .filter(|e| remaining.contains(&discarded(e.transaction)))
+            .cloned()
             .collect();
         if earlier != intent.earlier {
             intent.earlier = earlier;
-            self.persist(&intent)?;
+            // A longer list than needed is harmless: entries are checked again by name.
+            let _ = self.persist(&intent);
         }
         Ok(remaining)
     }
+}
+/// Names relative to the local data folder, as display paths.
+pub(crate) fn display_names(local: &Path, names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| {
+            name.split('/')
+                .fold(local.to_owned(), |path, part| path.join(part))
+                .display()
+                .to_string()
+        })
+        .collect()
 }
 fn read_intent(directory: &Dir) -> Result<Option<Intent>, Refusal> {
     let Some(bytes) = read_small(directory, "intent.json", MAX_INTENT)? else {
@@ -565,22 +799,63 @@ fn read_intent(directory: &Dir) -> Result<Option<Intent>, Refusal> {
     }
     Ok(Some(intent))
 }
-/// Launch gate, read-only and lock-free: an ordinary start may proceed only when no fresh
-/// transaction is unfinished. Cleanup of a settled transaction may run concurrently.
-pub(crate) fn admit(local: &Path) -> Result<(), RuntimeError> {
+fn stored_intent(local: &Path) -> Result<Option<Intent>, Refusal> {
     let store = local.join(STORE);
-    if !store.try_exists()? {
+    match fs::symlink_metadata(&store) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(Refusal::Unavailable),
+        Ok(_) => {}
+    }
+    let directory =
+        Dir::open_ambient_dir(&store, cap_std::ambient_authority()).map_err(|_| Refusal::Layout)?;
+    read_intent(&directory)
+}
+/// Launch gate, read-only and lock-free: an ordinary start may proceed only when no fresh
+/// transaction is unfinished. Cleanup of a settled transaction may run concurrently. An intent
+/// that provably moved nothing (its directory still in place, nothing retired) does not block:
+/// a refusal whose withdrawal failed must not keep the workspace from starting.
+pub(crate) fn admit(local: &Path) -> Result<(), RuntimeError> {
+    let intent = match stored_intent(local) {
+        Ok(None) => return Ok(()),
+        Ok(Some(intent)) => intent,
+        Err(_) => return Err(RuntimeError::RetainedState),
+    };
+    if intent.phase == Phase::Settled {
         return Ok(());
     }
-    let directory = Dir::open_ambient_dir(&store, cap_std::ambient_authority())?;
-    match read_intent(&directory) {
-        Ok(None) => Ok(()),
-        Ok(Some(intent)) if intent.phase == Phase::Settled => Ok(()),
-        _ => Err(RuntimeError::RetainedState),
+    if intent.phase == Phase::Intent {
+        if let Some(directory) = &intent.directory {
+            let parent = Dir::open_ambient_dir(local, cap_std::ambient_authority())?;
+            if entry_identity(&parent, CANONICAL).ok().flatten().as_ref() == Some(directory)
+                && !entry_present(&parent, &discarded(intent.transaction))
+            {
+                return Ok(());
+            }
+        }
+    }
+    Err(RuntimeError::RetainedState)
+}
+/// What a panic during the transaction left, judged as the launch gate judges it.
+pub(crate) fn after_panic(local: &Path) -> Failure {
+    if admit(local).is_ok() {
+        return Failure::Refused(Refusal::Unavailable);
+    }
+    match stored_intent(local) {
+        Ok(Some(intent)) => Failure::Interrupted(intent.transaction),
+        _ => Failure::Conflict(vec![INTENT.into()]),
     }
 }
-/// Denial-only check before the VM is stopped: a refusal here touches nothing.
+fn unsettled(local: &Path) -> bool {
+    stored_intent(local).map_or(true, |intent| {
+        intent.is_some_and(|intent| intent.phase != Phase::Settled)
+    })
+}
+/// Denial-only check before the VM is stopped: a refusal here touches nothing. Finishing an
+/// interrupted transaction is never refused here.
 pub(crate) fn preflight(data: &Path, local: &Path) -> Option<Refusal> {
+    if unsettled(local) {
+        return None;
+    }
     match crate::workspace_upgrade::has_transaction(data, local) {
         Ok(false) => None,
         Ok(true) => Some(Refusal::UpdateHistory),
@@ -588,8 +863,138 @@ pub(crate) fn preflight(data: &Path, local: &Path) -> Option<Refusal> {
         Err(_) => Some(Refusal::UpdateHistory),
     }
 }
+/// The same answer as `preflight`, for periodic status: lock-free, so polling never makes a
+/// workspace update or this action busy. It reads which records exist, not their contents; an
+/// unreadable update store counts as history, as `preflight` counts it.
+pub(crate) fn blocked(local: &Path) -> Option<Refusal> {
+    if unsettled(local) {
+        return None;
+    }
+    match fs::read_dir(local.join(crate::workspace_upgrade::STORE)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => Some(Refusal::UpdateHistory),
+        Ok(entries) => entries
+            .map(|entry| {
+                entry.map(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    name == "intent.json"
+                        || name.starts_with("completed-") && name.ends_with(".json")
+                })
+            })
+            .any(|history| history.unwrap_or(true))
+            .then_some(Refusal::UpdateHistory),
+    }
+}
+// Used by the native factory, which is built only for the shipping platforms.
+#[cfg_attr(
+    not(any(
+        all(windows, target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
+    )),
+    allow(dead_code)
+)]
+/// Whether the cache already holds the image with this manifest, ready to install. The cache
+/// verifies it again before use; this only decides the confirmation's wording and whether to
+/// check the download first.
+pub(crate) fn image_cached(cache: &Path, manifest_sha256: &str) -> bool {
+    if manifest_sha256.len() != 64
+        || !manifest_sha256
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return false;
+    }
+    fs::symlink_metadata(
+        cache
+            .join("images")
+            .join("v2")
+            .join(manifest_sha256)
+            .join("ready.json"),
+    )
+    .is_ok_and(|m| m.is_file())
+}
+// Used by the native factory, which is built only for the shipping platforms.
+#[cfg_attr(
+    not(any(
+        all(windows, target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
+    )),
+    allow(dead_code)
+)]
+/// From a pinned manifest: the download (compressed image plus boot files) and the free space
+/// the cache asks for before it writes (the download plus the decoded disk).
+pub(crate) fn download_sizes(manifest: &[u8]) -> Option<(u64, u64)> {
+    let value: serde_json::Value = serde_json::from_slice(manifest).ok()?;
+    let download = value["artifact"]["compressedBytes"]
+        .as_u64()?
+        .checked_add(value["directBoot"]["kernel"]["bytes"].as_u64()?)?
+        .checked_add(value["directBoot"]["initrd"]["bytes"].as_u64()?)?;
+    let needed = download.checked_add(value["artifact"]["uncompressedBytes"].as_u64()?)?;
+    Some((download, needed))
+}
+// Used by the native factory, which is built only for the shipping platforms.
+#[cfg_attr(
+    not(any(
+        all(windows, target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
+    )),
+    allow(dead_code)
+)]
+/// Free space for a download, as first install's cache counts it. Unknown space is not a
+/// refusal: the cache checks again before it writes.
+pub(crate) fn space_check(available: Option<u64>, needed: u64) -> Result<(), Refusal> {
+    match available {
+        Some(available) if available < needed => Err(Refusal::NoSpace),
+        _ => Ok(()),
+    }
+}
+// Used by the native factory, which is built only for the shipping platforms.
+#[cfg_attr(
+    not(any(
+        all(windows, target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
+    )),
+    allow(dead_code)
+)]
+/// Free space where the cache lives: the cache folder, or the local data folder before it exists.
+pub(crate) fn available_space(cache: &Path) -> Option<u64> {
+    let dir = Dir::open_ambient_dir(cache, cap_std::ambient_authority())
+        .ok()
+        .or_else(|| Dir::open_ambient_dir(cache.parent()?, cap_std::ambient_authority()).ok())?;
+    image_cache::available_space(&dir).ok()
+}
+// Used by the native factory, which is built only for the shipping platforms.
+#[cfg_attr(
+    not(any(
+        all(windows, target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
+    )),
+    allow(dead_code)
+)]
+/// Before anything is stopped or retired, when first install must download the image: refuse
+/// when the download cannot be reached or does not fit.
+pub(crate) async fn download_check(
+    cache: &Path,
+    pin: &crate::runtime::image_types::ImagePin,
+    needed: u64,
+) -> Result<(), Refusal> {
+    space_check(available_space(cache), needed)?;
+    let client = crate::runtime::acquire::ImageHttpClient::new(pin).map_err(unavailable)?;
+    let (_closed, open) = tokio::sync::watch::channel(false);
+    match tokio::time::timeout(std::time::Duration::from_secs(30), client.manifest(open)).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(crate::runtime::image_types::ImageError::NoSpace)) => Err(Refusal::NoSpace),
+        Ok(Err(crate::runtime::image_types::ImageError::Network(_))) | Err(_) => {
+            Err(Refusal::Offline)
+        }
+        Ok(Err(_)) => Err(Refusal::Unavailable),
+    }
+}
 /// Runs at launch, before the VM is configured. Finishes or undoes an interrupted transaction
-/// and reports one finished now, or a settled one whose retired directory still needs deleting.
+/// and reports one finished now, a settled one whose retired directory still needs deleting, or
+/// one that could not be finished. A settled transaction never blocks a launch, whatever its
+/// leftovers; only an unfinished one does, and then the reply says what Bridge found.
 pub fn recover_startup(
     data: &Path,
     local: &Path,
@@ -599,29 +1004,43 @@ pub fn recover_startup(
     if !local.join(STORE).try_exists()? {
         return Ok(None);
     }
-    let failed = |_| RuntimeError::RetainedState;
-    let owner = FreshWorkspace::open(data, local).map_err(failed)?;
-    let interrupted = owner
-        .read_intent()
-        .map_err(failed)?
-        .is_some_and(|intent| intent.phase != Phase::Settled);
-    let Some(intent) = owner
-        .recover_with(setup, store, &|_| Ok(()))
-        .map_err(failed)?
-    else {
-        return Ok(None);
+    let owner = match FreshWorkspace::open(data, local) {
+        Ok(owner) => owner,
+        // Without the owner nothing is reconciled; launch is still admitted when it may be.
+        Err(_) => {
+            return match admit(local) {
+                Ok(()) => Ok(None),
+                Err(error) => Err(error),
+            };
+        }
     };
-    let settled = owner.settled(&intent).map_err(failed)?;
-    if !interrupted && settled.reclaimable.is_empty() {
-        return Ok(None);
+    let interrupted = unsettled(local);
+    match owner.recover_with(setup, store, &|_| Ok(())) {
+        Ok(None) => Ok(None),
+        Ok(Some(intent)) if intent.phase == Phase::Settled => {
+            let settled = owner.settled(&intent);
+            if !interrupted && settled.reclaimable.is_empty() {
+                return Ok(None);
+            }
+            let reclaimable = owner.display_paths(&settled.reclaimable);
+            Ok(Some(FreshStatusDto::Replaced {
+                transaction: settled.transaction,
+                ai: settled.ai,
+                cleaning: !reclaimable.is_empty(),
+                reclaimable,
+            }))
+        }
+        Ok(Some(intent)) => Ok(Some(FreshStatusDto::Interrupted {
+            transaction: intent.transaction,
+        })),
+        Err(Failure::Interrupted(transaction)) => {
+            Ok(Some(FreshStatusDto::Interrupted { transaction }))
+        }
+        Err(Failure::Conflict(found)) => Ok(Some(FreshStatusDto::Conflict {
+            found: owner.display_paths(&found),
+        })),
+        Err(Failure::Refused(_)) => Err(RuntimeError::RetainedState),
     }
-    let reclaimable = owner.display_paths(&settled.reclaimable);
-    Ok(Some(FreshStatusDto::Replaced {
-        transaction: settled.transaction,
-        ai: settled.ai,
-        cleaning: !reclaimable.is_empty(),
-        reclaimable,
-    }))
 }
 #[cfg(test)]
 #[path = "workspace_fresh_tests.rs"]

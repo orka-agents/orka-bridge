@@ -1061,6 +1061,8 @@ fn previous_boot_failures_keep_finite_operation_and_class_without_secrets() {
         (0, "modelStatus:unsupported"),
         (1, "modelStatusPreconditions:unsupported"),
         (2, "disconnectRetainedModel:refused"),
+        // Not settled yet is worth another check, not a refusal.
+        (3, "modelStatusPreconditions:busy"),
     ] {
         let (_tmp, setup, install, vault) = associated();
         let root = setup.root.as_deref().unwrap();
@@ -1080,6 +1082,13 @@ fn previous_boot_failures_keep_finite_operation_and_class_without_secrets() {
                         unreachable!()
                     };
                     state.retained_cleanup = false;
+                    ResultBody::ModelState(state)
+                }
+                RequestBody::ModelStatus {} if case == 3 => {
+                    let ResultBody::ModelState(mut state) = idle() else {
+                        unreachable!()
+                    };
+                    state.phase = ModelPhase::Unknown;
                     ResultBody::ModelState(state)
                 }
                 RequestBody::ModelStatus {} => idle(),

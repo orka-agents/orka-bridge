@@ -57,6 +57,9 @@ pub struct SetupSnapshot {
     /// The last Start a fresh workspace in this run, or one finished at launch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_fresh: Option<crate::workspace_fresh::FreshStatusDto>,
+    /// Whether Start a fresh workspace can start, and what first install will need.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_fresh_plan: Option<crate::workspace_fresh::FreshPlan>,
 }
 
 impl SetupSnapshot {
@@ -379,6 +382,7 @@ pub mod preflight;
 pub mod help;
 #[path = "setup_model.rs"]
 mod model;
+pub(crate) use model::RetiredReset;
 pub use model::{CopilotCheck, KeyVendor, ModelSetupState};
 pub(crate) fn publish_upgrade_metadata(
     root: &Path,
@@ -516,6 +520,7 @@ fn snapshot(root: &Path) -> Result<SetupSnapshot, SetupError> {
         workspace_failure: None,
         workspace_replaced: false,
         workspace_fresh: None,
+        workspace_fresh_plan: None,
     })
 }
 
