@@ -64,7 +64,8 @@ fn copilot_selection(model: Option<&str>) -> Result<ModelSelection, SetupError> 
         model: model.into(),
     })
 }
-#[cfg(test)]
+// Only the Unix-only scenarios use this.
+#[cfg(all(test, unix))]
 fn default_selection(vendor: Option<KeyVendor>) -> ModelSelection {
     vendor.map(key_selection).unwrap_or_else(|| {
         copilot_selection(Some(crate::copilot_preflight::PREFERRED_MODELS[0])).unwrap()
