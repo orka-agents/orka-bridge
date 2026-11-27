@@ -35,6 +35,8 @@ impl ChatFixture {
                 can_send: true,
                 versions: vec![],
                 error: None,
+                denied: None,
+                kept_on_cluster: false,
             },
             started: None,
             fresh: true,
