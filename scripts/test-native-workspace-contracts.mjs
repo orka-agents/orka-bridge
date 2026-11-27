@@ -143,7 +143,9 @@ for (const size of ['wide', 'minimum']) {
   for (const view of ['tests', 'chat']) assert.ok(destinationCaptures.has(`local-designer-waiting-${view}-${size}`), `allocated Designer waiting capture missing: ${view}/${size}`);
 }
 assert.ok(destinationCaptures.has('local-workspace-inside'));
-assert.equal(captures.model.length, 210, '202 incoming model frames plus six existing Overview list/evidence captures and their two narrow Run tests frames must remain intact');
+// The two-card first setup has no Meet card, so its two local-setup-meet frames left the manifest with it.
+assert.equal(captures.model.length, 208, '200 incoming model frames plus six existing Overview list/evidence captures and their two narrow Run tests frames must remain intact');
+assert.ok(!captures.model.some(name => name.startsWith('local-setup-meet-')), 'the two-card first setup has no Meet frames');
 assert.equal(destinationCaptures.size, 51, '18 cluster/catalog frames plus33 workspace/setup/Designer frames');
 for (const size of ['minimum', 'wide']) assert.ok(destinationCaptures.has(`local-workspace-setup-forced-stop-${size}`), 'first-run forced-stop capture missing');
 assert.ok(captures.model.every(name => !destinationCaptures.has(name)), 'native journeys must be disjoint');

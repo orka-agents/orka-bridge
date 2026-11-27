@@ -1,9 +1,7 @@
 {
   "model": [
     "local-setup-installing-wide",
-    "local-setup-meet-wide",
     "local-setup-installing-minimum",
-    "local-setup-meet-minimum",
     "local-setup-fit-download",
     "local-setup-starting-wide",
     "local-setup-starting-minimum",
