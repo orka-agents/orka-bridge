@@ -24,6 +24,7 @@ fn main() {
             "workspace_upgrade_transfer",
             "workspace_upgrade_remove",
             "workspace_upgrade_cancel",
+            "workspace_fresh_start",
             "workspace_catalog",
             "setup_select_local",
             "setup_cancel_local",

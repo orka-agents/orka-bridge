@@ -1473,6 +1473,15 @@ pub(crate) fn validate_transaction(
     }
     Ok(UpgradeStatus::SourceRetained)
 }
+/// Whether a workspace update has recorded a transaction. Its records name the workspace in
+/// `local-vm-v1`, so a fresh workspace must not replace that directory while they exist.
+pub(crate) fn has_transaction(data: &Path, local: &Path) -> Result<bool, RuntimeError> {
+    if !local.join(STORE).try_exists()? {
+        return Ok(false);
+    }
+    let owner = WorkspaceUpgrade::open(data, local)?;
+    Ok(!owner.intents()?.is_empty())
+}
 pub(crate) fn validate_new_replacement(data: &Path, local: &Path) -> Result<(), RuntimeError> {
     if !local.join(STORE).try_exists()? {
         return Ok(());
@@ -1531,6 +1540,7 @@ pub(crate) fn admit_prepared(
     }
     journal.verify_state()?;
     let local = root.parent().ok_or(RuntimeError::RetainedState)?;
+    crate::workspace_fresh::admit(local)?;
     if !local.join(STORE).try_exists()? {
         return Ok(());
     }
@@ -1542,6 +1552,8 @@ pub(crate) fn admit_prepared(
 }
 pub(crate) fn admit(data: &Path, root: &Path) -> Result<(), RuntimeError> {
     let local = root.parent().ok_or(RuntimeError::RetainedState)?;
+    // An unfinished fresh workspace must settle before any workspace is opened or created.
+    crate::workspace_fresh::admit(local)?;
     if !local.join(STORE).try_exists()? {
         return Ok(());
     }

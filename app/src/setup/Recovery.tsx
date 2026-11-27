@@ -6,7 +6,8 @@ import { helpDetails, workspaceRecovery, type WorkspaceFailure } from './recover
 import { preflightRecovery, type PreflightFailure } from './preflight-state';
 import SetUpLater from '../firstrun/SetUpLater';
 
-export default function Recovery({ detail, preflightFailure, failure, disabled, onRetry, onCluster, onSetUpLater }: { detail?: string | null; preflightFailure?: PreflightFailure; failure?: WorkspaceFailure; disabled: boolean; onRetry: () => void; onCluster?: () => void; onSetUpLater?: () => void }) {
+// `onFresh` is offered when ordinary recovery can't proceed: Start a fresh workspace, as a second way forward.
+export default function Recovery({ detail, preflightFailure, failure, disabled, onRetry, onCluster, onSetUpLater, onFresh, helpLines }: { detail?: string | null; preflightFailure?: PreflightFailure; failure?: WorkspaceFailure; disabled: boolean; onRetry: () => void; onCluster?: () => void; onSetUpLater?: () => void; onFresh?: () => void; helpLines?: string[] }) {
   const [expanded, setExpanded] = useState(false);
   const [notice, setNotice] = useState('');
   const [quitting, setQuitting] = useState(false);
@@ -22,17 +23,19 @@ export default function Recovery({ detail, preflightFailure, failure, disabled, 
     catch { setNotice("Couldn't open help. Open Show details and ask for help with this error."); }
   }
   async function copy() {
-    try { await navigator.clipboard.writeText(helpDetails(info, failure?.codes)); setNotice('Details copied. Private diagnostic text is not included.'); }
+    try { await navigator.clipboard.writeText(helpDetails(info, failure?.codes, helpLines)); setNotice('Details copied. Private diagnostic text is not included.'); }
     catch { setNotice("Couldn't copy. Open Show details to read the error."); }
   }
   return <div className="workspace-failure" role="alert">
     <div className="workspace-failure-explanation"><p className="failure-summary">{info.summary}</p>
     {info.action && <p>{info.action}</p>}{(preflightFailure || info.preservation) && <p>{preflightFailure ? 'This check made no changes.' : info.preservation}</p>}
+    {onFresh && <p>{info.retryBlocked ? 'Or start a fresh workspace on this computer. Your agent files are kept.' : 'If it keeps failing, start a fresh workspace on this computer. Your agent files are kept.'}</p>}
     <div className="workspace-step-actions">
       {forcedStop && <Button type="button" kind="primary" disabled={disabled || quitting} onClick={() => { void quit(); }}>{quitting ? 'Quitting Bridge…' : 'Quit Bridge'}</Button>}
       {info.topic && <Button type="button" kind={forcedStop ? 'secondary' : 'primary'} onClick={() => { void help(); }}>Show me how</Button>}
       {!forcedStop && <Button type="button" kind={info.topic ? 'secondary' : 'primary'} disabled={disabled || info.retryBlocked}
         title={info.retryBlocked ? info.category === 'stopUnconfirmed' ? 'Quit Bridge and reopen it before trying again' : info.action : undefined} onClick={onRetry}>Try again</Button>}
+      {onFresh && <Button type="button" kind="secondary" disabled={disabled} onClick={onFresh}>Start a fresh workspace</Button>}
       <Button type="button" kind="secondary" onClick={() => { void copy(); }}>Copy details for help</Button>
     </div>
     <Disclosure label={expanded ? 'Hide details' : 'Show details'} open={expanded} controls="workspace-failure-details" onOpenChange={setExpanded}>

@@ -9,6 +9,12 @@ pub struct FileIdentity {
     volume: u64,
     index: [u8; 16],
 }
+impl FileIdentity {
+    /// Whether both files are on one volume, so a rename between them cannot become a copy.
+    pub fn same_volume(&self, other: &Self) -> bool {
+        self.volume == other.volume
+    }
+}
 #[cfg(unix)]
 pub fn file_identity(file: &File) -> Result<FileIdentity, RuntimeError> {
     use std::os::unix::fs::MetadataExt;

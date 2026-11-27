@@ -42,9 +42,10 @@ export function workspaceRecovery(failure?: WorkspaceFailure): RecoveryInfo {
   }
 }
 
-export function helpDetails(info: RecoveryInfo, codes: number[] = []): string {
+// `extra` are further finite lines, such as a fresh workspace's outcome.
+export function helpDetails(info: RecoveryInfo, codes: number[] = [], extra: string[] = []): string {
   return ['Bridge workspace setup', `Operation: ${info.stage}`, `Category: ${info.category ?? 'requirements'}`,
-    ...[...new Set(codes.filter(isOsCode))].slice(0, 4).map(code => `OS code: ${code}`), 'Private diagnostic text is not included.'].join('\n');
+    ...[...new Set(codes.filter(isOsCode))].slice(0, 4).map(code => `OS code: ${code}`), ...extra, 'Private diagnostic text is not included.'].join('\n');
 }
 
 export function modelDetails(detail: string): string {

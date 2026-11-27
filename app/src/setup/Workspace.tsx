@@ -10,8 +10,9 @@ import { preflightRecovery } from './preflight-state';
 import type { SetupStatus } from './state';
 
 // Returning workspace management is not another pass through first-run setup.
-export default function Workspace({ status, busy, stopping, starting, error, active, onStart, onCancel, onCluster, upgrade, updating, updateBlocked, ordinaryRecovery = !upgrade }: {
-  upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean; ordinaryRecovery?: boolean;
+// `onFresh` starts a fresh workspace; `freshOffered` says a failure can't otherwise be got past, so it is offered there too.
+export default function Workspace({ status, busy, stopping, starting, error, active, onStart, onCancel, onCluster, upgrade, updating, updateBlocked, ordinaryRecovery = !upgrade, onFresh, freshOffered = false, helpLines }: {
+  upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean; ordinaryRecovery?: boolean; onFresh?: () => void; freshOffered?: boolean; helpLines?: string[];
   status: SetupStatus; busy: boolean; stopping: boolean; starting: boolean; error?: string; active: boolean;
   onStart: () => void; onCancel?: () => void; onCluster?: () => void;
 }) {
@@ -60,7 +61,7 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   }
   async function copy() {
     const info = status.preflightFailure ? { ...recovery, category: status.preflightFailure } : recovery;
-    try { await navigator.clipboard.writeText(helpDetails(info, status.workspaceFailure?.codes)); setNotice('Details copied. Private diagnostic text is not included.'); }
+    try { await navigator.clipboard.writeText(helpDetails(info, status.workspaceFailure?.codes, helpLines)); setNotice('Details copied. Private diagnostic text is not included.'); }
     catch { setNotice("Couldn't copy. Open Show details to read the error."); }
   }
   // Starting shows the same bar, elapsed time and phases as first setup, and Cancel pauses it.
@@ -82,6 +83,7 @@ export default function Workspace({ status, busy, stopping, starting, error, act
     </div>
     {statusCallout ? <div className="alert alert-failed workspace-alert">{statusLine}{forcedLines}{actionLine}</div> : <>{statusLine}{forcedLines}</>}
     {kept && <p className="muted">{kept}</p>}
+    {failed && ordinaryRecovery && !stopFailed && onFresh && freshOffered && <p>{recovery.retryBlocked ? 'Or start a fresh workspace on this computer. Your agent files are kept.' : 'If it keeps failing, start a fresh workspace on this computer. Your agent files are kept.'}</p>}
     {infra && <><div role="progressbar" aria-label="Workspace setup progress" aria-valuemin={0} aria-valuemax={100} className="infra-bar indeterminate"><span /></div>
       {infra.text && <p className="muted">{infra.text}</p>}
       <Disclosure label={progressDetails ? 'Hide details' : 'Show details'} open={progressDetails} controls="returning-workspace-progress" onOpenChange={setProgressDetails}>
@@ -99,6 +101,7 @@ export default function Workspace({ status, busy, stopping, starting, error, act
     {!statusCallout && actionLine}
     {ordinaryRecovery && (failed || stopped) && !stopFailed && <div className="workspace-step-actions"><Button type="button" kind="primary" size={stopped ? 'large' : 'default'} disabled={busy || !!error || failed && recovery.retryBlocked} title={failed && recovery.retryBlocked ? recovery.action : undefined} onClick={onStart}>Restart workspace</Button>
       {failed && recovery.topic && <Button type="button" kind="secondary" onClick={() => { void help(); }}>Show me how</Button>}
+      {failed && !error && onFresh && freshOffered && <Button type="button" kind="secondary" disabled={busy} onClick={onFresh}>Start a fresh workspace</Button>}
       {failed && !error && <Button type="button" kind="secondary" onClick={() => { void copy(); }}>Copy details for help</Button>}
       {failed && !error && onCluster && <Button type="button" kind="quiet" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</Button>}</div>}
     {failed && helpError && <p role="alert">Couldn't open help. Open Show details to read the error.</p>}
@@ -114,7 +117,9 @@ export default function Workspace({ status, busy, stopping, starting, error, act
         <div><dt>Files</dt><dd>{path ? <code>{path}</code> : 'Folder unavailable'}</dd></div>
       </dl>
       <Disclosure label="What's inside" open={inside} controls="returning-workspace-inside" onOpenChange={setInside}>
-        {inside && <p id="returning-workspace-inside">The workspace includes Orka and the tools your agents use. Uses about 4 GB of memory while Bridge is open. Quit Bridge to free it.</p>}
+        {inside && <div id="returning-workspace-inside"><p>The workspace includes Orka and the tools your agents use. Uses about 4 GB of memory while Bridge is open. Quit Bridge to free it.</p>
+          {/* A deliberate reset, kept quiet: the confirmation says what it replaces. */}
+          {onFresh && ordinaryRecovery && !failed && !settingUp && !stopping && !closed && <Button type="button" kind="quiet" disabled={busy || !!error} onClick={onFresh}>Start a fresh workspace…</Button>}</div>}
       </Disclosure>
     </>}
   </section>;

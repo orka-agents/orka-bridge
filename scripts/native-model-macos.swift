@@ -2195,7 +2195,7 @@ for state in ["refresh-pending", "refresh-busy", "refresh-io", "cancel-requested
 for (phase, summary) in [("image-update", "This version of Bridge needs a new workspace."), ("image-unsupported", "This workspace uses different cluster files.")] {
     try workspacePhase(phase)
     try workspaceCapture(phase, [summary, "Restart workspace"])
-    require(enabledButton("Restart workspace") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
+    require(enabledButton("Restart workspace") == nil && !anyButton("Set up new workspace") && enabledButton("Start a fresh workspace") != nil, "Image refusal must not retry or update the workspace, and must offer a fresh workspace")
 }
 try workspacePhase("setup-forced-stop")
 if !nativeTextExists("Get your workspace ready") {

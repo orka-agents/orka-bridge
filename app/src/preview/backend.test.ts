@@ -12,6 +12,8 @@ import { checkCopilot, connectKey, connectModel, resetModel } from '../setup/mod
 import { readPreflight } from '../setup/preflight-state';
 import { workspaceRequirements } from '../setup/requirements';
 import { selectLocal, setupStatus } from '../setup/state';
+import { startFresh } from '../setup/fresh';
+import { removeModel } from '../setup/modelState';
 import { upgradeCall } from '../setup/upgrade-api';
 import { previewRequested } from './gate';
 import { parseReply } from '../home/cards';
@@ -402,5 +404,31 @@ describe('preview backend replies', () => {
     await selectLocal();
     await vi.waitFor(async () => expect(await setupStatus()).toMatchObject({ ok: true, status: { localVm: 'ready' } }), { timeout: 5000 });
     expect(await connectModel()).toMatchObject({ ok: false, category: 'modelCaptureFailed' });
+  });
+  it('refuses cleanup until a fresh workspace replaces the stuck one, then sets up as a first install', async () => {
+    await preview('scenario=aiStuck&speed=100');
+    expect(await connectModel()).toMatchObject({ ok: false, category: 'modelReconnect', cleanup: ['disconnectRetainedModel', 'refused'] });
+    expect(await removeModel()).toMatchObject({ ok: false, category: 'modelReconnect' });
+    const replaced = await startFresh();
+    expect(replaced).toMatchObject({ state: 'replaced', ai: 'removed', cleaning: true });
+    expect(replaced.state === 'replaced' && replaced.reclaimable[0]).toMatch(/\\discarded-[0-9a-f-]{36}$/);
+    // The ordinary first-setup screen: the workspace getting ready, the AI card free to check Copilot early.
+    const getting = await setupStatus();
+    expect(getting).toMatchObject({ ok: true, status: { selected: 'localVm', workspaceFresh: { state: 'replaced' } } });
+    expect(getting.ok && ['preparing', 'installing'].includes(getting.status.localVm)).toBe(true);
+    expect(await checkCopilot()).toMatchObject({ ok: true });
+    await vi.waitFor(async () => expect(await setupStatus()).toMatchObject({ ok: true, status: { workspaceFresh: { cleaning: false, reclaimable: [] } } }), { timeout: 5000 });
+  });
+
+  it('reports a fresh workspace refused when the stop is unconfirmed, and one whose old folder is left', async () => {
+    await preview('scenario=freshStopUnconfirmed&speed=100');
+    expect(await startFresh()).toEqual({ state: 'refused', reason: 'stopUnconfirmed' });
+    expect(await setupStatus()).toMatchObject({ ok: true, status: { localVm: 'failed', workspaceFailure: { cause: 'stopUnconfirmed' }, workspaceFresh: { state: 'refused' } } });
+    await preview('scenario=freshReclaimable&speed=100');
+    const replaced = await startFresh();
+    await vi.waitFor(async () => expect(await setupStatus()).toMatchObject({ ok: true, status: { workspaceFresh: { cleaning: false, reclaimable: replaced.state === 'replaced' ? replaced.reclaimable : [] } } }), { timeout: 5000 });
+    await preview('scenario=wsVersionUnsupported&speed=100');
+    expect(await setupStatus()).toMatchObject({ ok: true, status: { localVm: 'failed', workspaceFailure: { cause: 'workspaceVersionUnsupported' } } });
+    expect(await startFresh()).toMatchObject({ state: 'replaced' });
   });
 });

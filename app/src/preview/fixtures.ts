@@ -28,6 +28,16 @@ export const workspaceFailures = {
     workspaceFailure: { operation: 'verify', cause: 'preparation', codes: [] },
     localVmError: 'Workspace recovery is required before starting the local cluster.',
   },
+  // A workspace from another Bridge build: its cluster files are not ones this build can open.
+  wsVersionUnsupported: {
+    workspaceFailure: { operation: 'verify', cause: 'workspaceVersionUnsupported', codes: [] },
+    localVmError: 'Starting the local VM failed: Runtime operation failed: Image(WorkspaceVersionUnsupported)',
+  },
+  // Start a fresh workspace stopped the workspace, but its stop could not be confirmed (no scenario of its own).
+  stopUnconfirmed: {
+    workspaceFailure: { operation: 'stop', cause: 'stopUnconfirmed', codes: [] },
+    localVmError: 'Stopping the local VM failed: startupStopFailed: Workspace stop did not complete.',
+  },
 } as const;
 export type FailureScenario = keyof typeof workspaceFailures;
 
@@ -50,6 +60,8 @@ export function upgradeStatus(state: UpgradeState, transaction: string, credenti
 // AI connection errors, as SetupError serialises them.
 export const keyRejected = (vendor: 'openai' | 'anthropic') => ({ kind: 'modelCredentialRejected', message: 'The model company did not accept this key.', vendor });
 export const keyInvalid = { kind: 'modelKeyInvalid', message: "Paste the whole key with the selected company's key prefix." };
+// The workspace's connect tool refuses to remove the previous AI connection, as on a real Windows run.
+export const reconnectRefused = { kind: 'modelReconnect', message: 'Bridge could not remove the previous AI connection from the local cluster. The saved sign-in was kept.', cleanup: ['disconnectRetainedModel', 'refused'] };
 export const modelGuest = { kind: 'modelGuest', message: 'The guest model handler is unavailable or is not idle.' };
 export const installationMismatch = (installation: string, savedInstallation: string, credentialSlot: string) => ({
   kind: 'modelInstallationMismatch', message: "Bridge's saved AI connection is from an earlier setup.",

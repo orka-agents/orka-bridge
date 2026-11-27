@@ -27,8 +27,10 @@ function preflightStep(error: ModelFailure, hasSignIn: boolean): { summary: stri
 // Each increase of changeRequest explicitly asks to change the AI provider.
 // `setupCard` is first setup's own AI card beside the steps: a Copilot failure takes the card, as its own story.
 // `diagnostic` is the workspace card's detail line (the guest's typed Connect diagnostic), copied for help.
-export default function Model({ title = 'Connect the AI', enabled, queueable = false, paused = false, away = false, primary = true, changeRequest = 0, sharedConnection = false, recoveryTarget, choiceTarget, inline = false, onPlaceCard = false, setupCard = false, diagnostic, onState, onSettled, onConnectRequest }: {
-  sharedConnection?: boolean; title?: string; choiceTarget?: HTMLElement | null; inline?: boolean; setupCard?: boolean; diagnostic?: string | null;
+// `helpLines` are further finite lines for help, such as a fresh workspace's outcome.
+// `onFreshWorkspace` asks for Start a fresh workspace, the way out when the workspace refuses cleanup.
+export default function Model({ title = 'Connect the AI', enabled, queueable = false, paused = false, away = false, primary = true, changeRequest = 0, sharedConnection = false, recoveryTarget, choiceTarget, inline = false, onPlaceCard = false, setupCard = false, diagnostic, helpLines, onState, onSettled, onConnectRequest, onFreshWorkspace }: {
+  sharedConnection?: boolean; title?: string; choiceTarget?: HTMLElement | null; inline?: boolean; setupCard?: boolean; diagnostic?: string | null; helpLines?: string[]; onFreshWorkspace?: () => void;
   enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; primary?: boolean; changeRequest?: number; recoveryTarget?: HTMLElement | null; onPlaceCard?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void; onConnectRequest?: () => void;
 }) {
   // In-memory consent only. It never carries a credential and is consumed once.
@@ -199,7 +201,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
       return;
     }
     if (result.ok) {
-      setConnected(action === 'connect'); setRemoved(action !== 'connect'); setChanging(false);
+      setConnected(action === 'connect'); setRemoved(action !== 'connect'); setChanging(false); setReconnectFailures(0);
       if (action === 'reset') { setResetDone(true); setRecovery(undefined); setAttempted(false); setDetails(false); if (anotherProvider) setChoice('key'); }
       if (action === 'connect') {
         const info: ModelConnection | undefined = result.connection ?? (choice === 'copilot' && chosen ? { kind: 'copilot', model: chosen } : undefined);
@@ -213,7 +215,10 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
       // A refused preflight saved nothing: this attempt adds no sign-in to remove.
       if (isPreflightCategory(result.category)) { setAttempted(before.attempted); setRemoved(before.removed); }
       setError(result);
-      if (result.category === 'modelReconnect') setReconnectFailures(count => count + 1);
+      // Consecutive refusals: the workspace said no to removing the previous connection. Any other outcome starts over,
+      // so an uncertain one still gets its Check again.
+      const refusal = result.category === 'modelReconnect' && (!result.cleanup || result.cleanup[1] === 'refused');
+      setReconnectFailures(count => refusal ? count + 1 : 0);
       if (result.recovery && (action === 'reset' || result.category === 'modelInstallationMismatch')) setRecovery(result.recovery);
       else if (action === 'reset') setRecovery(value => value && { ...value, resetStage: undefined });
       if ((choice === 'key' || result.vendor) && ['modelCredentialRejected', 'modelProviderUnreachable', 'modelModelUnavailable'].includes(result.category)) setRemoved(true);
@@ -233,6 +238,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
         ...(error.wanted ? [`Chosen model: ${error.wanted}`] : []),
         ...(error.cleanup ? [`Cleanup operation: ${error.cleanup[0]}`, `Cleanup class: ${error.cleanup[1]}`] : []),
         ...(diagnostic ? [`Workspace detail: ${diagnostic}`] : []),
+        ...(helpLines ?? []),
         ...error.codes.map(code => `OS code: ${code}`),
         ...(recovery ? [`Installation: ${recovery.installation}`, `Saved installation: ${recovery.savedInstallation}`, `Native credential slot: ${recovery.credentialSlot}`, `Reset stage: ${recovery.resetStage ?? (failedAction === 'reset' ? 'Unconfirmed' : 'Not started')}`] : [])].join('\n'));
       setNotice('Details copied. No keys or sign-in tokens are included.');
@@ -372,10 +378,13 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     {(cliUnavailable || signInCheck) && <Button type="button" kind="quiet" onClick={() => { void help('githubSignIn'); }}>Sign-in help</Button>}
   </>;
   const preflight = error && !removalFailed && !keyMode ? preflightStep(error, hasSignIn) : undefined;
-  // Cleanup refused again: a host-only reset can't clear the workspace's own record of the old connection.
+  // Cleanup refused twice in a row, after one Check again or Retry removal: a host-only reset can't clear the workspace's
+  // own record of the old connection, so the card offers a fresh workspace instead of another round.
   const stuck = error?.category === 'modelReconnect' && reconnectFailures >= 2;
+  const freshAction = stuck && !!onFreshWorkspace && !sharedConnection;
   const summary = preflight?.summary ?? error?.message;
-  const nextStep = preflight?.step ?? (stuck ? "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace is the sure way back, and Bridge can't start one from this card yet. Copy the details for whoever helps you with Bridge. Your agent files are kept."
+  const nextStep = preflight?.step ?? (stuck ? freshAction ? "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace is the sure way back: Bridge replaces the workspace on this computer, keeps your agent files, and you connect the AI again."
+    : "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace is the sure way back. Copy the details for whoever helps you with Bridge. Your agent files are kept."
     : cliUnavailable ? 'Install GitHub CLI if needed, then sign in to github.com in your terminal:'
     : signInCheck ? 'Check your GitHub CLI sign-in in your terminal:'
     : error?.category === 'modelBusy' ? 'Wait for the other operation to finish, then press Check again.'
@@ -398,13 +407,14 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
       {busy && (busy === 'remove' || !keyMode) && <span className="status-description">{busy === 'remove' ? keyMode ? 'Removing key…' : 'Removing sign-in…' : 'Connecting the AI…'}</span>}
       {queued && <><span className="status-description">{checking ? 'Checking your GitHub sign-in. Connects when the workspace is ready.' : catalog && model ? `GitHub Copilot is ready: ${catalog.account ? `signed in as ${catalog.account}, ` : ''}model ${model}. Connects when the workspace is ready.` : 'Connects when the workspace is ready.'}</span>{catalog && model && (!compact || expanded) && <Button type="button" kind="quiet" aria-label="Change model" onClick={() => { setQueued(false); setPicking(true); }}>Change</Button>}{(!compact || expanded) && <Button type="button" kind="secondary" aria-label={compact ? undefined : 'Cancel queued connection'} onClick={() => { setQueued(false); checkRequest.current++; setChecking(false); if (compact) { setExpanded(false); changeButton.current?.focus(); } }}>{compact ? "Don't connect automatically" : 'Cancel'}</Button>}</>}
     </div>
+    : freshAction ? <Button key="model-fresh" ref={retry} type="button" kind="primary" disabled={paused || !!busy} onClick={onFreshWorkspace}>Start a fresh workspace</Button>
     : !ready && !removalFailed && <Button key="model-connect" ref={retry} type="button" kind={primary ? 'primary' : 'secondary'} className={awaitingKey && primary ? 'model-connect-waiting' : undefined} aria-describedby={awaitingKey ? fieldError ? 'model-key-error' : 'model-key-help' : undefined} disabled={(!enabled && (!queueable || keyMode)) || paused || !!busy || (keyMode && !hasKey && !hasSignIn) || (!keyMode && noModels && !error)} onClick={choose}>
       {error && failedAction === 'connect' && error.category !== 'modelCopilotModelNotOffered' ? 'Check again' : 'Connect the AI'}
     </Button>}
     {ready && !changing && <Button ref={changeButton} type="button" kind="quiet" title={actionReason} disabled={paused || !!busy} aria-expanded={false} onClick={event => { if (document.activeElement === event.currentTarget) changeFocus.current = 'panel'; setChanging(true); }}>Change</Button>}
-    {removalFailed && removalAction}
+    {removalFailed && !freshAction && removalAction}
     {setupFailure ? failureHelp : <>{copyAction}{failureHelp}</>}
-    {!ready && !removalFailed && removalAction}
+    {!ready && !removalFailed && !freshAction && removalAction}
     </>}
   </div>;
   const content = <section ref={root} className={portaled || compact && choiceTarget ? 'setup-model' : `card setup-model${compact ? ' model-compact' : setupCard && !ready ? ' model-connect' : ''}`} aria-labelledby="model-title" aria-busy={!!busy} onFocusCapture={() => { focusWithin.current = true; }} onBlurCapture={event => { if (event.relatedTarget) focusWithin.current = !!root.current?.contains(event.relatedTarget); }} onKeyDown={event => { if (event.key === 'Escape' && !busy && (changing || confirmRemoval || compact && expanded)) { event.stopPropagation(); closeChange(); } }}>
@@ -445,16 +455,16 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
       {actions}
       {otherRoute && <div className="workspace-step-actions">{otherRoute}</div>}
       <div className="workspace-step-actions model-copy-row">{copyAction}</div>
-      {reconnectHint}
+      {!freshAction && reconnectHint}
       {!anotherChoice && !hasSignIn && !busy && <Button type="button" kind="quiet" className="model-another" onClick={() => setAnotherChoice(true)}>Choose another provider</Button>}
     </> : <div className={callout ? 'workspace-failure' : undefined} role={callout ? 'alert' : undefined}>
       <div className={callout ? 'workspace-failure-explanation' : undefined}>
         {callout && <><p className="failure-summary">{removalFailed && error.category === 'unknown' ? `Bridge could not confirm ${keyMode ? 'key' : 'sign-in'} removal.` : keyMode ? keyFailure(error, vendor) : summary}</p>
-        {!keyProblem && <><p>{removalFailed ? 'Press Retry removal to retry cleanup. If it happens again, copy the details for help.' : nextStep}</p>
+        {!keyProblem && <><p>{removalFailed && !stuck ? 'Press Retry removal to retry cleanup. If it happens again, copy the details for help.' : nextStep}</p>
         {command && <pre>{command}</pre>}
         <p>{preflight ? 'Nothing was sent to your workspace.' : `Your workspace and agent files are kept. ${removalFailed ? 'Removal has not been confirmed.' : 'A sign-in may already have been saved.'}`}</p>
         {otherRoute}
-        {!preflight && reconnectHint}</>}
+        {!preflight && !freshAction && reconnectHint}</>}
         </>}
         {actions}
       </div>

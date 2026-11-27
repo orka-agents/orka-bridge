@@ -7,10 +7,13 @@ const read = async name => (await readFile(new URL(name, import.meta.url), 'utf8
 const source = await read('./native-recovery-windows.mjs');
 const refusalExpression = source.match(/const refusal = await evaluate\(`([^`]+)`\);/)[1];
 const retry = { textContent: 'Try again', disabled: true, title: 'Open the matching Bridge version.' };
-const refusalCard = { innerText: 'Open the matching Bridge version.', getClientRects: () => [1], querySelectorAll: () => [retry] };
-const refusal = Function('document', `return ${refusalExpression}`)({ querySelectorAll: selector => selector === '.workspace-failure' ? [refusalCard] : [retry] });
+const freshAction = { textContent: 'Start a fresh workspace', disabled: false };
+const refusalCard = { innerText: 'Open the matching Bridge version.', getClientRects: () => [1], querySelectorAll: () => [retry, freshAction] };
+const refusal = Function('document', `return ${refusalExpression}`)({ querySelectorAll: selector => selector === '.workspace-failure' ? [refusalCard] : [retry, freshAction] });
 assert.equal(refusal.disabled, true, 'first-setup image refusal must find its actual disabled Try again control');
 assert.equal(refusal.title, 'Open the matching Bridge version.');
+assert.equal(refusal.fresh, true, 'first-setup image refusal must offer Start a fresh workspace in its own card');
+assert.equal(refusal.replace, false, 'a fresh workspace is not the update that keeps the old workspace');
 const recoverySource = await read('../app/src/setup/recovery-info.ts');
 const causes = Function(`return ${recoverySource.match(/const causes = (\[[^\n]+\]) as const/)[1]}`)();
 const captureSetup = source.slice(source.indexOf('  async function captureSetup('), source.indexOf('  const actionFixtures'));

@@ -172,6 +172,7 @@
 .workspace-facts code { font: 500 var(--size-body)/18px var(--font-mono); font-size: .92em; font-variant-ligatures: none; padding: 1px var(--space-1-5); border-radius: var(--radius-small); background: var(--color-chrome); }
 .returning-workspace > .disclosure { margin-top: calc(var(--space-1) * -1); }
 .returning-workspace > .disclosure p { margin: var(--space-2) 0 0; max-width: 70ch; }
+.returning-workspace > .disclosure .button { margin-top: var(--space-2); }
 
 /* Workspace update and recovery inside the workspace card. */
 .workspace-upgrade { display: grid; gap: var(--space-3); min-width: 0; }
@@ -246,3 +247,14 @@
 .model-picker { display: grid; gap: 6px; }
 .model-picker select { font-family: var(--font-mono); font-variant-ligatures: none; }
 .model-chosen { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Start a fresh workspace: one confirmation and one outcome, whichever card asked. */
+.workspace-fresh { display: grid; gap: var(--space-3); }
+.workspace-fresh > *, .workspace-fresh p { margin: 0; }
+.workspace-fresh p, .workspace-fresh-list { max-width: 70ch; }
+.workspace-fresh-list { margin: 0; padding-left: var(--space-4); display: grid; gap: var(--space-1-5); }
+.workspace-fresh .workspace-step-actions { margin-top: 0; }
+.workspace-fresh-reclaim { display: grid; gap: var(--space-1); }
+.workspace-fresh-reclaim ul { margin: 0; padding-left: var(--space-4); }
+.workspace-fresh code { font: 500 var(--size-body)/18px var(--font-mono); font-size: .92em; font-variant-ligatures: none; padding: 1px var(--space-1-5); border-radius: var(--radius-small); background: var(--color-chrome); overflow-wrap: anywhere; }
+.workspace-fresh-done { padding-block: var(--space-3); }

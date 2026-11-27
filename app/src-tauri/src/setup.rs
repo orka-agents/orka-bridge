@@ -54,6 +54,9 @@ pub struct SetupSnapshot {
     /// a process. Omitted (not just false) in the ordinary, never-replaced case.
     #[serde(skip_serializing_if = "is_false")]
     pub workspace_replaced: bool,
+    /// The last Start a fresh workspace in this run, or one finished at launch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_fresh: Option<crate::workspace_fresh::FreshStatusDto>,
 }
 
 impl SetupSnapshot {
@@ -512,6 +515,7 @@ fn snapshot(root: &Path) -> Result<SetupSnapshot, SetupError> {
         preflight_failure: None,
         workspace_failure: None,
         workspace_replaced: false,
+        workspace_fresh: None,
     })
 }
 

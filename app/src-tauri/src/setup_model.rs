@@ -517,6 +517,11 @@ fn cleanup_previous_boot(
     b.connection = None;
     write_binding(root, b)
 }
+/// Which removal Reset could not confirm.
+enum Unconfirmed {
+    Credential(StoreError),
+    Record,
+}
 impl SetupStore {
     fn mutation_owner(
         &self,
@@ -576,15 +581,69 @@ impl SetupStore {
             error.recovery = Some(recovery);
             error
         };
+        self.forget_binding(root, &b, store)
+            .map_err(|unconfirmed| match unconfirmed {
+                Unconfirmed::Credential(e) => {
+                    failure(SetupError::store(e), "credentialRemovalUnconfirmed")
+                }
+                Unconfirmed::Record => failure(unavailable(), "recordRemovalUnconfirmed"),
+            })
+    }
+    /// Reset's removal, shared with Start a fresh workspace: the native slot first, then the
+    /// saved record. A failure names the stage that was not confirmed.
+    fn forget_binding(
+        &self,
+        root: &Path,
+        b: &Binding,
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, Unconfirmed> {
         // Both native stores treat an absent slot as success. Keep the exact record
         // until deletion is confirmed, so interrupted/failed resets can retry this slot.
-        store
-            .delete(b.slot)
-            .map_err(|e| failure(SetupError::store(e), "credentialRemovalUnconfirmed"))?;
-        fs::remove_file(root.join("model-v1"))
-            .map_err(|_| failure(unavailable(), "recordRemovalUnconfirmed"))?;
+        store.delete(b.slot).map_err(Unconfirmed::Credential)?;
+        fs::remove_file(root.join("model-v1")).map_err(|_| Unconfirmed::Record)?;
         self.copilot.forget();
         Ok(state(root, None, false))
+    }
+    /// Start a fresh workspace, after the workspace on this computer was moved aside: no
+    /// workspace remains that this saved connection could belong to, so forget it exactly as the
+    /// installation-mismatch Reset does. Returns whether anything was saved. On failure the
+    /// record is kept, and connecting on the new workspace offers that same Reset.
+    pub(crate) fn reset_retired_model(
+        &self,
+        store: &impl CredentialStore,
+    ) -> Result<bool, SetupError> {
+        let _access = self.access.lock().map_err(|_| unavailable())?;
+        let root = self.root.as_deref().ok_or_else(unavailable)?;
+        selected(root)?;
+        let local = self.upgrade_root.as_deref().ok_or_else(unavailable)?;
+        // Only with no workspace in place: never forget a connection a workspace may use.
+        match fs::symlink_metadata(local.join("local-vm-v1")) {
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            _ => return Err(unavailable()),
+        }
+        let _owners = self.mutation_owner(root, true)?;
+        let Some(b) = read_binding(root)? else {
+            return Ok(false);
+        };
+        if !valid_saved_connection(&b) {
+            return Err(unavailable());
+        }
+        self.forget_binding(root, &b, store)
+            .map_err(|unconfirmed| match unconfirmed {
+                Unconfirmed::Credential(e) => SetupError::store(e),
+                Unconfirmed::Record => unavailable(),
+            })?;
+        // The login shown for this sign-in is nonsecret, but it names the forgotten slot.
+        let account = root.join(ACCOUNT_FILE);
+        if fs::symlink_metadata(&account).is_ok_and(|m| m.is_file() && m.len() <= MAX_ACCOUNT_FILE)
+            && fs::read(&account)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<AccountRecord>(&bytes).ok())
+                .is_some_and(|record| record.slot == b.slot)
+        {
+            let _ = fs::remove_file(account);
+        }
+        Ok(true)
     }
     fn recover_empty_reservation(
         &self,

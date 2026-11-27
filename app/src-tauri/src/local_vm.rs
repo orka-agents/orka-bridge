@@ -561,6 +561,8 @@ pub struct LocalVm {
     /// Compared and advanced only under upgrade_cache; its mutex supplies ordering.
     upgrade_cache_revision: std::sync::atomic::AtomicU64,
     workspace_replaced_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// The last Start a fresh workspace in this run, as the setup snapshot reports it.
+    fresh: Mutex<Option<crate::workspace_fresh::FreshStatusDto>>,
 }
 /// Keep native launch admission and setup choice serialized through the switch.
 pub(crate) struct UpgradeQuiescence<'a> {
@@ -636,6 +638,7 @@ impl LocalVm {
             upgrade_cache: Mutex::new(None),
             upgrade_cache_revision: std::sync::atomic::AtomicU64::new(0),
             workspace_replaced_observer: Mutex::new(None),
+            fresh: Mutex::new(None),
         })
     }
     pub fn new(factory: Arc<dyn LocalFactory>) -> Arc<Self> {
@@ -1311,6 +1314,139 @@ impl LocalVm {
         .await
         .map_err(|_| RuntimeError::Unavailable)?
     }
+    fn publish_fresh(
+        &self,
+        dto: crate::workspace_fresh::FreshStatusDto,
+    ) -> crate::workspace_fresh::FreshStatusDto {
+        *self.fresh.lock().unwrap() = Some(dto.clone());
+        dto
+    }
+    /// A transaction finished at launch, or one whose retired workspace still needs deleting.
+    pub fn seed_fresh(&self, dto: crate::workspace_fresh::FreshStatusDto) {
+        self.publish_fresh(dto);
+    }
+    /// Start a fresh workspace. The workspace is stopped through the ordinary stop path and
+    /// its native custody released first; if that stop is not confirmed nothing is moved.
+    /// The transaction then retires the workspace, resets the saved AI connection and lets
+    /// first install build the new workspace from the cached image. Every refusal leaves the
+    /// workspace on this computer as it was. The owned task keeps going if IPC is dropped.
+    pub async fn start_fresh_workspace(
+        self: &Arc<Self>,
+        data: std::path::PathBuf,
+        local: std::path::PathBuf,
+        setup: Arc<crate::setup::SetupStore>,
+    ) -> crate::workspace_fresh::FreshStatusDto {
+        use crate::workspace_fresh::{FreshStatusDto as Fresh, Refusal};
+        let refused = |reason| Fresh::Refused { reason };
+        let choice = match self.reserve_upgrade_choice() {
+            Ok(choice) => choice,
+            Err(RuntimeError::Closed) => return self.publish_fresh(refused(Refusal::Unavailable)),
+            Err(_) => return self.publish_fresh(refused(Refusal::Busy)),
+        };
+        if self.upgrade_idle().is_err() {
+            return self.publish_fresh(refused(Refusal::Busy));
+        }
+        if self.factory.is_none() {
+            return self.publish_fresh(refused(Refusal::Unavailable));
+        }
+        // Denial-only, before anything is stopped.
+        if let Some(reason) = crate::workspace_fresh::preflight(&data, &local) {
+            return self.publish_fresh(refused(reason));
+        }
+        self.publish_fresh(Fresh::Replacing);
+        let vm = self.clone();
+        tokio::spawn(async move {
+            // Never move a disk a running VM may hold: an unconfirmed stop refuses here, and
+            // the quiescence guard keeps the workspace quarantined as for any other action.
+            let quiesced = match vm.quiesce_with_choice(choice).await {
+                Ok(quiesced) => quiesced,
+                Err(_) => return vm.publish_fresh(refused(Refusal::StopUnconfirmed)),
+            };
+            let (worker_data, worker_local) = (data.clone(), local.clone());
+            let result = tokio::task::spawn_blocking(move || {
+                let mut owner =
+                    crate::workspace_fresh::FreshWorkspace::open(&worker_data, &worker_local)?;
+                let settled =
+                    owner.replace(&setup, &crate::runtime::credential_store::OsCredentialStore)?;
+                let paths = owner.display_paths(&settled.reclaimable);
+                Ok((settled, paths))
+            })
+            .await
+            .unwrap_or(Err(Refusal::Unavailable));
+            let (settled, reclaimable) = match result {
+                Ok(value) => value,
+                Err(reason) => {
+                    // The workspace stays where it was, stopped; Start again reopens it.
+                    drop(quiesced);
+                    return vm.publish_fresh(refused(reason));
+                }
+            };
+            // The old workspace's conversations, runs and tasks went with it.
+            vm.retire_workspace_state();
+            let upgrade = crate::workspace_upgrade::query_upgrade_status(
+                &data,
+                &local,
+                native::upgrade_source().as_ref(),
+            )
+            .unwrap_or_else(|error| {
+                UpgradeStatusDto::conflict(crate::workspace_upgrade::classify_error(&error))
+            });
+            vm.cache_upgrade_status(upgrade);
+            let cleaning = !reclaimable.is_empty();
+            let dto = vm.publish_fresh(Fresh::Replaced {
+                transaction: settled.transaction,
+                ai: settled.ai,
+                reclaimable,
+                cleaning,
+            });
+            vm.clear_upgrade_busy();
+            {
+                // First install, as on a new computer: the factory creates a new installation.
+                let mut state = vm.inner.state.lock().unwrap();
+                if !state.terminal {
+                    state.phase = LocalVmStatus::Cancelled;
+                    state.progress = None;
+                    vm.recovery_blocked
+                        .store(false, std::sync::atomic::Ordering::Release);
+                    vm.start_locked(&mut state);
+                }
+            }
+            drop(quiesced);
+            if cleaning {
+                vm.clean_fresh_workspace(data, local);
+            }
+            dto
+        })
+        .await
+        .unwrap_or(Fresh::Refused {
+            reason: Refusal::Unavailable,
+        })
+    }
+    /// Delete retired workspaces in the background. What cannot be deleted stays reported as
+    /// reclaimable space; it never fails the action that retired it.
+    pub fn clean_fresh_workspace(
+        self: &Arc<Self>,
+        data: std::path::PathBuf,
+        local: std::path::PathBuf,
+    ) {
+        let vm = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let remaining = crate::workspace_fresh::FreshWorkspace::open(&data, &local)
+                .and_then(|owner| owner.clean().map(|names| owner.display_paths(&names)));
+            let mut fresh = vm.fresh.lock().unwrap();
+            if let Some(crate::workspace_fresh::FreshStatusDto::Replaced {
+                reclaimable,
+                cleaning,
+                ..
+            }) = fresh.as_mut()
+            {
+                *cleaning = false;
+                if let Ok(paths) = remaining {
+                    *reclaimable = paths;
+                }
+            }
+        });
+    }
     /// Select authority and mark startup Closing atomically with Ready publication.
     pub async fn cancel_workspace_upgrade(&self) -> Result<UpgradeCancelOutcome, RuntimeError> {
         let completion = {
@@ -1396,6 +1532,7 @@ impl LocalVm {
     fn snapshot(&self, mut snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
         let state = self.inner.state.lock().unwrap();
         snapshot.workspace_replaced = self.workspace_replaced();
+        snapshot.workspace_fresh = self.fresh.lock().unwrap().clone();
         snapshot.workspace_progress = state.progress.as_ref().map(ProgressClock::snapshot);
         snapshot.preflight_failure = if state.phase == LocalVmStatus::Failed {
             state.preflight_failure
