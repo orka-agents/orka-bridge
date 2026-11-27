@@ -556,6 +556,53 @@ async fn an_unusable_draft_ends_before_the_job_runs() {
 }
 
 #[tokio::test]
+async fn no_stage_report_is_published_as_the_jobs_result() {
+    // The drafter's format check passes, but the draft is unusable; then a stopped review.
+    let script = Script::new();
+    script.answer(
+        "drafter",
+        r#"{"instructions":"x","tools":["code_exec"],"check":{"type":"contains","value":"x"}}"#,
+    );
+    let f = fixture(script).await;
+    let input = job(PROMPT);
+    f.run.start_job(f.vm.clone(), input.clone()).unwrap();
+    let done = finished(&f, input.id).await;
+    assert_eq!(done.error, Some("draft"));
+    assert!(done.report.is_none());
+    let history = f.run.local_results().unwrap();
+    assert!(history
+        .results
+        .iter()
+        .all(|row| row.report.as_ref().is_none_or(|r| r.passed == 0)));
+    f.vm.shutdown().await.unwrap();
+
+    let script = Script::new();
+    *script.hold.lock().unwrap() = Some(Role::Reviewer);
+    let f = fixture(script).await;
+    let input = job(PROMPT);
+    let seen = Arc::new(Mutex::new(None));
+    {
+        let (run, vm, seen) = (Arc::downgrade(&f.run), Arc::downgrade(&f.vm), seen.clone());
+        *f.script.on_create.lock().unwrap() = Some((
+            Role::Reviewer,
+            Box::new(move || {
+                let (run, vm) = (run.upgrade().unwrap(), vm.upgrade().unwrap());
+                *seen.lock().unwrap() = Some(run.status_document(&vm, input.id).report.is_none());
+                run.cancel(vm, input.id);
+            }),
+        ));
+    }
+    f.run.start_job(f.vm.clone(), input.clone()).unwrap();
+    let done = finished(&f, input.id).await;
+    assert_eq!(*seen.lock().unwrap(), Some(true), "nothing while running");
+    assert!(done.report.is_none(), "nothing after Stop");
+    let history = f.run.local_results().unwrap();
+    let summary = serde_json::to_value(history.results[0].report.as_ref().unwrap()).unwrap();
+    assert_eq!(summary["passed"], 0);
+    f.vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn an_unusable_review_keeps_the_answer_and_says_so() {
     let script = Script::new();
     script.answer(

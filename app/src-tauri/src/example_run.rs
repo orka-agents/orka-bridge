@@ -270,6 +270,11 @@ impl ExampleRun {
                 .unwrap_or_else(|| RunSnapshot::idle(id))
         };
         snapshot.busy = state.active.clone();
+        // A job's stage reports grade the drafter's check and the reviewer's format, never
+        // the job; its result is `job.review`. They stay internal for Stop and evidence.
+        if snapshot.job.is_some() {
+            snapshot.report = None;
+        }
         let cancellable = snapshot.state == RunState::Running;
         // Terminal means admission is released, not merely that the report arrived.
         if !state.retired
@@ -955,11 +960,7 @@ impl ExampleRun {
             agent_uid: agent.uid.clone(),
             observed_at: crate::overview::now(),
             state: RunState::Complete,
-            report: Some(ReportSummary {
-                verdict: crate::engine::run::Verdict::Unknown,
-                passed: 0,
-                total: report.cases.len(),
-            }),
+            report: Some(summary(report, true)),
         };
         {
             let mut state = self.0.lock().unwrap();
@@ -1187,6 +1188,7 @@ impl ExampleRun {
         phase: RunState,
     ) {
         let mut state = self.0.lock().unwrap();
+        let job = state.snapshots.get(&id).is_some_and(|s| s.job.is_some());
         // Only this operation's acknowledged handle supplies both source and UID.
         // A pre-ack retry failure must leave the previous coherent tuple untouched.
         if let Some(agent) = handle.agent() {
@@ -1200,7 +1202,7 @@ impl ExampleRun {
                 agent_uid: agent.uid.clone(),
                 observed_at: crate::overview::now(),
                 state: phase,
-                report: report.as_ref().map(ReportSummary::from),
+                report: report.as_ref().map(|report| summary(report, job)),
             });
         }
         let snapshot = state.snapshots.get_mut(&id).unwrap();
@@ -1212,6 +1214,17 @@ impl ExampleRun {
         if let Some(observation) = observation {
             let _ = self.4.record(observation);
         }
+    }
+}
+/// A job's run is recorded as not tested: no stage report is the job's own pass.
+fn summary(report: &RunReport, job: bool) -> ReportSummary {
+    if !job {
+        return ReportSummary::from(report);
+    }
+    ReportSummary {
+        verdict: crate::engine::run::Verdict::Unknown,
+        passed: 0,
+        total: report.cases.len(),
     }
 }
 fn first_answer(report: &RunReport) -> Option<&str> {
