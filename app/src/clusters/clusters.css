@@ -12,8 +12,13 @@
 .places-workspace:has(> .places-list) > .places-heading > p { grid-column: 1; }
 .places-workspace:has(> .places-list) > .places-heading > button { grid-column: 2; grid-row: 1; min-height: 38px; padding-inline: 14px; }
 /* A cluster's own page and Add a cluster: the title on the left, Back to clusters at the right. */
-.places-workspace:has(> .places-back) { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-4); align-items: start; }
+/* The heading row is only as wide as the cards under it, so Back to clusters ends at their right edge, and the
+   whole block sits in the middle of a wide window instead of bunching to the left. */
+.places-workspace:has(> .places-back) { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-4); align-items: start; width: fit-content; max-width: 100%; margin-inline: auto; }
 .places-workspace:has(> .places-back) > * { grid-column: 1 / -1; }
+/* A percentage width has nothing to resolve against in a block sized by its content, so the card names its width. */
+.places-workspace:has(> .places-back) > .cluster-card { width: 660px; max-width: 100%; }
+.places-workspace:has(> .places-back) > .cluster-card:has(> .cluster-checks) { width: 640px; }
 .places-workspace:has(> .places-back) > .places-back { grid-column: 2; grid-row: 1; margin: var(--space-1-5) 0 0; }
 .places-workspace:has(> .places-back) > .places-heading { grid-column: 1; grid-row: 1; }
 .places-workspace:has(> .places-back) > .places-heading > h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
