@@ -24,7 +24,7 @@ export function formatRequirementGB(bytes: number) {
 }
 
 // A needed amount rounds up, so meeting the shown figure always meets the check.
-function formatNeededGB(bytes: number) {
+export function formatNeededGB(bytes: number) {
   return formatRequirementGB(Math.ceil(bytes / 1e8) * 1e8);
 }
 

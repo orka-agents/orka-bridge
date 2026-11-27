@@ -105,7 +105,7 @@ function recoveryInfo(value: unknown): ModelRecovery | undefined {
   return { installation: r.installation, savedInstallation: r.savedInstallation, credentialSlot: r.credentialSlot, ...(r.resetStage ? { resetStage: r.resetStage } : {}) };
 }
 const cleanupOperations = ['modelStatus', 'modelStatusPreconditions', 'disconnectRetainedModel'] as const;
-const cleanupClasses = ['timeout', 'unsupported', 'protocol', 'connection', 'permission', 'refused', 'io'] as const;
+const cleanupClasses = ['timeout', 'unsupported', 'protocol', 'connection', 'permission', 'refused', 'busy', 'io'] as const;
 type CleanupDiagnostic = [typeof cleanupOperations[number], typeof cleanupClasses[number]];
 function cleanupInfo(value: unknown): CleanupDiagnostic | undefined {
   if (!Array.isArray(value) || value.length !== 2) return;

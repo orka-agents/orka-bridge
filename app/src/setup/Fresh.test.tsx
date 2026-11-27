@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
 import Model from './Model';
-import { type FreshStatus, freshDetails, isFreshStatus } from './fresh';
+import { type FreshStatus, freshDetails, isFreshPlan, isFreshStatus } from './fresh';
+import { formatNeededGB, formatRequirementGB } from './requirements';
 import type { SetupStatus } from './state';
 import { openLocalSetup } from './test-navigation';
 
@@ -13,10 +14,11 @@ const retired = 'C:\\Users\\you\\AppData\\Local\\ai.orka.bridge\\discarded-40000
 const refused = { kind: 'modelReconnect', message: 'SECRET', cleanup: ['disconnectRetainedModel', 'refused'] };
 let status: SetupStatus;
 let fresh: () => Promise<FreshStatus>;
+let refusals: unknown[] = [];
 const ipc = vi.fn((command: string): unknown => {
   if (command === 'setup_status') return status;
   if (command === 'setup_requirements') return null;
-  if (command === 'setup_connect_model' || command === 'setup_remove_model') throw refused;
+  if (command === 'setup_connect_model' || command === 'setup_remove_model') throw refusals.shift() ?? refused;
   if (command === 'setup_check_model') return { account: 'octocat', models: [{ id: 'gpt-4.1' }], preselected: 'gpt-4.1' };
   if (command === 'setup_select_local') return status = { selected: 'localVm', localVm: 'starting', model: 'locked', modelSupported: true };
   if (command === 'workspace_fresh_start') return fresh();
@@ -31,7 +33,8 @@ function watchCopies() { vi.spyOn(navigator.clipboard, 'writeText').mockImplemen
 beforeEach(() => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   localStorage.setItem('bridge.firstTest.v1', 'attempted');
-  status = { selected: 'localVm', localVm: 'ready', model: 'available', modelSupported: true };
+  status = { selected: 'localVm', localVm: 'ready', model: 'available', modelSupported: true, workspaceFreshPlan: { image: { kind: 'cached' } } };
+  refusals = [];
   fresh = async () => ({ state: 'replaced', transaction, ai: 'removed', reclaimable: [retired], cleaning: true });
   clipboard = ''; ipc.mockClear(); mockIPC(ipc);
 });
@@ -102,10 +105,12 @@ test('the stuck AI card leads to one confirmation, then the ordinary first-setup
   await observe({ ...status, workspaceFresh: { state: 'replaced', transaction, ai: 'removed', reclaimable: [], cleaning: false } });
   await waitFor(() => expect(screen.queryByText('Deleting the previous workspace…')).toBeNull());
   expect(screen.queryByText(/delete this folder/)).toBeNull();
+  // The new workspace runs its first test automatically again once the AI is connected.
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('pending');
 });
 
 test('a stop that cannot be confirmed refuses and says the workspace is as it was', async () => {
-  fresh = async () => { status = { selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'Stopping the local VM failed', workspaceFailure: { operation: 'stop', cause: 'stopUnconfirmed', codes: [] }, workspaceFresh: { state: 'refused', reason: 'stopUnconfirmed' } }; return { state: 'refused', reason: 'stopUnconfirmed' }; };
+  fresh = async () => { status = { selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'Stopping the local VM failed', workspaceFailure: { operation: 'stop', cause: 'stopUnconfirmed', codes: [] }, workspaceFresh: { state: 'refused', reason: 'stopUnconfirmed', restarted: false } }; return { state: 'refused', reason: 'stopUnconfirmed', restarted: false }; };
   const user = await stuck();
   await user.click(screen.getByRole('button', { name: 'Start a fresh workspace' }));
   await user.click(within(await screen.findByRole('region', { name: 'Start a fresh workspace?' })).getByRole('button', { name: 'Start a fresh workspace' }));
@@ -193,10 +198,128 @@ test('removal refused twice also leads to a fresh workspace, and copied details 
 test('fresh workspace replies are exact', () => {
   expect(isFreshStatus({ state: 'replacing' })).toBe(true);
   expect(isFreshStatus({ state: 'replacing', path: '/x' })).toBe(false);
-  expect(isFreshStatus({ state: 'refused', reason: 'stopUnconfirmed' })).toBe(true);
+  expect(isFreshStatus({ state: 'refused', reason: 'stopUnconfirmed', restarted: false })).toBe(true);
+  expect(isFreshStatus({ state: 'refused', reason: 'stopUnconfirmed' })).toBe(false);
+  expect(isFreshStatus({ state: 'refused', reason: 'noSpace', restarted: false, neededBytes: 7 })).toBe(true);
+  expect(isFreshStatus({ state: 'refused', reason: 'offline', restarted: false, neededBytes: 7 })).toBe(false);
+  expect(isFreshStatus({ state: 'refused', reason: 'layout', restarted: true, reclaimable: [retired] })).toBe(true);
+  expect(isFreshStatus({ state: 'refused', reason: 'layout', restarted: true, reclaimable: [] })).toBe(false);
+  expect(isFreshStatus({ state: 'interrupted', transaction })).toBe(true);
+  expect(isFreshStatus({ state: 'interrupted', transaction: 'x' })).toBe(false);
+  expect(isFreshStatus({ state: 'conflict', found: [retired] })).toBe(true);
+  expect(isFreshStatus({ state: 'conflict', found: [] })).toBe(false);
+  expect(isFreshStatus({ state: 'replaced', transaction, ai: 'unconfirmed', reclaimable: [], cleaning: false })).toBe(true);
+  expect(isFreshPlan({ image: { kind: 'cached' } })).toBe(true);
+  expect(isFreshPlan({ blocked: 'updateHistory', image: { kind: 'download', bytes: 9 } })).toBe(true);
+  expect(isFreshPlan({ image: { kind: 'download' } })).toBe(true);
+  expect(isFreshPlan({ image: { kind: 'download', bytes: -1 } })).toBe(false);
+  expect(isFreshPlan({ blocked: 'nope', image: { kind: 'cached' } })).toBe(false);
+  expect(isFreshPlan({ image: { kind: 'cached' }, extra: 1 })).toBe(false);
   expect(isFreshStatus({ state: 'refused', reason: 'elsewhere' })).toBe(false);
   expect(isFreshStatus({ state: 'replaced', transaction, ai: 'removed', reclaimable: [], cleaning: false })).toBe(true);
   expect(isFreshStatus({ state: 'replaced', transaction: 'nope', ai: 'removed', reclaimable: [], cleaning: false })).toBe(false);
   expect(isFreshStatus({ state: 'replaced', transaction, ai: 'removed', reclaimable: [7], cleaning: false })).toBe(false);
   expect(isFreshStatus({ state: 'replaced', transaction, ai: 'removed', reclaimable: [], cleaning: false, extra: 1 })).toBe(false);
+});
+
+test('the confirmation says when first install downloads the workspace again, and how much', async () => {
+  status = { ...status, workspaceFreshPlan: { image: { kind: 'download', bytes: 2_380_070_756 } } };
+  const user = userEvent.setup();
+  render(<App />);
+  await openLocalSetup(user);
+  const card = await screen.findByRole('region', { name: 'Workspace' });
+  await user.click(within(card).getByRole('button', { name: "What's inside" }));
+  await user.click(within(card).getByRole('button', { name: 'Start a fresh workspace…' }));
+  const confirm = await screen.findByRole('region', { name: 'Start a fresh workspace?' });
+  expect(within(confirm).getAllByRole('listitem').at(-1)!.textContent).toBe(`Bridge downloads the workspace again: about ${formatRequirementGB(2_380_070_756)}.`);
+});
+
+test('a download it cannot make is refused before anything changes, and a restart is said', async () => {
+  fresh = async () => ({ state: 'refused', reason: 'noSpace', restarted: false, neededBytes: 19_560_000_000 });
+  const user = await stuck();
+  await user.click(screen.getByRole('button', { name: 'Start a fresh workspace' }));
+  await user.click(within(await screen.findByRole('region', { name: 'Start a fresh workspace?' })).getByRole('button', { name: 'Start a fresh workspace' }));
+  const card = (await screen.findByRole('heading', { name: "Bridge didn't start a fresh workspace" })).closest('section')!;
+  expect(card.textContent).toContain(`Bridge needs to download the workspace again and this computer doesn't have enough free space: it needs about ${formatNeededGB(19_560_000_000)} free. Free up space, then try again.`);
+  expect(card.textContent).toContain('The workspace on this computer is as it was. Nothing was moved or deleted.');
+  await user.click(within(card).getByRole('button', { name: 'Done' }));
+  // A refusal found after the stop restarts the workspace and says so, keeping folders left to delete.
+  fresh = async () => ({ state: 'refused', reason: 'inUse', restarted: true, reclaimable: [retired] });
+  await user.click(screen.getByRole('button', { name: 'Start a fresh workspace' }));
+  await user.click(within(await screen.findByRole('region', { name: 'Start a fresh workspace?' })).getByRole('button', { name: 'Start a fresh workspace' }));
+  const again = (await screen.findByRole('heading', { name: "Bridge didn't start a fresh workspace" })).closest('section')!;
+  expect(again.textContent).toContain('The workspace on this computer is as it was. Nothing was moved or deleted, and Bridge started it again.');
+  expect(within(again).getByText(retired, { selector: 'code' })).toBeTruthy();
+});
+
+test('a transaction that was set aside but not finished says so and finishes on the next try', async () => {
+  const interrupted: FreshStatus = { state: 'interrupted', transaction };
+  status = { selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'Bridge must finish starting a fresh workspace before starting the local cluster.', workspaceFailure: { operation: 'verify', cause: 'unknown', codes: [] }, workspaceFresh: interrupted, workspaceFreshPlan: { image: { kind: 'cached' } } };
+  const user = userEvent.setup(); watchCopies();
+  render(<App />);
+  await openLocalSetup(user);
+  const card = (await screen.findByRole('heading', { name: "Bridge didn't finish starting a fresh workspace" })).closest('section')!;
+  expect(card.textContent).toContain("Bridge set the workspace on this computer aside, but couldn't finish replacing it. Your agent files are kept.");
+  expect(card.textContent).toContain("The workspace can't start until this is finished. Bridge finishes it when you try again, or the next time Bridge opens.");
+  expect(card.textContent).not.toContain('Nothing was moved');
+  expect(within(card).queryByRole('button', { name: 'Done' })).toBeNull();
+  // The workspace card's own retry can't start it, so only the way forward is offered.
+  expect(screen.queryByRole('button', { name: /^(Restart workspace|Try again)$/ })).toBeNull();
+  await user.click(within(card).getByRole('button', { name: 'Copy details for help' }));
+  expect(clipboard).toBe(`Bridge fresh workspace\nFresh workspace: interrupted (${transaction})`);
+  // Finishing needs no second confirmation: nothing more is lost.
+  fresh = async () => { status = { selected: 'localVm', localVm: 'preparing', model: 'locked', modelSupported: true, workspaceFresh: { state: 'replaced', transaction, ai: 'removed', reclaimable: [], cleaning: false } }; return status.workspaceFresh!; };
+  await user.click(within(card).getByRole('button', { name: 'Finish starting a fresh workspace' }));
+  expect(screen.queryByRole('region', { name: 'Start a fresh workspace?' })).toBeNull();
+  expect(await screen.findByRole('region', { name: 'Fresh workspace' })).toBeTruthy();
+  expect(calls('workspace_fresh_start')).toHaveLength(1);
+});
+
+test('folders Bridge did not expect are named, with what to do', async () => {
+  const found = ['C:\\Users\\you\\AppData\\Local\\ai.orka.bridge\\local-vm-v1', retired];
+  status = { selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'Bridge must finish starting a fresh workspace before starting the local cluster.', workspaceFailure: { operation: 'verify', cause: 'unknown', codes: [] }, workspaceFresh: { state: 'conflict', found } };
+  const user = userEvent.setup(); watchCopies();
+  render(<App />);
+  await openLocalSetup(user);
+  const card = (await screen.findByRole('heading', { name: "Bridge found workspace folders it didn't expect" })).closest('section')!;
+  expect(card.textContent).toContain("To continue, quit Bridge and move these out of Bridge's folder, for example to your desktop, then reopen Bridge. Keep them until the new workspace works:");
+  expect(within(card).getAllByRole('listitem').map(item => item.textContent)).toEqual(found);
+  await user.click(within(card).getByRole('button', { name: 'Copy details for help' }));
+  expect(clipboard).toBe('Bridge fresh workspace\nFresh workspace: unexpected folders (2)');
+});
+
+test('when native says a fresh workspace cannot start, the stuck card keeps its own retry and says why', async () => {
+  status = { ...status, workspaceFreshPlan: { blocked: 'updateHistory', image: { kind: 'cached' } } };
+  const user = userEvent.setup(); watchCopies();
+  render(<App />);
+  await openLocalSetup(user);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await screen.findByRole('alert');
+  await user.click(screen.getByRole('button', { name: 'Check again' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('this workspace came from a workspace update'));
+  expect(screen.queryByRole('button', { name: 'Start a fresh workspace' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
+  await user.click(screen.getAllByRole('button', { name: 'Copy details for help' })[0]);
+  expect(clipboard).toContain('Fresh workspace available: no (updateHistory)');
+  // Nor is it offered from Manage.
+  const card = screen.getByRole('region', { name: 'Workspace' });
+  await user.click(within(card).getByRole('button', { name: "What's inside" }));
+  expect(within(card).queryByRole('button', { name: 'Start a fresh workspace…' })).toBeNull();
+});
+
+test('a guest still settling is worth another check, not a refusal towards a fresh workspace', async () => {
+  const busy = { kind: 'modelReconnect', message: 'SECRET', cleanup: ['modelStatusPreconditions', 'busy'] };
+  refusals = [refused, busy, refused];
+  const user = userEvent.setup();
+  render(<App />);
+  await openLocalSetup(user);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await screen.findByRole('alert');
+  await user.click(screen.getByRole('button', { name: 'Check again' }));
+  await user.click(await screen.findByRole('button', { name: 'Check again' }));
+  // Refused, busy, refused: never two refusals in a row, so Check again stays.
+  await screen.findByRole('button', { name: 'Check again' });
+  expect(screen.queryByRole('button', { name: 'Start a fresh workspace' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Check again' }));
+  expect(await screen.findByRole('button', { name: 'Start a fresh workspace' })).toBeTruthy();
 });

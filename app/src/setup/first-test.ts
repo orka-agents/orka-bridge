@@ -9,6 +9,10 @@ const preference = firstTestPreference;
 export function armFirstTest() {
   try { if (localStorage.getItem(preference) === null) localStorage.setItem(preference, 'pending'); } catch { /* No durable claim means no automatic side effect. */ }
 }
+// A fresh workspace is a new first setup: its first test runs automatically again.
+export function rearmFirstTest() {
+  try { localStorage.setItem(preference, 'pending'); } catch { /* No durable claim means no automatic side effect. */ }
+}
 export function retireFirstTest() {
   try { if (localStorage.getItem(preference) === 'pending') localStorage.setItem(preference, 'attempted'); } catch { /* An unreadable preference cannot admit a test. */ }
 }
