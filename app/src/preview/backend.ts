@@ -50,6 +50,11 @@ export const scenarios = {
   firstTestFails: 'First run: the first test fails',
   firstTestStale: 'First run: the first test needs running again',
   firstTestUnknown: 'First run: the first test result is unknown',
+  copilotDenied: 'First run: GitHub Copilot not available to the account',
+  copilotModelFallback: 'First run: the usual model is not offered, another is preselected',
+  copilotNoModel: 'First run: the account offers no usable model',
+  copilotUnreachable: "First run: this computer can't reach GitHub Copilot",
+  copilotChoiceGone: 'First run: a saved model choice is no longer offered',
   navThinking: 'Navigator: thinking about an answer',
   navReplyFailed: 'Navigator: could not answer',
   navNoModel: 'Navigator: no model connected',
@@ -78,7 +83,8 @@ let gh: Gh = (['missing', 'signedOut', 'signedIn'] as const).find(value => value
 
 const now = () => Date.now() * speed;
 // The first-run scenarios start as a new computer does and differ only where they say.
-const firstRun = scenario === 'firstDownloadFails' || scenario === 'firstTestFails' || scenario === 'firstTestStale' || scenario === 'firstTestUnknown';
+const copilotScenario = scenario.startsWith('copilot');
+const firstRun = scenario === 'firstDownloadFails' || scenario === 'firstTestFails' || scenario === 'firstTestStale' || scenario === 'firstTestUnknown' || copilotScenario;
 const fresh = scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow' || firstRun;
 // firstDownloadFails: the first download stops partway with a network failure; Try again then succeeds.
 let downloadFails = scenario === 'firstDownloadFails';
@@ -89,6 +95,20 @@ let reopened = scenario === 'restart';
 let stopped: 'cancelled' | 'closed' | null = null;
 const navScenario = scenario.startsWith('nav');
 let modelConnected = scenario === 'connected' || scenario === 'runFails' || scenario === 'clusterReady' || navScenario && scenario !== 'navNoModel';
+// Preview data only: an account's Copilot catalog as the AI card's picker shows it.
+const previewModels = [{ id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra' }, { id: 'gpt-6.1-terra', name: 'GPT-6.1 Terra' }, { id: 'gpt-5.6-sol' }, { id: 'gpt-5.6-luna' }, { id: 'claude-sonnet-5.5' }, { id: 'gemini-4-neon' }, { id: 'gpt-4.1' }];
+const copilotModels = scenario === 'copilotNoModel' ? [] : scenario === 'copilotModelFallback' || scenario === 'copilotChoiceGone' ? previewModels.slice(1) : previewModels;
+// The same preference order as native: it only picks the preselected row.
+const preselected = ['gpt-5.6-terra', 'gpt-6.1-terra', 'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-4.1'].find(id => copilotModels.some(m => m.id === id)) ?? copilotModels[0]?.id;
+const copilotCatalog = () => ({ account: 'octocat', models: copilotModels, ...(preselected ? { preselected } : {}) });
+let connectedModel = modelConnected ? 'gpt-5.6-terra' : null;
+let staleChoice = scenario === 'copilotChoiceGone';
+function copilotRefusal() {
+  if (gh === 'missing') throw { kind: 'modelCaptureUnavailable' };
+  if (gh === 'signedOut') throw { kind: 'modelCaptureFailed' };
+  if (scenario === 'copilotDenied') throw { kind: 'modelCopilotAccessDenied', account: 'octocat' };
+  if (scenario === 'copilotUnreachable') throw { kind: 'modelCopilotUnreachable', account: 'octocat' };
+}
 
 // Deterministic 64-hex digest; the preview only needs stable, distinct source ids.
 function digest(text: string) {
@@ -271,7 +291,7 @@ const navSeed: Partial<Record<Scenario, Turn[]>> = {
 const navTurns = navSeed[scenario];
 if (navTurns) chats.set(NAVIGATOR_ID, { versions: [navTurns], fresh: false });
 function navigatorSnapshot() {
-  return { chat: chatSnapshot(NAVIGATOR_ID), thinksWith: modelConnected ? { kind: 'copilot', model: 'gpt-5.6-terra' } : null };
+  return { chat: chatSnapshot(NAVIGATOR_ID), thinksWith: modelConnected ? { kind: 'copilot', model: connectedModel ?? 'gpt-5.6-terra' } : null };
 }
 function chatNew(id: string) {
   if (chatSnapshot(id).busy) throw 'busy';
@@ -633,20 +653,29 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
     case 'setup_change_local': await wait(1); selected = null; stopped = null; startedAt = null; modelConnected = false; return status();
     case 'setup_example': return { agent: agentSource, tests: testSource };
     case 'setup_open_help': return null;
-    case 'setup_connect_model':
+    case 'setup_check_model':
+      await wait(1);
+      copilotRefusal();
+      return copilotCatalog();
+    case 'setup_connect_model': {
       await wait(2);
       if (!ready()) throw { kind: 'modelGuest' };
-      if (gh === 'missing') throw { kind: 'modelCaptureUnavailable' };
-      if (gh === 'signedOut') throw { kind: 'modelCaptureFailed' };
-      modelConnected = true;
-      return { ready: true, connection: { kind: 'copilot', model: 'gpt-5.6-terra', account: 'octocat' } };
-    case 'setup_remove_model': case 'setup_reset_model': await wait(1); modelConnected = false; return { ready: false };
+      copilotRefusal();
+      const model = typeof args?.model === 'string' ? args.model : undefined;
+      if (!model && modelConnected && connectedModel) return { ready: true, connection: { kind: 'copilot', model: connectedModel, account: 'octocat' } };
+      if (staleChoice && !model) throw { kind: 'modelCopilotModelNotOffered', wanted: 'gpt-5.6-terra', ...copilotCatalog() };
+      if (!model) throw { kind: 'modelCopilotChooseModel', ...copilotCatalog() };
+      if (!copilotModels.some(m => m.id === model)) throw { kind: 'modelCopilotModelNotOffered', wanted: model, ...copilotCatalog() };
+      modelConnected = true; connectedModel = model; staleChoice = false;
+      return { ready: true, connection: { kind: 'copilot', model, account: 'octocat' } };
+    }
+    case 'setup_remove_model': case 'setup_reset_model': await wait(1); modelConnected = false; connectedModel = null; return { ready: false };
     case 'workspace_upgrade_status': return upgradeNone;
     case 'workspace_catalog':
       if (!ready() || !modelConnected) throw 'catalogUnavailable';
       return {
-        defaultModel: 'gpt-5.6-terra',
-        models: { state: 'ready', items: [{ id: 'gpt-5.6-terra', pickerEnabled: true, chatSupported: true }, { id: 'claude-sonnet-5-5', pickerEnabled: true, chatSupported: true }] },
+        defaultModel: connectedModel ?? 'gpt-5.6-terra',
+        models: { state: 'ready', items: [...new Set([connectedModel ?? 'gpt-5.6-terra', 'gpt-5.6-terra', 'claude-sonnet-5-5'])].map(id => ({ id, pickerEnabled: true, chatSupported: true })) },
         tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Fetch a web page and return its text.' }, { kind: 'builtin', name: 'web_search', description: 'Search the web.' }] },
       };
     case 'agents_list': return [...docs].map(([id, doc]) => ({ id, name: doc.name, path: pair(id).path, available: true }));

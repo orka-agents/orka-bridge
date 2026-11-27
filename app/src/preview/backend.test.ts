@@ -8,7 +8,7 @@ import { chatCall } from '../designer/chat-api';
 import { agentCall, SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
 import { runCall } from '../designer/run-api';
 import { isTestDraft } from '../designer/test-definitions';
-import { connectKey, connectModel, resetModel } from '../setup/modelState';
+import { checkCopilot, connectKey, connectModel, resetModel } from '../setup/modelState';
 import { readPreflight } from '../setup/preflight-state';
 import { workspaceRequirements } from '../setup/requirements';
 import { selectLocal, setupStatus } from '../setup/state';
@@ -159,7 +159,37 @@ describe('preview backend replies', () => {
     expect(mismatch).toMatchObject({ ok: false, category: 'modelInstallationMismatch' });
     expect(!mismatch.ok && mismatch.recovery).toBeTruthy();
     expect(await resetModel()).toMatchObject({ ok: true });
-    expect(await connectModel()).toMatchObject({ ok: true, connection: { kind: 'copilot' } });
+    expect(await connectModel(undefined, 'gpt-6.1-terra')).toMatchObject({ ok: true, connection: { kind: 'copilot', model: 'gpt-6.1-terra' } });
+  });
+
+  it('lists the Copilot catalog through the model validators and connects only with a chosen model', async () => {
+    await preview('scenario=ready&speed=100');
+    const check = await checkCopilot();
+    expect(check).toMatchObject({ ok: true, catalog: { account: 'octocat', preselected: 'gpt-5.6-terra' } });
+    expect(check.ok && check.catalog.models.length).toBeGreaterThan(3);
+    const choice = await connectModel();
+    expect(choice).toMatchObject({ ok: false, category: 'modelCopilotChooseModel', catalog: { preselected: 'gpt-5.6-terra' } });
+    expect(await connectModel(undefined, 'gpt-5.6-sol')).toMatchObject({ ok: true, connection: { kind: 'copilot', model: 'gpt-5.6-sol' } });
+    expect(await readWorkspaceCatalog(new AbortController().signal)).toMatchObject({ defaultModel: 'gpt-5.6-sol' });
+  });
+
+  it.each([
+    ['copilotDenied', 'modelCopilotAccessDenied'],
+    ['copilotUnreachable', 'modelCopilotUnreachable'],
+  ])('%s refuses the check and the connect with a typed outcome', async (name, category) => {
+    await preview(`scenario=${name}&speed=100`);
+    expect(await checkCopilot()).toMatchObject({ ok: false, category, account: 'octocat' });
+  });
+
+  it('copilotModelFallback, copilotNoModel and copilotChoiceGone shape the picker', async () => {
+    await preview('scenario=copilotModelFallback&speed=100');
+    const fallback = await checkCopilot();
+    expect(fallback).toMatchObject({ ok: true, catalog: { preselected: 'gpt-6.1-terra' } });
+    expect(fallback.ok && fallback.catalog.models.some(m => m.id === 'gpt-5.6-terra')).toBe(false);
+    await preview('scenario=copilotNoModel&speed=100');
+    expect(await checkCopilot()).toEqual({ ok: true, catalog: { account: 'octocat', models: [] } });
+    await preview('scenario=copilotChoiceGone&speed=100');
+    expect(await checkCopilot()).toMatchObject({ ok: true, catalog: { preselected: 'gpt-6.1-terra' } });
   });
 
   it('passes the cluster validators for denied and unreachable clusters', async () => {
