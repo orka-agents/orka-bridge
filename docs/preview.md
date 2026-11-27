@@ -8,6 +8,8 @@ No separate Kubernetes, Docker or Orka installation is needed.
 **Before connecting:** Bridge copies your GitHub CLI sign-in token into the
 VM for Copilot and saves its own copy in your operating system's credential
 store. This is your GitHub token, not a separate token limited to this preview.
+Before anything reaches the VM, Bridge also uses it from this computer to ask
+GitHub Copilot which models your account offers, so you can choose one.
 Only connect an account whose credentials you are comfortable giving to the VM.
 [Remove sign-in](#remove-bridge) clears Bridge's copies; it does not revoke the
 token or sign GitHub CLI out.
