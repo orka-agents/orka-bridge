@@ -256,11 +256,14 @@ pub struct SetupError {
     /// Copilot preflight only: the GitHub login read with the sign-in, never an e-mail.
     #[serde(skip_serializing_if = "Option::is_none")]
     account: Option<String>,
-    /// Copilot preflight only: the model Bridge asked for and a few the account offers.
+    /// Copilot only: the model that is no longer offered, the account's usable models
+    /// for the AI card's picker, and the row it starts on. The person still confirms.
     #[serde(skip_serializing_if = "Option::is_none")]
     wanted: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    offered: Option<Vec<String>>,
+    models: Option<Vec<crate::copilot_preflight::Offered>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preselected: Option<String>,
 }
 impl SetupError {
     pub(crate) fn connect(diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>) -> Self {
@@ -324,7 +327,7 @@ impl SetupError {
             "modelCopilotUnreachable" => "This computer could not reach GitHub Copilot.",
             "modelCopilotMalformed" => "GitHub Copilot sent a reply Bridge does not understand.",
             "modelCopilotModelNotOffered" => "GitHub Copilot does not offer the chosen model for this account.",
-            "modelCopilotChooseModel" => "Choose a GitHub Copilot model before connecting.",
+            "modelCopilotChooseModel" => "Choose a GitHub Copilot model to connect.",
             "modelDelivery" => {
                 "Private credential delivery was not acknowledged. Completion is unknown."
             }
@@ -345,7 +348,8 @@ impl SetupError {
             recovery: None,
             account: None,
             wanted: None,
-            offered: None,
+            models: None,
+            preselected: None,
         }
     }
 }
@@ -360,7 +364,8 @@ fn storage_error() -> SetupError {
         recovery: None,
         account: None,
         wanted: None,
-        offered: None,
+        models: None,
+        preselected: None,
     }
 }
 

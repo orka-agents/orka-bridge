@@ -80,10 +80,8 @@ fn first_connect_refused_by_the_preflight_saves_and_delivers_nothing() {
             assert_no_token(&error);
             if kind == "modelCopilotModelNotOffered" {
                 assert_eq!(error.wanted.as_deref(), Some("gpt-5.6-terra"));
-                assert_eq!(
-                    error.offered.as_deref(),
-                    Some(&["other-model".to_string()][..])
-                );
+                assert_eq!(error.preselected.as_deref(), Some("other-model"));
+                assert_eq!(error.models.as_ref().map(Vec::len), Some(1));
             }
         }
         assert_eq!(vault.counts(), (0, 0, 0));
@@ -320,18 +318,69 @@ fn checking_while_the_workspace_starts_writes_nothing() {
 }
 
 #[test]
-fn a_first_connect_without_a_chosen_model_reads_nothing() {
-    let (tmp, setup, install) = setup_with(Preflight::fixed(Ok(Catalog::offering(&["gpt-4.1"]))));
+fn connect_without_a_chosen_model_lists_the_models_and_saves_nothing() {
+    let (tmp, setup, install) = setup_with(Preflight::fixed(Ok(Catalog::offering(&[
+        "gpt-4.1",
+        "gpt-5.6-luna",
+    ]))));
     let vault = vault();
+    for _ in 0..2 {
+        let (mut client, worker) = peer(Uuid::new_v4(), |request| {
+            assert!(matches!(request.body, RequestBody::ModelStatus {}));
+            Some(idle())
+        });
+        let error = setup
+            .connect_stored_model(install, None, &mut client, &vault, capture)
+            .unwrap_err();
+        drop(client);
+        assert_eq!(worker.join().unwrap().publications(), 0);
+        assert_eq!(error.kind, "modelCopilotChooseModel");
+        assert_eq!(
+            serde_json::to_value(&error).unwrap(),
+            serde_json::json!({"kind": "modelCopilotChooseModel", "message": "Choose a GitHub Copilot model to connect.",
+                "account": LOGIN, "models": [{"id": "gpt-4.1"}, {"id": "gpt-5.6-luna"}], "preselected": "gpt-5.6-luna"})
+        );
+        assert!(!tmp.path().join("setup-v1/model-v1").exists());
+        assert_no_token(&error);
+    }
+    assert_eq!(vault.counts(), (0, 0, 0));
+    // A saved sign-in without a model is listed from the saved copy, still changing nothing.
+    setup.associate_secret(install, TOKEN, &vault).unwrap();
+    let before = fs::read(tmp.path().join("setup-v1/model-v1")).unwrap();
     let (mut client, worker) = peer(Uuid::new_v4(), |_| Some(idle()));
     let error = setup
-        .connect_stored_model(install, None, &mut client, &vault, || {
-            panic!("no sign-in is read before the person chooses a model")
-        })
+        .connect_stored_model(install, None, &mut client, &vault, || panic!("no capture"))
         .unwrap_err();
     drop(client);
     assert_eq!(worker.join().unwrap().publications(), 0);
     assert_eq!(error.kind, "modelCopilotChooseModel");
-    assert!(!tmp.path().join("setup-v1/model-v1").exists());
-    assert_eq!(vault.counts(), (0, 0, 0));
+    assert_eq!(
+        fs::read(tmp.path().join("setup-v1/model-v1")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn a_saved_choice_no_longer_offered_asks_to_pick_again_without_mutation() {
+    let (_tmp, setup, install) = setup_with(Preflight::fixed(Ok(Catalog::offering(&["gpt-4.1"]))));
+    let vault = vault();
+    setup.associate_secret(install, TOKEN, &vault).unwrap();
+    let (mut client, worker) = peer(Uuid::new_v4(), |_| Some(idle()));
+    let error = setup
+        .connect_stored_model(install, Some("gpt-6.1-terra"), &mut client, &vault, || {
+            panic!("no capture")
+        })
+        .unwrap_err();
+    drop(client);
+    assert_eq!(worker.join().unwrap().publications(), 0);
+    assert_eq!(error.kind, "modelCopilotModelNotOffered");
+    assert_eq!(error.wanted.as_deref(), Some("gpt-6.1-terra"));
+    assert_eq!(error.preselected.as_deref(), Some("gpt-4.1"));
+    assert_eq!(
+        read_binding(setup.root.as_deref().unwrap())
+            .unwrap()
+            .unwrap()
+            .phase,
+        Phase::Stored
+    );
 }

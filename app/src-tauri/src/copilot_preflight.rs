@@ -85,10 +85,6 @@ impl Catalog {
             .cloned()
             .collect()
     }
-    /// A few usable ids, for a refusal's details.
-    pub fn shown(&self) -> Vec<String> {
-        self.models().into_iter().take(8).map(|m| m.id).collect()
-    }
     pub fn offering(ids: &[&str]) -> Self {
         Self(
             ids.iter()
@@ -106,10 +102,10 @@ impl Catalog {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CheckError {
     Failure(PreflightFailure),
-    /// The chosen model is not among the account's usable models.
+    /// The chosen model is not among the account's usable models; the person picks again.
     NotOffered {
         wanted: String,
-        offered: Vec<String>,
+        catalog: Catalog,
     },
 }
 
@@ -156,7 +152,7 @@ pub fn require(model: &str, catalog: &Catalog) -> Result<(), CheckError> {
     } else {
         Err(CheckError::NotOffered {
             wanted: model.into(),
-            offered: catalog.shown(),
+            catalog: catalog.clone(),
         })
     }
 }

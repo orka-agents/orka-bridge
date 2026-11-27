@@ -94,7 +94,8 @@ fn unavailable() -> SetupError {
         recovery: None,
         account: None,
         wanted: None,
-        offered: None,
+        models: None,
+        preselected: None,
     }
 }
 /// A typed preflight refusal. Nothing has been saved or delivered when this is returned.
@@ -111,11 +112,21 @@ fn copilot_error(error: crate::copilot_preflight::CheckError, account: Option<&s
     setup.account = account
         .filter(|login| crate::runtime::credentials::valid_login(login))
         .map(String::from);
-    if let CheckError::NotOffered { wanted, offered } = error {
+    if let CheckError::NotOffered { wanted, catalog } = error {
+        setup.preselected = crate::copilot_preflight::preselect(None, &catalog);
+        setup.models = Some(catalog.models());
         setup.wanted = Some(wanted);
-        setup.offered = Some(offered);
     }
     setup
+}
+/// Not a failure: the sign-in is good and these are the models to choose from.
+fn choose_model(account: Option<String>, check: CopilotCheck) -> SetupError {
+    SetupError {
+        account: account.filter(|login| crate::runtime::credentials::valid_login(login)),
+        preselected: check.preselected,
+        models: Some(check.models),
+        ..SetupError::model("modelCopilotChooseModel")
+    }
 }
 fn capture_error(error: crate::runtime::credentials::CaptureError) -> SetupError {
     use crate::runtime::credentials::CaptureError;
@@ -620,12 +631,24 @@ impl SetupStore {
             if before.phase != ModelPhase::Idle || before.credential.installed {
                 return Err(SetupError::model("modelGuest"));
             }
-            // A first Copilot sign-in needs the person's model before anything is read.
-            let chosen = copilot_selection(model)?;
             let token = capture().map_err(capture_error)?;
+            let Some(model) = model else {
+                // Nothing is saved until the person confirms a model from this list.
+                let catalog = self
+                    .copilot
+                    .catalog(token.as_bytes())
+                    .map_err(|error| copilot_error(CheckError::Failure(error), token.account()))?;
+                let check = CopilotCheck {
+                    account: None,
+                    preselected: crate::copilot_preflight::preselect(None, &catalog),
+                    models: catalog.models(),
+                };
+                return Err(choose_model(token.account().map(String::from), check));
+            };
+            copilot_selection(Some(model))?;
             // Ask GitHub before saving: a refused sign-in is never kept or delivered.
             self.copilot
-                .require(token.as_bytes(), &chosen.model)
+                .require(token.as_bytes(), model)
                 .map_err(|error| copilot_error(error, token.account()))?;
             self.associate_captured(installation, &token, store)?;
         }
@@ -644,7 +667,24 @@ impl SetupStore {
             match (b.connection.map(|c| c.selection).or(attempt), b.vendor) {
                 (Some(selection), _) => selection,
                 (None, Some(vendor)) => key_selection(vendor),
-                (None, None) => copilot_selection(model)?,
+                (None, None) => match model {
+                    Some(model) => copilot_selection(Some(model))?,
+                    None => {
+                        // A saved sign-in without a model yet: list the models, change nothing.
+                        drop(_access);
+                        // As for Connect, an older image is refused before any secret is read.
+                        let before = client
+                            .model_status()
+                            .map_err(|_| SetupError::model("modelGuest"))?;
+                        if before.phase != ModelPhase::Idle || before.credential.installed {
+                            return Err(SetupError::model("modelGuest"));
+                        }
+                        let check = self.check_copilot(store, || {
+                            Err(crate::runtime::credentials::CaptureError::Failed)
+                        })?;
+                        return Err(choose_model(check.account.clone(), check));
+                    }
+                },
             }
         };
         let vendor = selection.vendor;

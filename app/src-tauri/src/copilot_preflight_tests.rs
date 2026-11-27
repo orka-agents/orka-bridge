@@ -78,7 +78,11 @@ async fn sends_exactly_the_relay_request_and_parses_its_reply() {
     assert!(catalog.usable("gpt-6.1-terra") && catalog.usable("gpt-4.1"));
     assert!(!catalog.usable("text-embedding-3-small") && !catalog.usable("no-tools"));
     assert_eq!(
-        catalog.shown(),
+        catalog
+            .models()
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
         ["gpt-5.6-luna", "gpt-6.1-terra", "gpt-4.1"]
     );
     let requests = server.requests.lock().unwrap();
@@ -197,7 +201,14 @@ fn odd_ids_and_names_are_dropped_not_offered() {
     );
     let catalog = parse(body.as_bytes()).unwrap();
     // The first gpt-4.1 entry wins and has no tool support, so it is not listed.
-    assert_eq!(catalog.shown(), ["ok_1.2-3"]);
+    assert_eq!(
+        catalog
+            .models()
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        ["ok_1.2-3"]
+    );
     assert!(catalog.models().iter().all(|m| m.name.is_none()));
     assert!(!valid_id(&"m".repeat(101)));
 }
@@ -250,9 +261,9 @@ fn a_chosen_model_must_still_be_offered() {
     let ids: Vec<String> = (0..20).map(|i| format!("other-{i}")).collect();
     let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
     match require("gpt-5.6-terra", &Catalog::offering(&refs)) {
-        Err(CheckError::NotOffered { wanted, offered }) => {
+        Err(CheckError::NotOffered { wanted, catalog }) => {
             assert_eq!(wanted, "gpt-5.6-terra");
-            assert_eq!(offered.len(), 8);
+            assert_eq!(catalog.models().len(), 20);
         }
         other => panic!("{other:?}"),
     }
