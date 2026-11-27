@@ -7,10 +7,9 @@
 
 /* The message box: a strong card whose field reads as its writing area. */
 .nav-composer { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: var(--border-editing) solid var(--color-text); border-radius: var(--radius-card); background: var(--color-card); }
-.nav-composer textarea { width: 100%; min-height: 44px; max-height: 40dvh; padding: var(--space-1-5) var(--space-0-5); border: 0; outline: 0; resize: none; background: transparent; color: var(--color-text); font: 400 17px/24px var(--font-ui); overflow-wrap: anywhere; }
+.nav-composer textarea { width: 100%; min-height: 44px; max-height: 40dvh; padding: var(--space-1-5) var(--space-0-5); border: 0; resize: none; background: transparent; color: var(--color-text); font: 400 17px/24px var(--font-ui); overflow-wrap: anywhere; }
 .nav-composer-start textarea { min-height: 76px; }
 .nav-composer textarea::placeholder, .nav-composer-placeholder { color: var(--color-text-secondary); }
-.nav-composer:focus-within { box-shadow: 0 0 0 2px var(--color-page), 0 0 0 4px var(--color-focus); }
 .nav-composer-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
 .nav-line { min-width: 0; color: var(--color-text-secondary); font: 500 12.5px/16px var(--font-mono); font-variant-ligatures: none; }
 .nav-links { display: inline-flex; align-items: center; gap: var(--space-3); margin-left: auto; }

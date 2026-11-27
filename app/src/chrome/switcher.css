@@ -19,8 +19,11 @@
 .switcher-filter svg { flex: none; width: 14px; height: 14px; fill: none; stroke: var(--color-text-secondary); stroke-width: 1.5; stroke-linecap: round; }
 .switcher-filter input { flex: 1; min-width: 0; min-height: 28px; padding: 0; border: 0; background: transparent; color: var(--color-text); font: 400 13px/18px var(--font-ui); }
 .switcher-filter input::placeholder { color: var(--color-text-secondary); opacity: 1; }
+/* The filter's underline is its edge, so focus shows there: ink after a click, a 2px focus line from the keyboard.
+   These three rules go together. */
 .switcher-filter input:focus-visible { outline: none; }
 .switcher-filter:focus-within { border-bottom-color: var(--color-text); }
+:root:not([data-focus="pointer"]) .switcher-filter:has(input:focus-visible) { border-bottom-color: var(--color-focus); box-shadow: 0 1px 0 var(--color-focus); }
 
 .switcher-group-label { margin: 0; padding: var(--space-2) var(--space-2) var(--space-0-5); color: var(--color-text-secondary); font: 500 11px/16px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
 .switcher-note { margin: 0; padding: var(--space-1) var(--space-2) var(--space-2); color: var(--color-text-secondary); font: var(--type-small); }

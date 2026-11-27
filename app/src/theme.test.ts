@@ -65,6 +65,15 @@ describe('Orka ink and paper theme contract', () => {
     // The focus ring is the running blue, so it shows against every surface a control sits on.
     expect(palette['color-focus']).toBe(palette['color-status-running']);
   });
+  it.each([0, 1])('keeps the focus indicator at 3:1 against every surface it sits on in palette %s', index => {
+    const palette = palettes[index];
+    // WCAG 2.2 non-text contrast: the ring 2px out, and the blue edge that grows 1px out of an ink-edged field or card,
+    // both border the page, card, bar, well or hover fill, or the page artwork at its darkest line.
+    for (const surface of ['color-page', 'color-card', 'color-bar', 'color-well', 'color-chrome', 'color-hover']) {
+      expect(contrast(palette['color-focus'], palette[surface])).toBeGreaterThanOrEqual(3);
+    }
+    for (const { darkest } of art(index)) expect(contrast(palette['color-focus'], darkest)).toBeGreaterThanOrEqual(3);
+  });
   it.each([0, 1])('bakes the artwork at the boards\' strength and keeps page text readable over its darkest line in palette %s', index => {
     const [chart, pod] = art(index);
     expect(chart.alpha).toBeCloseTo(index ? .20 : .16, 2);

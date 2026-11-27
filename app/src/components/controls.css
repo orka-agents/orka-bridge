@@ -34,7 +34,47 @@ select.field:disabled { --chevron: url('../assets/chevron/secondary.svg'); }
 }
 :root[data-theme="dark"] select.field { --chevron: url('../assets/chevron/ink-dark.svg'); }
 :root[data-theme="dark"] select.field:disabled { --chevron: url('../assets/chevron/secondary-dark.svg'); }
+/* Where the engine lets the page draw a select's list (Chromium and WebView2 from 135), the list is a Bridge popover
+   like the Orka switcher: line edge, 8px radius, the popover shadow, 34px rows, the chosen row on the well. The
+   control stays a native select, so its role, keyboard and value are unchanged; other engines keep the system list,
+   which color-scheme in app.css draws in the theme. */
+@supports (appearance: base-select) {
+  select.field, select.field::picker(select) { appearance: base-select; }
+  select.field { display: flex; align-items: center; }
+  select.field::picker-icon { display: none; }
+  select.field::picker(select) {
+    max-width: calc(100vw - 32px); margin-block: var(--space-1); position-try-order: normal;
+    padding: var(--space-1-5); border: 1px solid var(--color-border-strong); border-radius: var(--radius-overlay);
+    background: var(--color-page); color: var(--color-text); box-shadow: var(--shadow-popover); font: inherit;
+  }
+  select.field option { display: flex; align-items: center; gap: var(--space-2); min-height: 34px; padding: 7px var(--space-2); border-radius: var(--radius-row); background: transparent; color: var(--color-text); white-space: normal; overflow-wrap: anywhere; }
+  select.field option:not(:disabled):hover { background: var(--color-hover); }
+  select.field option:checked { background: var(--color-well); font-weight: 600; }
+  select.field option:disabled { color: var(--color-text-tertiary); }
+  select.field option:focus-visible { outline-offset: -2px; }
+  /* Opened by a click, the row under the keyboard cursor is shown by the hover fill rather than a ring. */
+  :root[data-focus="pointer"] select.field option:focus-visible { outline: none; background: var(--color-hover); }
+  :root[data-focus="pointer"] select.field option:checked:focus-visible { background: var(--color-well); }
+  select.field option::checkmark { order: 1; margin-left: auto; }
+}
 @media (forced-colors: active) { select.field { appearance: auto; background-image: none; padding-right: 12px; } }
+/* Focus. Every control shows the 2px focus ring 2px out when focused from the keyboard (app.css). A control or card
+   that already has an ink edge shows focus on that edge instead of a second ring around it: the edge turns focus blue
+   and grows 1px outward, with no gap. A click into a text field leaves only the caret and, on a 1.5px field, the 2px
+   ink edge of the thing being typed in; focus-modality.ts sets data-focus="pointer" for that case. */
+.field:focus-visible, .card:focus-visible { outline: calc(var(--border-control) + 1px) solid var(--color-focus); outline-offset: calc(-1 * var(--border-control)); }
+:is(.card-strong, .card-editing):focus-visible { outline-width: calc(var(--border-editing) + 1px); outline-offset: calc(-1 * var(--border-editing)); }
+:root[data-focus="pointer"] :is(input, textarea).field:focus-visible { outline: var(--border-editing) solid var(--color-text); outline-offset: calc(-1 * var(--border-control)); }
+:root[data-focus="pointer"] .field[aria-invalid="true"]:focus-visible { outline-color: var(--color-status-failed); }
+/* A field that is the writing area of a strong card (the Navigator's message box, Try a task) draws focus on the
+   card: these two rules go together. */
+:is(.nav-composer, .try-composer) textarea:focus-visible { outline: none; }
+:root:not([data-focus="pointer"]) :is(.nav-composer, .try-composer):has(textarea:focus-visible) { outline: calc(var(--border-editing) + 1px) solid var(--color-focus); outline-offset: calc(-1 * var(--border-editing)); }
+/* The status card is the Orka switcher's target, so it carries the switcher's focus: these two rules go together. */
+.status-bar .host-chip:focus-visible { outline: none; }
+.status-bar:has(.host-chip:focus-visible) { outline: calc(var(--border-control) + 1px) solid var(--color-focus); outline-offset: calc(-1 * var(--border-control)); }
+/* Rows in a list or menu ring inside themselves, clear of the popover's edge and of the next row. */
+:is(.context-picker, .tool-picker) li button:focus-visible, .overview-place:focus-visible { outline-offset: -2px; }
 .field-hint { margin: var(--space-1) 0 0; font: var(--type-caption); color: var(--color-text-secondary); }
 .field-error { margin: var(--space-1) 0 0; font: var(--type-caption); color: var(--color-status-failed); }
 h1[tabindex="-1"]:focus { outline: none; }
