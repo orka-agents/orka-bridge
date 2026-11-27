@@ -25,7 +25,37 @@ const absolute = (ms: number) => new Date(ms).toLocaleString();
 const sourceKey = (s: { agent: string; tests: string }) => `${s.agent}/${s.tests}`;
 const fileTitle = (f: SavedFile) => f.summary?.name || f.name;
 // Context name alone when unique, then with namespace, then with the service, so two installations never look alike.
-function placeLabels(places: Place[]) {
+type CachedPlace = { key: string; state: string; observedAt: number | null; entries: unknown[]; connection: number | null };
+/** Cached Activity or Sessions rows as the latest places read allows them, even from a Send poll that doesn't rescan.
+ * A refusal, a revocation or a new connection drops a place's rows; callers also store that result (`settle`), so a
+ * later inventory read can't bring the rows back before the section's own read succeeds. A cluster that is
+ * unreachable on the same connection keeps its rows, shown as `disconnected` until it is reachable again, and keeps
+ * any refusal or failure already recorded. `cleared` resets other per-read fields. */
+export function withAccess<T extends CachedPlace>(cached: T[], places: Place[], cleared: Partial<T> = {}): T[] {
+  return cached.map(p => {
+    const q = places.find(place => place.key === p.key);
+    if (!q) return p;
+    const dropped = drop(p, q, cleared);
+    if (dropped) return dropped;
+    return q.access === 'disconnected' && (p.state === 'complete' || p.state === 'partial') ? { ...p, state: 'disconnected' } : p;
+  });
+}
+/** Stores what `withAccess` drops; returns the same array when nothing was dropped. */
+export function settle<T extends CachedPlace>(cached: T[], places: Place[], cleared: Partial<T> = {}): T[] {
+  const next = cached.map(p => { const q = places.find(place => place.key === p.key); return q && drop(p, q, cleared) || p; });
+  return next.every((p, i) => p === cached[i]) ? cached : next;
+}
+function drop<T extends CachedPlace>(p: T, q: Place, cleared: Partial<T>): T | undefined {
+  const lost = q.access === 'denied' || q.access === 'revoked' ? q.access : undefined;
+  const moved = q.connection !== undefined && q.connection !== p.connection;
+  if (!lost && !moved) return undefined;
+  const state = lost ?? 'disconnected';
+  const connection = q.connection ?? p.connection;
+  // Already dropped: keep the same object so storing it changes nothing.
+  if (p.state === state && !p.entries.length && p.observedAt === null && p.connection === connection) return undefined;
+  return { ...p, ...cleared, state, entries: [], observedAt: null, connection };
+}
+export function placeLabels(places: Place[]) {
   const labels = new Map<string, string>();
   const clash = (key: (p: Place) => string, p: Place) => places.filter(q => key(q) === key(p)).length > 1;
   places.forEach(p => labels.set(p.key, !clash(q => q.context, p) ? p.context : !clash(q => `${q.context}/${q.namespace}`, p) ? `${p.context} · ${p.namespace}` : `${p.context} · ${p.namespace} · ${p.service}`));

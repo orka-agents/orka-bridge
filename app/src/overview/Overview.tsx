@@ -4,6 +4,8 @@ import { type LiveAgents, type Observation, type Places, type RunAgent, readAgen
 import { agentRows, buildCards, clusterGroups, type CompleteAgents, type Inputs, isEmpty, summaryLabel } from './model';
 import { PlaceNotes } from './places';
 import { AgentListRow } from './card';
+import { RecentActivity } from './Activity';
+import { SessionList } from './Sessions';
 import { type AgentFocus, sendAgentCheck } from '../clusters/send-api';
 import './overview.css';
 
@@ -39,21 +41,32 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const [placeFilter, setPlaceFilter] = useState('all');
   const [nameFilter, setNameFilter] = useState('');
   const [reveal, setReveal] = useState<string>();
+  // Show agent from Recent activity: clear the filters and expand the agent's row, then focus its card once rendered.
+  const [shown, setShown] = useState<{ key: string }>();
+  useEffect(() => {
+    if (!shown) return;
+    const card = [...document.querySelectorAll<HTMLElement>('[data-card-key]')].find(node => node.dataset.cardKey === shown.key);
+    if (card) { card.focus(); card.scrollIntoView?.({ block: 'center' }); }
+  }, [shown]);
+  const showAgent = (key: string) => { setPlaceFilter('all'); setNameFilter(''); setReveal(key); setShown({ key }); };
   const [places, setPlaces] = useState<Places>();
   const [placeError, setPlaceError] = useState(false);
+  // Counts visits and checks, not Send polls, so Recent activity and Conversations scan once per pass.
+  const [activityRevision, setActivityRevision] = useState(0);
   useEffect(() => {
     if (!active || focusPending || focus?.target) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    async function list() {
+    async function list(first: boolean) {
       const value = await readPlaces();
       if (cancelled) return;
       setPlaceError(!value);
       setPlaces(previous => value ?? (previous && { ...previous, places: previous.places.map(p => ({ ...p, stale: true })) }));
+      if (first) setActivityRevision(v => v + 1);
       // Poll known unfinished work; completion also invalidates a read that missed the initial checkpoint.
-      if (hasRunningSend(value)) timer = setTimeout(() => { void list(); }, 500);
+      if (hasRunningSend(value)) timer = setTimeout(() => { void list(false); }, 500);
     }
-    void list();
+    void list(true);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [active, refresh, focusPending, focus?.target, placesRevision]);
   // See in Overview: refresh only the recorded destination, then focus the exact card (place key + UID, never a name).
@@ -87,10 +100,12 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     const { target, sendId } = focus;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let targetFound = false;
-    async function list(navigate = false, resolveAbsence = false) {
+    async function list(navigate = false, resolveAbsence = false, first = false) {
       const value = target ? await readPlaces(target.key) : undefined;
       if (request !== focusEpoch.current) return;
       if (navigate) autofocus.completed = true;
+      // This effect's first read, not a Send poll, starts a new Recent activity and Conversations pass.
+      if (target && first) setActivityRevision(v => v + 1);
       if (target) setPlaceError(!value);
       const seen = value?.places.find(p => p.key === target?.key);
       // Other places were not queried by this refresh, so keep their cached freshness.
@@ -108,7 +123,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       if (request === focusEpoch.current && !targetFound) { absencePending.current = false; setFocusNote(focusNotes[check]); }
     }
     // Resume either unfinished step without repeating navigation's initialization resets.
-    void list(!autofocus.completed, absencePending.current);
+    void list(!autofocus.completed, absencePending.current, true);
     return () => { focusEpoch.current++; clearTimeout(timer); };
   }, [active, focus, focusRetry, focusPending, placesRevision]);
   useEffect(() => {
@@ -208,6 +223,10 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     {empty ? <>
       <div className="card overview-empty"><h2>No agents yet</h2><p>Make an agent, or start from web-reader, the example that answers from a web page. Agents you test or send show up here, with their results in each place.</p>
         <div className="overview-card-actions">{onNewAgent && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}<Button onClick={onOpenExample}>Open web-reader</Button></div></div>
-    </> : <div className="overview-list">{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="overview-note">No agents match these filters.</p>}</div>}
+    </> : <>
+      <div className="overview-list">{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="overview-note">No agents match these filters.</p>}</div>
+      <RecentActivity active={active} places={places} revision={activityRevision} onShowAgent={showAgent} onCheck={actions.onCheck} />
+      <SessionList active={active} places={places} revision={activityRevision} onCheck={actions.onCheck} />
+    </>}
   </section>;
 }

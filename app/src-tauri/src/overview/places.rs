@@ -57,6 +57,10 @@ pub struct Place {
     pub observed_at: Option<u64>,
     pub checked_at: Option<u64>,
     pub agents: Vec<RemoteAgent>,
+    /// `connected`, `denied`, `revoked` or `disconnected`, as Activity and Sessions would see it.
+    pub access: &'static str,
+    /// The place's connection revision, as Activity and Sessions report it.
+    pub connection: Option<u64>,
     #[serde(skip)]
     identity: Identity,
 }
@@ -74,6 +78,8 @@ impl Place {
             observed_at: None,
             checked_at,
             agents: Vec::new(),
+            access: "disconnected",
+            connection: None,
             identity,
         }
     }
@@ -115,6 +121,45 @@ struct Entry {
     view: Place,
     access: Option<Arc<RemoteAccess>>,
     generation: u64,
+    /// The last inventory read was refused.
+    denied: bool,
+    /// Reload or re-Use removed access this session had.
+    revoked: bool,
+    /// Which confirmed connection `access` came from; a re-Use gets a new one.
+    connection: Option<u64>,
+}
+impl Entry {
+    fn lost(&self) -> Option<Lost> {
+        match &self.access {
+            None if self.revoked => Some(Lost::Revoked),
+            None => Some(Lost::Disconnected),
+            Some(_) if self.view.stale && self.denied => Some(Lost::Denied),
+            Some(_) if self.view.stale => Some(Lost::Disconnected),
+            Some(_) => None,
+        }
+    }
+    /// The view with its access state, so a Send poll also reports lost access and new connections.
+    fn place(&self) -> Place {
+        let mut view = self.view.clone();
+        view.access = match self.lost() {
+            None => "connected",
+            Some(Lost::Denied) => "denied",
+            Some(Lost::Revoked) => "revoked",
+            Some(Lost::Disconnected) => "disconnected",
+        };
+        view.connection = self.connection;
+        view
+    }
+}
+/// Why Activity has no live access to a place.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Lost {
+    /// The last read was refused.
+    Denied,
+    /// Reload or a new connection removed the access this session had.
+    Revoked,
+    /// Not read successfully in this session, or the last read failed.
+    Disconnected,
 }
 #[derive(Default)]
 struct State {
@@ -174,6 +219,9 @@ impl Inventory {
                     view,
                     generation,
                     access: None,
+                    denied: false,
+                    revoked: false,
+                    connection: None,
                 },
             );
         }
@@ -191,13 +239,31 @@ impl Inventory {
             .unwrap()
             .entries
             .get(key)
-            .map(|e| e.view.clone())
+            .map(Entry::place)
     }
     /// Retained access is selectable only after a successful current-session observation.
     pub(crate) fn connected_access(&self, key: &str) -> Option<Arc<RemoteAccess>> {
         let state = self.state.lock().unwrap();
         let entry = state.entries.get(key)?;
         (!entry.view.stale).then(|| entry.access.clone()).flatten()
+    }
+    /// Activity's access to a place, or why it has none, with the place's connection revision,
+    /// read under one lock. The revision changes only when a new connection is confirmed for
+    /// the place, so a place whose access was replaced, revoked or refused since no longer
+    /// returns the same access and revision.
+    pub(crate) fn activity_connection(
+        &self,
+        key: &str,
+    ) -> (Option<u64>, Result<Arc<RemoteAccess>, Lost>) {
+        let state = self.state.lock().unwrap();
+        let Some(entry) = state.entries.get(key) else {
+            return (None, Err(Lost::Disconnected));
+        };
+        let access = match (entry.lost(), &entry.access) {
+            (None, Some(access)) => Ok(access.clone()),
+            (lost, _) => Err(lost.unwrap_or(Lost::Disconnected)),
+        };
+        (entry.connection, access)
     }
     pub(crate) fn forget(&self, key: &str) -> Result<(), &'static str> {
         let mut state = self.state.lock().unwrap();
@@ -223,6 +289,9 @@ impl Inventory {
                 view,
                 access: Some(access),
                 generation,
+                denied: false,
+                revoked: false,
+                connection: Some(generation),
             },
         );
         // Live access is still usable if remembering fails; the snapshot reports unavailable.
@@ -235,6 +304,7 @@ impl Inventory {
         for (id, entry) in state.entries.iter_mut() {
             if key.as_ref().is_none_or(|key| key == id) {
                 entry.generation = generation;
+                entry.revoked |= entry.access.is_some();
                 entry.access = None;
                 entry.view.stale = true;
             }
@@ -246,7 +316,7 @@ impl Inventory {
             .unwrap()
             .entries
             .values()
-            .map(|e| e.view.clone())
+            .map(Entry::place)
             .collect()
     }
     pub(crate) async fn refresh(&self) -> Vec<Place> {
@@ -286,6 +356,9 @@ impl Inventory {
             // Reload/re-Use while a read was in flight revokes that response.
             if entry.generation == generation {
                 entry.view.stale = result.is_err();
+                // A refusal stands until a read succeeds; a later network error does not clear it.
+                entry.denied = matches!(result, Err(ClusterError::Denied))
+                    || (entry.denied && result.is_err());
                 if let Ok(agents) = result {
                     entry.view.agents = agents;
                     entry.view.observed_at = Some(crate::overview::now());

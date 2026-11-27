@@ -89,7 +89,7 @@ test.each(['revealed', 'expanded', 'collapsed'])('completion revalidates the req
   view.rerender(<Overview {...props} onNewAgent={() => undefined} focus={focus} placesRevision={1} />);
   await screen.findByRole('img', { name: 'team: Failed' });
   expect(filter.value).toBe(disclosure === 'revealed' ? '' : 'same');
-  expect(screen.getByRole('button', { name: disclosure === 'revealed' ? 'All' : 'team', pressed: true })).toBeTruthy();
+  expect(within(screen.getByRole('group', { name: 'Place' })).getByRole('button', { name: disclosure === 'revealed' ? 'All' : 'team', pressed: true })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Show places for same-name' }).getAttribute('aria-expanded')).toBe(String(disclosure !== 'collapsed'));
   if (before) {
     expect(screen.getByRole('article', { name: 'team, Failed' })).toBe(before);
@@ -102,6 +102,21 @@ test.each(['revealed', 'expanded', 'collapsed'])('completion revalidates the req
   expect(calls.mock.calls.filter(([command]) => command === 'overview_files')).toHaveLength(1);
   expect(calls.mock.calls.filter(([command]) => command === 'overview_agents')).toHaveLength(1);
   expect(calls.mock.calls.some(([command]) => command === 'send_agent_check')).toBe(false);
+});
+test('returning through See in Overview reads Recent activity and Conversations once more, and its Send polls do not', async () => {
+  const running = places([{ ...agent('uid-one'), record: { ...record('uid-one'), verdict: 'running' } }]);
+  const calls = ipc(places([agent('uid-one')]));
+  const scans = () => calls.mock.calls.filter(([command]) => command === 'overview_activity' || command === 'overview_sessions').length;
+  const view = render(<Overview {...props} />);
+  await waitFor(() => expect(scans()).toBe(2));
+  view.rerender(<Overview {...props} active={false} />);
+  calls.mockImplementation(command => command === 'overview_places' ? running : command === 'overview_files' ? files : live);
+  view.rerender(<Overview {...props} focus={{ id: 1, sendId: id, target: target('uid-one') }} />);
+  await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
+  await waitFor(() => expect(scans()).toBe(4));
+  // The running Send keeps polling its place; those polls are not a new pass.
+  await waitFor(() => expect(calls.mock.calls.filter(([command, args]) => command === 'overview_places' && (args as { key?: string } | undefined)?.key === key).length).toBeGreaterThan(2), { timeout: 2000 });
+  expect(scans()).toBe(4);
 });
 test('a late scoped reply cannot undo a newer completion revision for the same focus identity', async () => {
   let release!: (value: unknown) => void; let reads = 0;

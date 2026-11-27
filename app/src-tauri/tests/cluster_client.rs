@@ -6,6 +6,7 @@ use bridge_engine::clusters::*;
 use kube::config::Kubeconfig;
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     future::Future,
     io::{Read, Write},
     net::TcpListener,
@@ -198,7 +199,17 @@ async fn places_snapshot_is_passive_and_selection_is_exact_and_revocable() {
     assert_eq!(reply(session.places())["places"], both["places"]);
     session.reload().await.unwrap();
     assert_eq!(reply(session.places())["selectedKey"], Value::Null);
-    assert_eq!(reply(session.places())["places"], both["places"]);
+    // Reload keeps every place but withdraws the access each one had.
+    let mut reloaded = reply(session.places())["places"].clone();
+    let mut before = both["places"].clone();
+    for place in reloaded.as_array_mut().unwrap() {
+        assert_eq!(place["access"], "revoked");
+        place["access"] = Value::Null;
+    }
+    for place in before.as_array_mut().unwrap() {
+        place["access"] = Value::Null;
+    }
+    assert_eq!(reloaded, before);
 }
 
 #[tokio::test]
@@ -607,6 +618,54 @@ async fn overview_inventory_is_get_only_and_keeps_stale_after_reload_without_rec
         calls,
         "failed re-Use revokes inventory access"
     );
+}
+
+#[tokio::test]
+async fn overview_places_report_access_and_connection_for_send_polls() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let cfg = config(&api.start(), json!({"token":"static-fixture"}));
+    let (session, _) = reading_session(cfg, &orka);
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    let first = reply(session.overview().await);
+    assert_eq!(first[0]["access"], "connected");
+    let connection = first[0]["connection"].as_u64().unwrap();
+    *orka.fail.lock().unwrap() = Some(failed(Check::Permissions, CheckResult::PermissionDenied));
+    let key = first[0]["key"].as_str().unwrap().to_owned();
+    let denied = reply(session.overview_one(&key).await);
+    assert_eq!(denied[0]["access"], "denied");
+    assert_eq!(denied[0]["connection"], connection);
+    *orka.fail.lock().unwrap() = Some(AccessOutcome::Unavailable);
+    assert_eq!(
+        reply(session.overview().await)[0]["access"],
+        "denied",
+        "a refusal stands until a read succeeds"
+    );
+    *orka.fail.lock().unwrap() = None;
+    assert_eq!(reply(session.overview().await)[0]["access"], "connected");
+    *orka.fail.lock().unwrap() = Some(AccessOutcome::Unavailable);
+    let offline = reply(session.overview().await);
+    assert_eq!(offline[0]["access"], "disconnected");
+    assert_eq!(offline[0]["connection"], connection);
+    *orka.fail.lock().unwrap() = None;
+    session.reload().await.unwrap();
+    let reloaded = reply(session.places());
+    assert_eq!(reloaded["places"][0]["access"], "revoked");
+    assert_eq!(reloaded["places"][0]["connection"], connection);
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    let again = reply(session.overview().await);
+    assert_eq!(again[0]["access"], "connected");
+    assert_ne!(again[0]["connection"], connection);
 }
 
 #[tokio::test]
@@ -1185,6 +1244,14 @@ struct OrkaFixture {
     slow_pages: Mutex<bool>,
     echo: Mutex<bool>,
     paged: Mutex<bool>,
+    // Activity: Task list pages addressed by cursor "p<N>", and tool-call pages in call order.
+    task_pages: Mutex<Vec<Value>>,
+    tool_pages: Mutex<Vec<Value>>,
+    tool_calls: Mutex<Vec<(String, u64)>>,
+    // Sessions: list pages addressed by cursor "p<N>", and named items by kind and name.
+    session_pages: Mutex<Vec<Value>>,
+    items: Mutex<HashMap<(String, String), Result<Value, AccessOutcome>>>,
+    item_calls: Mutex<Vec<(OrkaItem, String)>>,
 }
 impl Default for OrkaFixture {
     fn default() -> Self {
@@ -1203,6 +1270,12 @@ impl Default for OrkaFixture {
             slow_pages: Mutex::new(false),
             echo: Mutex::new(false),
             paged: Mutex::new(false),
+            task_pages: Mutex::default(),
+            tool_pages: Mutex::default(),
+            tool_calls: Mutex::default(),
+            session_pages: Mutex::default(),
+            items: Mutex::default(),
+            item_calls: Mutex::default(),
         }
     }
 }
@@ -1277,7 +1350,58 @@ impl OrkaRead for OrkaFixture {
                 }
                 OrkaResource::Agents => self.agents.lock().unwrap().clone().unwrap_or_else(|| json!({"items":[],"metadata":{}})),
                 OrkaResource::AgentInventory => inventory.unwrap(),
+                OrkaResource::Tasks => {
+                    let index = after.map_or(0, |a| a.trim_start_matches('p').parse().unwrap());
+                    let pages = self.task_pages.lock().unwrap();
+                    pages.get(index).cloned().unwrap_or_else(|| pages.last().cloned().unwrap_or(json!({"items":[],"metadata":{}})))
+                }
+                OrkaResource::Sessions => {
+                    let index = after.map_or(0, |a| a.trim_start_matches('p').parse().unwrap());
+                    let pages = self.session_pages.lock().unwrap();
+                    pages.get(index).cloned().unwrap_or_else(|| pages.last().cloned().unwrap_or(json!({"items":[],"metadata":{}})))
+                }
             })
+        })
+    }
+    fn events<'a>(
+        &'a self,
+        _: &'a kube::Client,
+        _: &'a TargetBinding,
+        _: &'a str,
+        _: &'a str,
+        stream: EventStream<'a>,
+        after: u64,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>> {
+        Box::pin(async move {
+            assert_eq!(stream.kind(), EventKind::TaskToolCalls);
+            assert_eq!(stream.types(), ["ToolCallCompleted", "ToolCallFailed"]);
+            let mut calls = self.tool_calls.lock().unwrap();
+            calls.push((stream.name().into(), after));
+            let pages = self.tool_pages.lock().unwrap();
+            Ok(pages[(calls.len() - 1).min(pages.len() - 1)].clone())
+        })
+    }
+    fn item<'a>(
+        &'a self,
+        _: &'a kube::Client,
+        _: &'a TargetBinding,
+        _: &'a str,
+        item: OrkaItem,
+        _: &'a str,
+        name: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>> {
+        Box::pin(async move {
+            self.item_calls.lock().unwrap().push((item, name.into()));
+            let kind = match item {
+                OrkaItem::Session => "session",
+                OrkaItem::Task => "task",
+            };
+            self.items
+                .lock()
+                .unwrap()
+                .get(&(kind.to_string(), name.to_string()))
+                .cloned()
+                .unwrap_or(Err(AccessOutcome::Unavailable))
         })
     }
 }
@@ -2497,4 +2621,611 @@ async fn use_deadline_is_unknown_at_the_provider_page_in_progress() {
     );
     let elapsed = start.elapsed().as_secs();
     assert!((29..33).contains(&elapsed), "{elapsed}s");
+}
+
+fn listed_task(name: &str, created: &str, status: Value) -> Value {
+    json!({"metadata":{"name":name,"namespace":"agents","uid":format!("uid-{name}"),"creationTimestamp":created},
+        "spec":{"agentRef":{"name":"reader"},"prompt":"x".repeat(2000)},"status":status})
+}
+async fn connected_activity_session(
+    api: &Arc<ApiFixture>,
+    orka: &Arc<OrkaFixture>,
+) -> bridge_engine::clusters::commands::ClusterSession {
+    let (session, _) = reading_session(
+        config(&api.start(), json!({"token":"static-fixture"})),
+        orka,
+    );
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    session.overview().await;
+    session
+}
+
+#[tokio::test]
+async fn activity_reads_every_task_page_and_shows_newest_first() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let session = connected_activity_session(&api, &orka).await;
+    let bound = json!({"name":"reader","namespace":"agents","uid":"agent-uid"});
+    *orka.task_pages.lock().unwrap() = vec![
+        json!({"items":[
+            listed_task("a-old", "2026-01-01T00:00:00Z", json!({"phase":"Succeeded","completionTime":"2026-01-01T00:05:00Z","agentExecutionBinding":{"agent":bound}})),
+            listed_task("bridge-task-0123456789abcdef0123456789abcdef", "2026-01-02T00:00:00Z", json!({"phase":"Failed","message":"model unavailable"})),
+        ],"metadata":{"continue":"p1"}}),
+        json!({"items":[
+            listed_task("z-running", "2026-01-03T00:00:00Z", json!({"phase":"Running","startTime":"2026-01-03T00:00:01Z","message":"working"})),
+            listed_task("m-renamed", "2026-01-02T12:00:00Z", json!({"phase":"Succeeded","agentExecutionBinding":{"agent":{"name":"other","namespace":"agents","uid":"x"}}})),
+        ],"metadata":{}}),
+    ];
+    let activity = reply(bridge_engine::overview_activity::read(&session).await);
+    let place = &activity["places"][0];
+    assert_eq!(place["state"], "complete");
+    assert!(place["observedAt"].is_u64());
+    let names: Vec<_> = place["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["task"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "z-running",
+            "m-renamed",
+            "bridge-task-0123456789abcdef0123456789abcdef",
+            "a-old"
+        ]
+    );
+    let entries = &place["entries"];
+    // The bound UID is kept only when it names the same Agent in the watched namespace.
+    assert_eq!(entries[3]["agentUid"], "agent-uid");
+    assert_eq!(entries[1]["agentUid"], Value::Null);
+    assert_eq!(entries[2]["test"], true);
+    assert_eq!(entries[2]["message"], "model unavailable");
+    // Messages are kept only for failed or cancelled runs, and Task specs never leave native.
+    assert_eq!(entries[0]["message"], Value::Null);
+    assert!(!activity.to_string().contains("prompt"));
+    let calls = orka.calls.lock().unwrap();
+    let tasks: Vec<_> = calls
+        .iter()
+        .filter(|c| c.0 == OrkaResource::Tasks)
+        .map(|c| c.3.clone())
+        .collect();
+    assert_eq!(tasks, [None, Some("p1".into())]);
+}
+
+#[tokio::test]
+async fn activity_reports_partial_denied_unavailable_and_disconnected_places() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let session = connected_activity_session(&api, &orka).await;
+    // Endless pages stop at the read limit, keep the newest entries and say the list is partial.
+    let pages: Vec<_> = (0..12)
+        .map(|page| {
+            let items: Vec<_> = (0..20)
+                .map(|i| {
+                    listed_task(
+                        &format!("t-{page}-{i}"),
+                        &format!("2026-01-01T00:{page:02}:{i:02}Z"),
+                        json!({}),
+                    )
+                })
+                .collect();
+            json!({"items":items,"metadata":{"continue":format!("p{}", page + 1)}})
+        })
+        .collect();
+    *orka.task_pages.lock().unwrap() = pages;
+    let partial = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(partial["places"][0]["state"], "partial");
+    assert_eq!(
+        partial["places"][0]["entries"].as_array().unwrap().len(),
+        50
+    );
+    assert_eq!(partial["places"][0]["entries"][0]["task"], "t-9-19");
+    assert_eq!(partial["places"][0]["entries"][0]["phase"], "pending");
+    assert_eq!(
+        orka.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.0 == OrkaResource::Tasks)
+            .count(),
+        10
+    );
+
+    for page in [
+        json!({"items":[{"metadata":{"name":"t","namespace":"other","uid":"u","creationTimestamp":"2026-01-01T00:00:00Z"}}],"metadata":{}}),
+        json!({"items":[{"metadata":{"name":"t","namespace":"agents","uid":"u"}}],"metadata":{}}),
+        json!({"items":[listed_task("t", "2026-01-01T00:00:00Z", json!({})), listed_task("t", "2026-01-01T00:00:00Z", json!({}))],"metadata":{}}),
+        json!({"items":[],"metadata":{"continue":"p0"}}),
+        json!({"items":null,"metadata":{}}),
+    ] {
+        *orka.task_pages.lock().unwrap() = vec![page];
+        let read = reply(bridge_engine::overview_activity::read(&session).await);
+        assert_eq!(read["places"][0]["state"], "unavailable");
+        assert_eq!(read["places"][0]["entries"], json!([]));
+    }
+
+    // Empty pages with fresh cursors stop at the page cap instead of reading until the timeout.
+    *orka.task_pages.lock().unwrap() = (0..30)
+        .map(|page| json!({"items":[],"metadata":{"continue":format!("p{}", page + 1)}}))
+        .collect();
+    let tasks_before = orka
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c.0 == OrkaResource::Tasks)
+        .count();
+    let empty = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(empty["places"][0]["state"], "partial");
+    assert_eq!(
+        orka.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.0 == OrkaResource::Tasks)
+            .count()
+            - tasks_before,
+        10
+    );
+
+    *orka.fail_at.lock().unwrap() = Some((
+        OrkaResource::Tasks,
+        failed(Check::Agents, CheckResult::PermissionDenied),
+    ));
+    let denied = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(denied["places"][0]["state"], "denied");
+
+    // A place whose last inventory read failed is not read for activity.
+    *orka.fail_at.lock().unwrap() =
+        Some((OrkaResource::AgentInventory, AccessOutcome::Unavailable));
+    session.overview().await;
+    let before = orka.calls.lock().unwrap().len();
+    let stale = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(stale["places"][0]["state"], "disconnected");
+    assert_eq!(orka.calls.lock().unwrap().len(), before);
+
+    // A refused inventory read reports the place as denied, and Reload revokes its access.
+    *orka.fail_at.lock().unwrap() = Some((
+        OrkaResource::AgentInventory,
+        failed(Check::Agents, CheckResult::PermissionDenied),
+    ));
+    session.overview().await;
+    let refused = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(refused["places"][0]["state"], "denied");
+    // A network error after the refusal does not turn it back into a merely unreachable place.
+    *orka.fail_at.lock().unwrap() =
+        Some((OrkaResource::AgentInventory, AccessOutcome::Unavailable));
+    session.overview().await;
+    let still = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(still["places"][0]["state"], "denied");
+    *orka.fail_at.lock().unwrap() = None;
+    session.reload().await.unwrap();
+    let revoked = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(revoked["places"][0]["state"], "revoked");
+    assert_eq!(revoked["places"][0]["entries"], json!([]));
+    let old = revoked["places"][0]["connection"].as_u64().unwrap();
+
+    // Connecting again gives the place a new revision, even when its next read fails, so the
+    // frontend never shows the old connection's runs under it.
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    *orka.fail_at.lock().unwrap() =
+        Some((OrkaResource::AgentInventory, AccessOutcome::Unavailable));
+    session.overview().await;
+    let again = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(again["places"][0]["state"], "disconnected");
+    assert_ne!(again["places"][0]["connection"].as_u64().unwrap(), old);
+}
+
+#[tokio::test]
+async fn activity_tool_calls_follow_the_filtered_cursor_and_reject_other_streams() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let session = connected_activity_session(&api, &orka).await;
+    let key = reply(session.places())["places"][0]["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let event = |seq: u64, kind: &str, tool: &str| json!({"id":format!("e{seq}"),"namespace":"agents","streamType":"task","streamID":"run-1","seq":seq,"type":kind,"severity":"info","taskName":"run-1","toolName":tool,"createdAt":"2026-01-01T00:00:00.5Z"});
+    let page = |after: u64, latest: u64, events: Vec<Value>| json!({"namespace":"agents","streamType":"task","streamID":"run-1","afterSeq":after,"latestSeq":latest,"events":events});
+    let full: Vec<_> = (1..=200)
+        .map(|i| event(i * 2, "ToolCallCompleted", "web_fetch"))
+        .collect();
+    *orka.tool_pages.lock().unwrap() = vec![
+        page(0, 900, full.clone()),
+        page(400, 900, vec![event(401, "ToolCallFailed", "shell")]),
+    ];
+    let read = reply(bridge_engine::overview_activity::tool_calls(&session, &key, "run-1").await);
+    // The first page already reaches the 200-call limit, so the list is partial.
+    assert_eq!(read["state"], "partial");
+    assert_eq!(read["calls"].as_array().unwrap().len(), 200);
+    assert_eq!(
+        read["calls"][0],
+        json!({"tool":"web_fetch","failed":false,"at":1767225600500u64})
+    );
+    assert_eq!(*orka.tool_calls.lock().unwrap(), [("run-1".to_string(), 0)]);
+
+    // A short page still continues from its last sequence number until an empty page or the
+    // stream's latest sequence; an event without a tool name makes the list partial.
+    orka.tool_calls.lock().unwrap().clear();
+    let mut unnamed = event(9, "ToolCallFailed", "x");
+    unnamed["toolName"] = Value::Null;
+    *orka.tool_pages.lock().unwrap() = vec![
+        page(
+            0,
+            900,
+            vec![
+                event(2, "ToolCallCompleted", "web_fetch"),
+                event(6, "ToolCallCompleted", "web_fetch"),
+            ],
+        ),
+        page(6, 900, vec![unnamed, event(11, "ToolCallFailed", "shell")]),
+        page(11, 900, vec![]),
+    ];
+    let read = reply(bridge_engine::overview_activity::tool_calls(&session, &key, "run-1").await);
+    assert_eq!(read["state"], "partial");
+    let tools: Vec<_> = read["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["tool"].as_str().unwrap())
+        .collect();
+    assert_eq!(tools, ["web_fetch", "web_fetch", "shell"]);
+    assert_eq!(
+        *orka.tool_calls.lock().unwrap(),
+        [
+            ("run-1".to_string(), 0),
+            ("run-1".to_string(), 6),
+            ("run-1".to_string(), 11)
+        ]
+    );
+
+    orka.tool_calls.lock().unwrap().clear();
+    *orka.tool_pages.lock().unwrap() = vec![page(
+        0,
+        7,
+        vec![
+            event(3, "ToolCallCompleted", "web_fetch"),
+            event(7, "ToolCallFailed", "shell"),
+        ],
+    )];
+    let read = reply(bridge_engine::overview_activity::tool_calls(&session, &key, "run-1").await);
+    assert_eq!(read["state"], "complete");
+    assert_eq!(read["calls"][1]["tool"], "shell");
+    assert_eq!(read["calls"][1]["failed"], true);
+
+    for bad in [
+        json!({"namespace":"agents","streamType":"task","streamID":"run-2","afterSeq":0,"latestSeq":9,"events":[]}),
+        page(
+            0,
+            9,
+            vec![
+                event(5, "ToolCallCompleted", "a"),
+                event(5, "ToolCallCompleted", "b"),
+            ],
+        ),
+        page(0, 9, vec![event(5, "ModelMessage", "a")]),
+        page(0, 4, vec![event(5, "ToolCallCompleted", "a")]),
+    ] {
+        *orka.tool_pages.lock().unwrap() = vec![bad];
+        let read =
+            reply(bridge_engine::overview_activity::tool_calls(&session, &key, "run-1").await);
+        assert_eq!(read["state"], "unavailable");
+        assert_eq!(read["calls"], json!([]));
+    }
+
+    orka.tool_calls.lock().unwrap().clear();
+    for name in ["", "../agents", "Run", "a/b", "tasks?x=1"] {
+        let read = reply(bridge_engine::overview_activity::tool_calls(&session, &key, name).await);
+        assert_eq!(read["state"], "unavailable");
+    }
+    let unknown =
+        reply(bridge_engine::overview_activity::tool_calls(&session, "missing", "run-1").await);
+    assert_eq!(unknown["state"], "disconnected");
+    assert!(orka.tool_calls.lock().unwrap().is_empty());
+}
+
+fn listed_session(name: &str, updated: &str, active: &str) -> Value {
+    json!({"id":name,"name":name,"namespace":"agents","sessionType":"chat","messageCount":2,"inputTokens":1,
+        "outputTokens":1,"activeTask":active,"createdAt":"2026-01-01T00:00:00Z","updatedAt":updated})
+}
+
+#[tokio::test]
+async fn sessions_read_every_page_skip_gateway_and_name_running_agents() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let session = connected_activity_session(&api, &orka).await;
+    let mut gateway = listed_session("telegram-1", "2026-01-05T00:00:00Z", "");
+    gateway["sessionType"] = json!("gateway");
+    *orka.session_pages.lock().unwrap() = vec![
+        json!({"items":[
+            listed_session("running", "2026-01-04T00:00:00Z", "run-1"),
+            gateway,
+            // A caller-chosen chat ID Bridge can't request is counted, not fatal.
+            listed_session("team:chat", "2026-01-05T00:00:00Z", ""),
+        ],"metadata":{"continue":"p1"}}),
+        json!({"items":[
+            listed_session("old", "2026-01-01T00:00:00Z", ""),
+            listed_session("unread-task", "2026-01-03T00:00:00Z", "run-2"),
+        ],"metadata":{}}),
+    ];
+    orka.items.lock().unwrap().insert(
+        ("task".into(), "run-1".into()),
+        Ok(json!({"metadata":{"name":"run-1","namespace":"agents"},"spec":{"agentRef":{"name":"reader"},"prompt":"secret prompt"}})),
+    );
+    let read = reply(bridge_engine::overview_sessions::read(&session).await);
+    let place = &read["places"][0];
+    assert_eq!(place["state"], "complete");
+    assert!(place["observedAt"].is_u64());
+    let names: Vec<_> = place["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["running", "unread-task", "old"]);
+    assert_eq!(place["unsupported"], 1);
+    assert_eq!(place["entries"][0]["agent"], "reader");
+    assert_eq!(place["entries"][0]["activeTask"], "run-1");
+    // A running Task that can't be read leaves the Agent absent without failing the list.
+    assert_eq!(place["entries"][1]["agent"], Value::Null);
+    assert_eq!(place["entries"][2]["activeTask"], Value::Null);
+    assert!(!read.to_string().contains("prompt"));
+    assert!(!read.to_string().contains("telegram"));
+    let calls = orka.calls.lock().unwrap();
+    let pages: Vec<_> = calls
+        .iter()
+        .filter(|c| c.0 == OrkaResource::Sessions)
+        .map(|c| c.3.clone())
+        .collect();
+    assert_eq!(pages, [None, Some("p1".into())]);
+    assert_eq!(
+        *orka.item_calls.lock().unwrap(),
+        [
+            (OrkaItem::Task, "run-1".to_string()),
+            (OrkaItem::Task, "run-2".to_string())
+        ]
+    );
+}
+
+#[tokio::test]
+async fn sessions_read_at_most_ten_running_tasks_and_drop_finished_ones() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let session = connected_activity_session(&api, &orka).await;
+    let items: Vec<_> = (0..12)
+        .map(|i| {
+            listed_session(
+                &format!("s-{i:02}"),
+                &format!("2026-01-01T00:00:{:02}Z", 59 - i),
+                &format!("run-{i}"),
+            )
+        })
+        .collect();
+    *orka.session_pages.lock().unwrap() = vec![json!({"items":items,"metadata":{}})];
+    for i in 0..12 {
+        let phase = if i == 0 { "Succeeded" } else { "Running" };
+        orka.items.lock().unwrap().insert(
+            ("task".into(), format!("run-{i}")),
+            Ok(
+                json!({"metadata":{"name":format!("run-{i}"),"namespace":"agents"},
+                "spec":{"agentRef":{"name":"reader"}},"status":{"phase":phase}}),
+            ),
+        );
+    }
+    let read = reply(bridge_engine::overview_sessions::read(&session).await);
+    let entries = read["places"][0]["entries"].as_array().unwrap();
+    // A finished Task's stale lock is not shown as running.
+    assert_eq!(entries[0]["activeTask"], Value::Null);
+    assert_eq!(entries[0]["agent"], Value::Null);
+    assert_eq!(entries[1]["agent"], "reader");
+    assert_eq!(entries[9]["agent"], "reader");
+    // Past the read cap the Task still shows, without its Agent.
+    assert_eq!(entries[10]["activeTask"], "run-10");
+    assert_eq!(entries[10]["agent"], Value::Null);
+    assert_eq!(orka.item_calls.lock().unwrap().len(), 10);
+}
+
+#[tokio::test]
+async fn sessions_report_partial_denied_unavailable_and_disconnected_places() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let session = connected_activity_session(&api, &orka).await;
+    let pages: Vec<_> = (0..8)
+        .map(|page| {
+            let items: Vec<_> = (0..20)
+                .map(|i| {
+                    listed_session(
+                        &format!("s-{page}-{i}"),
+                        &format!("2026-01-01T00:{page:02}:{i:02}Z"),
+                        "",
+                    )
+                })
+                .collect();
+            json!({"items":items,"metadata":{"continue":format!("p{}", page + 1)}})
+        })
+        .collect();
+    *orka.session_pages.lock().unwrap() = pages;
+    let partial = reply(bridge_engine::overview_sessions::read(&session).await);
+    assert_eq!(partial["places"][0]["state"], "partial");
+    assert_eq!(
+        partial["places"][0]["entries"].as_array().unwrap().len(),
+        50
+    );
+    assert_eq!(partial["places"][0]["entries"][0]["name"], "s-4-19");
+    assert_eq!(
+        orka.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.0 == OrkaResource::Sessions)
+            .count(),
+        5
+    );
+
+    // Pages holding only gateway Sessions, with fresh cursors, stop at the page cap.
+    *orka.session_pages.lock().unwrap() = (0..30)
+        .map(|page| {
+            let mut gateway = listed_session(&format!("g-{page}"), "2026-01-01T00:00:00Z", "");
+            gateway["sessionType"] = json!("gateway");
+            json!({"items":[gateway],"metadata":{"continue":format!("p{}", page + 1)}})
+        })
+        .collect();
+    let sessions_before = orka
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c.0 == OrkaResource::Sessions)
+        .count();
+    let empty = reply(bridge_engine::overview_sessions::read(&session).await);
+    assert_eq!(empty["places"][0]["state"], "partial");
+    assert_eq!(empty["places"][0]["entries"], json!([]));
+    assert_eq!(
+        orka.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.0 == OrkaResource::Sessions)
+            .count()
+            - sessions_before,
+        5
+    );
+
+    for page in [
+        json!({"items":[{"name":"s","namespace":"other","messageCount":0,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}],"metadata":{}}),
+        json!({"items":[listed_session("s", "2026-01-01T00:00:00Z", ""), listed_session("s", "2026-01-01T00:00:00Z", "")],"metadata":{}}),
+        json!({"items":[],"metadata":{"continue":"p0"}}),
+        json!({"items":null,"metadata":{}}),
+    ] {
+        *orka.session_pages.lock().unwrap() = vec![page];
+        let read = reply(bridge_engine::overview_sessions::read(&session).await);
+        assert_eq!(read["places"][0]["state"], "unavailable");
+        assert_eq!(read["places"][0]["entries"], json!([]));
+    }
+
+    *orka.fail_at.lock().unwrap() = Some((
+        OrkaResource::Sessions,
+        failed(Check::Agents, CheckResult::PermissionDenied),
+    ));
+    let denied = reply(bridge_engine::overview_sessions::read(&session).await);
+    assert_eq!(denied["places"][0]["state"], "denied");
+
+    *orka.fail_at.lock().unwrap() =
+        Some((OrkaResource::AgentInventory, AccessOutcome::Unavailable));
+    session.overview().await;
+    let before = orka.calls.lock().unwrap().len();
+    let stale = reply(bridge_engine::overview_sessions::read(&session).await);
+    assert_eq!(stale["places"][0]["state"], "disconnected");
+    assert_eq!(orka.calls.lock().unwrap().len(), before);
+
+    // A refused inventory read reports the place as denied, and Reload revokes its access.
+    *orka.fail_at.lock().unwrap() = Some((
+        OrkaResource::AgentInventory,
+        failed(Check::Agents, CheckResult::PermissionDenied),
+    ));
+    session.overview().await;
+    let refused = reply(bridge_engine::overview_sessions::read(&session).await);
+    assert_eq!(refused["places"][0]["state"], "denied");
+    *orka.fail_at.lock().unwrap() = None;
+    session.reload().await.unwrap();
+    let revoked = reply(bridge_engine::overview_sessions::read(&session).await);
+    assert_eq!(revoked["places"][0]["state"], "revoked");
+    assert_eq!(revoked["places"][0]["entries"], json!([]));
+}
+
+#[tokio::test]
+async fn transcript_reads_only_the_named_session_on_a_connected_place() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let session = connected_activity_session(&api, &orka).await;
+    let key = reply(session.places())["places"][0]["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let lines = [
+        json!({"role":"user","content":"What changed?","ts":"2026-01-01T00:00:00Z"}).to_string(),
+        json!({"role":"assistant","content":"Two files.","toolCalls":[{"name":"web_fetch","arguments":{"url":"https://example.com"}}],"ts":"2026-01-01T00:00:02Z"}).to_string(),
+    ]
+    .join("\n");
+    orka.items.lock().unwrap().insert(
+        ("session".into(), "bridge-chat-1".into()),
+        Ok(json!({"name":"bridge-chat-1","namespace":"agents","transcript":lines,"messageCount":2})),
+    );
+    let read = reply(
+        bridge_engine::overview_sessions::read_transcript(&session, &key, "bridge-chat-1").await,
+    );
+    assert_eq!(read["state"], "complete");
+    assert_eq!(
+        read["messages"][1],
+        json!({"role":"assistant","text":"Two files.","cut":false,"tools":["web_fetch"],"at":1767225602000u64})
+    );
+    assert!(!read.to_string().contains("example.com"));
+
+    // The transcript is JSONL inside the reply: an escaped bearer only appears once decoded, and
+    // the decoded messages are checked too.
+    // A bearer across the text limit is checked whole, before the message is cut to a prefix.
+    let across = format!(
+        r#"{{"role":"user","content":"{}\u0073tatic-fixture"}}"#,
+        "a".repeat(bridge_engine::overview_sessions::MESSAGE_TEXT - 13)
+    );
+    for line in [
+        r#"{"role":"user","content":"token \u0073tatic-fixture"}"#,
+        r#"{"role":"assistant","toolCalls":[{"name":"\u0073tatic-fixture"}]}"#,
+        across.as_str(),
+    ] {
+        assert!(!line.contains("static-fixture"));
+        orka.items.lock().unwrap().insert(
+            ("session".into(), "escaped".into()),
+            Ok(json!({"name":"escaped","namespace":"agents","transcript":line})),
+        );
+        let read = reply(
+            bridge_engine::overview_sessions::read_transcript(&session, &key, "escaped").await,
+        );
+        assert_eq!(read["state"], "unavailable", "{line}");
+        assert!(!read.to_string().contains("static-fixtur"));
+    }
+
+    // A reply for another Session is refused.
+    orka.items.lock().unwrap().insert(
+        ("session".into(), "other".into()),
+        Ok(json!({"name":"bridge-chat-1","namespace":"agents","transcript":""})),
+    );
+    let read =
+        reply(bridge_engine::overview_sessions::read_transcript(&session, &key, "other").await);
+    assert_eq!(read["state"], "unavailable");
+
+    orka.items.lock().unwrap().insert(
+        ("session".into(), "hidden".into()),
+        Err(failed(Check::Agents, CheckResult::PermissionDenied)),
+    );
+    let read =
+        reply(bridge_engine::overview_sessions::read_transcript(&session, &key, "hidden").await);
+    assert_eq!(read["state"], "denied");
+
+    // Path syntax and unknown places never reach Orka.
+    let before = orka.item_calls.lock().unwrap().len();
+    let read =
+        reply(bridge_engine::overview_sessions::read_transcript(&session, &key, "a/b").await);
+    assert_eq!(read["state"], "unavailable");
+    let read = reply(
+        bridge_engine::overview_sessions::read_transcript(
+            &session,
+            "no-such-place",
+            "bridge-chat-1",
+        )
+        .await,
+    );
+    assert_eq!(read["state"], "disconnected");
+    assert_eq!(orka.item_calls.lock().unwrap().len(), before);
 }
