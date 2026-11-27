@@ -32,6 +32,8 @@ pub struct Orka {
     pub no_sessions: bool,
     pub opens: u32,
     pub closes: u32,
+    /// Refuse this many opens first, as a busy kubeconfig slot would.
+    pub refuse_opens: u32,
 }
 impl Orka {
     pub fn requests(&self, method: &str) -> Vec<&String> {
@@ -276,7 +278,14 @@ struct Opener {
 }
 impl ClusterOpen for Opener {
     fn open(&self) -> WireFuture<'_, Result<Arc<dyn ClusterWire>, ChatError>> {
-        self.orka.lock().unwrap().opens += 1;
+        {
+            let mut orka = self.orka.lock().unwrap();
+            if orka.refuse_opens > 0 {
+                orka.refuse_opens -= 1;
+                return Box::pin(async { Err(ChatError::ClusterUnavailable) });
+            }
+            orka.opens += 1;
+        }
         let client = reqwest::Client::builder()
             .no_proxy()
             .pool_max_idle_per_host(0)

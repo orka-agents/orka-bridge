@@ -210,3 +210,17 @@ async fn an_orka_without_sessions_is_named_and_its_task_deleted() {
     let o = orka.lock().unwrap();
     assert_eq!(o.requests("DELETE").len(), 1);
 }
+
+// The next message's connection may briefly lose the shared kubeconfig slot to a cleanup.
+#[tokio::test]
+async fn a_briefly_refused_open_is_retried_before_the_message_fails() {
+    let (orka, channel) = place().await;
+    orka.lock().unwrap().refuse_opens = 2;
+    let (_home, folder) = folder();
+    let id = folder.document_id();
+    let owner = ChatOwner::new(tokio::runtime::Handle::current());
+    owner.send_on(channel, folder, "First".into()).unwrap();
+    let s = settled(&owner, id).await;
+    assert_eq!(s.state, ChatState::Ready, "{s:?}");
+    assert!(s.error.is_none());
+}

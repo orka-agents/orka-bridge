@@ -603,7 +603,7 @@ impl Worker {
     /// Opens a cluster conversation's connection for this run. The local channel needs none.
     async fn connect(&mut self) -> Result<(), ChatError> {
         if let Channel::Cluster(cluster) = &self.channel {
-            self.wire = Some(cluster.open.open().await?);
+            self.wire = Some(open(cluster).await?);
         }
         Ok(())
     }
@@ -1258,8 +1258,19 @@ impl Worker {
 /// fresh connection. Only generated names of this conversation are addressed, and the Task and
 /// Agent only while they still carry the UID acknowledged at creation. Returns true when the
 /// cluster refused a delete, so the resources stay.
+/// Opening rereads kubeconfig through one shared slot, so a cleanup and the next message can
+/// briefly contend for it. A refusal that persists is the cluster's answer.
+async fn open(cluster: &ClusterChannel) -> Result<Arc<dyn ClusterWire>, ChatError> {
+    for _ in 0..7 {
+        if let Ok(wire) = cluster.open.open().await {
+            return Ok(wire);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    cluster.open.open().await
+}
 async fn clean_up_on(cluster: &ClusterChannel, context: &Context) -> bool {
-    let Ok(wire) = cluster.open.open().await else {
+    let Ok(wire) = open(cluster).await else {
         return false;
     };
     let call = |r: ChatRequest| {
