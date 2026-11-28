@@ -44,8 +44,10 @@ export function useAnchoredPopover(open: boolean, trigger: RefObject<HTMLElement
     const content = new MutationObserver(place);
     content.observe(panel, { childList: true, subtree: true });
     window.addEventListener('resize', place);
-    // Capture scrolls of the page's own scroll area too, not only the window.
-    document.addEventListener('scroll', place, true);
-    return () => { content.disconnect(); cancelAnimationFrame(frame); window.removeEventListener('resize', place); document.removeEventListener('scroll', place, true); };
+    // Capture scrolls of the page's own scroll area too, not only the window. Not the popover's own list: placing
+    // measures the list unlimited, which resets its scroll, so the list could never scroll past its first choices.
+    const scrolled = (event: Event) => { if (!(event.target instanceof Node && panel.contains(event.target))) place(); };
+    document.addEventListener('scroll', scrolled, true);
+    return () => { content.disconnect(); cancelAnimationFrame(frame); window.removeEventListener('resize', place); document.removeEventListener('scroll', scrolled, true); };
   }, [open, trigger, popover]);
 }

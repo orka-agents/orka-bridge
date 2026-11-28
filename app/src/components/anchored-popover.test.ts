@@ -1,6 +1,20 @@
 import { readFileSync } from 'node:fs';
-import { expect, test } from 'vitest';
-import { placePopover } from './anchored-popover';
+import { cleanup, renderHook } from '@testing-library/react';
+import { expect, test, vi } from 'vitest';
+import { placePopover, useAnchoredPopover } from './anchored-popover';
+
+test('scrolling the popover\'s own list leaves it placed; scrolling the page places it again', () => {
+  const trigger = document.createElement('button'); const panel = document.createElement('div'); const list = document.createElement('ul');
+  panel.append(list); document.body.append(trigger, panel);
+  renderHook(() => useAnchoredPopover(true, { current: trigger }, { current: panel }));
+  // Placing measures the list without its limit, which resets the list's scroll position.
+  const placed = vi.spyOn(panel.style, 'removeProperty');
+  list.dispatchEvent(new Event('scroll'));
+  expect(placed).not.toHaveBeenCalled();
+  document.dispatchEvent(new Event('scroll'));
+  expect(placed).toHaveBeenCalledWith('--popover-max-height');
+  cleanup(); trigger.remove(); panel.remove();
+});
 
 const view = { width: 1200, top: 44, bottom: 820 };
 test('a picker opens right under its trigger, its left edge on the trigger\'s', () => {
