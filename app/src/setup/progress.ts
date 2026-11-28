@@ -15,6 +15,8 @@ export const setupSteps = 4;
 export type Tone = 'wait' | 'busy' | 'needs-you' | 'ready' | 'bad' | 'stale';
 export type SetupView = { place: 'checking' | 'unavailable' | 'none' | 'local'; step: number; done: boolean; line: string; tabLine: string; footerLine: string; detail: string; tone: Tone; status: Status; action: string };
 
+// A workspace that was running and stopped by itself: stopped, not a failed start. Try again starts it in place.
+export const workspaceExited = (status: SetupStatus | undefined) => status?.localVm === 'failed' && status.workspaceFailure?.operation === 'serve' && status.workspaceFailure.cause === 'exited';
 export const plural = (count: number, unit: string) => `${count} ${unit}${count === 1 ? '' : 's'}`;
 // Native support must be affirmed: an unsupported platform or an older snapshot never offers the early choice.
 export const canQueueModel = (status: SetupStatus | undefined) =>
@@ -38,6 +40,7 @@ export function workspaceView(status: SetupStatus, { stopping = false, starting 
     const recovery = workspaceRecovery(status.workspaceFailure);
     return { word: 'Forcibly stopped', detail: `${recovery.summary} ${recovery.preservation} ${recovery.action}`, status: 'failed', tone: 'bad' };
   }
+  if (workspaceExited(status)) return { word: 'Stopped', detail: 'The workspace on this computer stopped. Your agents and files are kept.', status: 'needs-you', tone: 'needs-you' };
   if (status.localVm === 'failed') return { word: status.workspaceFailure?.operation === 'stop' ? "Couldn't stop" : "Couldn't start", detail: status.workspaceFailure?.operation === 'stop' ? 'The workspace may still be stopping. Quit Bridge and reopen it before trying again.' : "The workspace couldn't start. Your agents and files are kept.", status: 'failed', tone: 'bad' };
   if (status.localVm === 'ready') return { word: 'Ready', detail: 'The workspace is ready on this computer.', status: 'passed', tone: 'ready' };
   // A stopped workspace waits on the creator to start it again.
@@ -67,6 +70,7 @@ export function setupView(status: SetupStatus | undefined, { checking = false, s
   switch (status.localVm) {
     case 'starting': return view(place, 2, `Starting the workspace${aiWaiting}`, `Starting the workspace${aiWaiting}`, 'busy');
     case 'failed': {
+      if (workspaceExited(status)) return view(place, 2, 'Workspace stopped', workspaceRecovery(status.workspaceFailure).summary, 'needs-you');
       const line = status.preflightFailure ? preflightRecovery(status.preflightFailure).summary : 'Setup failed';
       return view(place, 2, line, status.preflightFailure ? line : workspaceRecovery(status.workspaceFailure).summary, 'bad');
     }

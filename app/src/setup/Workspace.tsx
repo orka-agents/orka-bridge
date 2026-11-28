@@ -4,7 +4,7 @@ import { Button } from '../components/Button';
 import { StatusPill } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
 import { type AgentEntry, creationRoot, listDocuments } from '../designer/documents-api';
-import { infraProgress, workspaceView } from './progress';
+import { infraProgress, workspaceExited, workspaceView } from './progress';
 import { helpDetails, workspaceRecovery } from './recovery-info';
 import { preflightRecovery } from './preflight-state';
 import type { SetupStatus } from './state';
@@ -85,7 +85,8 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   const copying = status.localVm === 'installing' && progress?.phase === 'materializing';
   const statusShown = !upgrade || replacing || error || stopFailed || ordinaryRecovery && (failed || stopped);
   // A failure reads as a callout: what happened in the failed colour, then what to do.
-  const statusCallout = statusShown && failed && !error;
+  // A workspace that stopped by itself waits on the person (amber Stopped), so its line isn't a red failure callout.
+  const statusCallout = statusShown && failed && !error && !workspaceExited(status);
   const statusLine = statusShown && <p role="status" className={statusCallout ? 'alert-title' : undefined}>{error ? 'Workspace status is unavailable. Check again before starting it.' : updating ? 'Updating the workspace. Your agent files are kept.' : stopFailed && !forcedStop ? "The workspace didn't stop." : failed ? recovery.summary : stopped ? 'The workspace stopped unexpectedly. Your agents and files are kept.' : view.detail}</p>;
   const forcedLines = forcedStop && <><p>{recovery.preservation}</p><p>{recovery.action}</p></>;
   const actionLine = failed && ordinaryRecovery && !stopFailed && recovery.action && <p>{recovery.action.replaceAll('Try again', 'Restart workspace').replaceAll('copy the details for help', 'open Show details for help')}</p>;

@@ -38,7 +38,7 @@ export function workspaceRecovery(failure?: WorkspaceFailure): RecoveryInfo {
     case 'guestConnection': return { ...common, summary: "The workspace didn't finish starting.", action: 'Press Try again to restart it. If it happens again, copy the details for help.' };
     case 'services': return { ...common, summary: "The workspace's services couldn't start.", action: 'Press Try again to restart the workspace. If it happens again, copy the details for help.' };
     case 'forcedStop': return { ...common, heading: 'The workspace was forcibly stopped', summary: 'The workspace was forcibly stopped without a clean shutdown.', action: 'Quit Bridge and reopen it before trying again.', preservation: 'Changes that had not reached disk may be lost.', topic: 'workspace', retryBlocked: true };
-    case 'exited': return { ...common, heading: 'The workspace stopped', summary: 'The workspace stopped unexpectedly.', action: 'Press Try again to start it again. If it happens again, copy the details for help.' };
+    case 'exited': return { ...common, heading: 'The workspace stopped', summary: 'The workspace on this computer stopped.', action: 'Press Try again to start it again. If it happens again, copy the details for help.' };
     case 'stopUnconfirmed': return { ...common, summary: "The workspace couldn't be stopped safely.", action: 'Quit Bridge and reopen it before trying again. The workspace may still be stopping.', topic: 'workspace', retryBlocked: true };
     default: return { ...common, summary: "Your workspace didn't start. Your agents are safe.", action: '', preservation: '' };
   }

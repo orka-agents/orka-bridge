@@ -611,7 +611,7 @@ test('a cluster that kept earlier tasks says so once, and About names what Quit 
 // A task that fails, for any reason, stays in the field with why; nothing silently resets.
 const taskFailures: { kind: string; refuse?: string; settle?: ChatSnapshot['error']; says: string }[] = [
   { kind: 'connection', settle: 'connection', says: 'The workspace on this computer didn’t answer. Run the task again. If it keeps happening, quit Bridge and open it again to restart the workspace.' },
-  { kind: 'lost workspace', settle: 'workspaceUnavailable', says: 'The workspace on this computer stopped answering. Quit Bridge and open it again to restart the workspace. Your agents and files are kept.' },
+  { kind: 'lost workspace', settle: 'workspaceUnavailable', says: 'The workspace on this computer stopped answering. Start it again from This computer in Clusters. Your agents and files are kept.' },
   { kind: 'permission', settle: 'permission', says: 'Your access to this cluster doesn’t allow “create tasks” in its namespace. Ask the cluster’s administrator to add it.' },
   { kind: 'model', refuse: 'model', says: 'Connect the AI in Clusters and check the model in your agent file.' },
   { kind: 'unsupported', settle: 'sessionsUnsupported', says: 'This cluster’s Orka is too old for Try a task. It needs Orka v0.4.0 or later.' },

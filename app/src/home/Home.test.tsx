@@ -303,7 +303,7 @@ test('a conversation forgotten by a replaced workspace starts over instead of hi
 // A message that fails, for any reason, stays on screen with why; nothing silently resets to the start.
 const failures: { kind: string; refuse?: string; settle?: string; says: string }[] = [
   { kind: 'connection', refuse: 'connection', says: 'The Navigator couldn’t be reached. Nothing was created or changed. Try again.' },
-  { kind: 'lost workspace', settle: 'workspaceUnavailable', says: 'The workspace on this computer stopped answering. Quit Bridge and open it again to restart the workspace. Your agents and files are kept.' },
+  { kind: 'lost workspace', settle: 'workspaceUnavailable', says: 'The workspace on this computer stopped answering. Start it again from This computer in Clusters. Your agents and files are kept.' },
   { kind: 'permission', settle: 'permission', says: 'Your access to this cluster doesn’t allow “create agents” in its namespace. Ask the cluster’s administrator to add it.' },
   { kind: 'model', refuse: 'model', says: 'Connect the AI in Clusters, then try again.' },
   { kind: 'unsupported', settle: 'workspaceOutdated', says: 'The workspace on this computer is older than this Bridge and can’t run the Navigator yet. Nothing was sent to it.' },

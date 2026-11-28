@@ -9,7 +9,7 @@ import type { Place } from '../overview/api';
 import { armFirstTest, firstTestAttempted, firstTestPending, rearmFirstTest, retireFirstTest } from './first-test';
 import Model, { type ModelState } from './Model';
 import Preflight from './Preflight';
-import { canQueueModel, setupView } from './progress';
+import { canQueueModel, setupView, workspaceExited } from './progress';
 import { diskDetail, setupNeeds, type WorkspaceRequirements, workspaceRequirements } from './requirements';
 import { type CheckStepState, Meet, SetupProgress } from './Steps';
 import { cancelLocal, type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
@@ -497,7 +497,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
           <p>A saved connection can be reused without connecting automatically.</p>
           <Button type="button" kind="secondary" disabled>Use saved connection</Button>
           <p className="muted">Start the workspace before changing its saved connection</p>
-        </> : <p className="muted">{freshUnfinished ? 'Connect the AI again once the fresh workspace is finished.' : status && ['cancelled', 'closed'].includes(status.localVm) ? 'Start the workspace before connecting the AI.' : 'Waiting for the workspace to start.'}</p>}</section>}
+        </> : <p className="muted">{freshUnfinished ? 'Connect the AI again once the fresh workspace is finished.' : status && (['cancelled', 'closed'].includes(status.localVm) || workspaceExited(status)) ? 'Start the workspace before connecting the AI.' : 'Waiting for the workspace to start.'}</p>}</section>}
         {status && modelMounted && <div className="setup-model-slot" hidden={workspace && status.localVm !== 'ready'}><Model key={`${upgrade?.credential === 'transferred' ? 'shared' : 'ordinary'}-${freshGeneration}`} diagnostic={status.localVmError} helpLines={freshLines} onFreshWorkspace={askFresh} freshBlocked={freshBlocked} sharedConnection={upgrade?.credential === 'transferred'} title={workspace ? 'AI' : undefined} inline={!workspace && !twoCards && !status.workspaceReplaced && canQueueModel(status)} setupCard={!workspace} changeRequest={providerChange} onPlaceCard={view === 'places'} recoveryTarget={view === 'places' ? placeRecovery : null} enabled={status.model === 'available'} queueable={!status.workspaceReplaced && canQueueModel(status)} paused={!!error || changing} away={cluster} primary={status.localVm === 'ready'} onConnectRequest={() => { chooseComputer(); if (view === 'places') setPanel('local'); }} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
         {!workspace && !twoCards && selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet guided={guided} onRead={openExample} onName={onExampleName} />}
         </div>

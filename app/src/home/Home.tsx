@@ -19,7 +19,7 @@ import './home.css';
 // while Bridge is open, and a token that can no longer be renewed stops working).
 // `unavailable`: this build has no local workspace and This computer is the place.
 // `choose`: a cluster is selected as the place, but none is connected.
-export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'unavailable' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string }
+export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'stopped' } | { kind: 'unavailable' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string }
   | { kind: 'reconnect'; name: string; onReconnect: () => void; first?: boolean } | { kind: 'choose' };
 export type HomePage = 'Overview' | 'Designer' | 'Clusters';
 type Props = {
@@ -73,6 +73,10 @@ function Gated({ gate, onOpenPage, onThisComputer, onManageClusters, switchTo }:
     body: `This build can't run agents on this computer, so the Navigator thinks with a cluster's AI connection. ${switchTo ? `It can think with ${switchTo.name}.` : 'Connect a cluster you already have in Clusters.'} Overview and Designer still work.`,
     actions: switchTo ? <><Button type="button" kind="primary" onClick={switchTo.choose}>Switch to {switchTo.name}</Button>{onManageClusters && <Button type="button" kind="secondary" onClick={onManageClusters}>Open Clusters</Button>}</>
       : <Button type="button" kind="primary" onClick={onManageClusters ?? (() => onOpenPage('Clusters'))}>Open Clusters</Button>,
+  } : gate.kind === 'stopped' ? {
+    title: 'The workspace on this computer stopped.', line: 'workspace stopped',
+    body: 'The Navigator thinks with the model in the workspace on this computer. Start the workspace again from This computer in Clusters. Your agent files are kept, and Overview and Designer still work.',
+    actions: <Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>,
   } : gate.kind === 'waiting' ? {
     title: 'Waiting for the workspace to start.', line: 'waiting for the workspace',
     body: 'The Navigator thinks with the model in the workspace on this computer, so it can answer once the workspace is ready. Overview, Designer and Clusters still work.',

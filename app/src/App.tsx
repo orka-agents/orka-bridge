@@ -27,7 +27,7 @@ import { firstTestPending, retireFirstTest, useFirstTest } from './setup/first-t
 import type { ModelState } from './setup/Model';
 import { preflightRecovery } from './setup/preflight-state';
 import { localUnavailable, unavailableCopy } from './setup/availability';
-import { setupView, workspaceView } from './setup/progress';
+import { setupView, workspaceExited, workspaceView } from './setup/progress';
 import { workspaceRecovery } from './setup/recovery-info';
 import Setup, { type LocalClusterControl, type UpgradeNotice } from './setup/Setup';
 import { hasSeenWelcome } from './setup/Welcome';
@@ -349,6 +349,8 @@ export default function App() {
   const hostWorkspace = freshUnfinished ? { tone: view.tone, detail: `${freshLine}. ${freshDetail}` } : upgradeAttention ? { tone: view.tone, detail: `${upgradeLine}. ${upgradeDetail}` } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
     ? workspaceView(setup, { stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping }) : undefined;
   const hostTone = hostWorkspace?.tone ?? view.tone;
+  // A workspace that stopped by itself: pages say so and where to start it, instead of waiting for it.
+  const stoppedWaiting = 'The workspace on this computer stopped. Start it again from This computer in Clusters.';
   const workspaceReady = setup?.localVm === 'ready' && !recovery && !required && !(setup.workspaceReplaced && upgradeNotice === 'unknown');
   // undefined until the first read, so Home doesn't flash an AI warning before it knows.
   const [aiObserved, setAiObserved] = useState<boolean>();
@@ -539,7 +541,7 @@ export default function App() {
             : !place.providerId ? { kind: 'noConnection', name: place.target.context_name }
             : { kind: 'ready', place: { name: place.target.context_name, targetId: place.target.id, providerId: place.providerId,
               conversation: JSON.stringify([place.target.context_name, place.target.service_namespace, place.target.service_name, place.target.watched_namespace, place.providers?.find(p => p.id === place.providerId)?.name ?? place.providerId]) } }
-            : localOff ? { kind: 'unavailable' } : !workspaceReady || workspaceBusy ? { kind: 'waiting' } : setup?.model !== 'available' || aiObserved === false ? { kind: 'noModel' } : { kind: 'ready' }}
+            : localOff ? { kind: 'unavailable' } : workspaceExited(setup) && !workspaceBusy ? { kind: 'stopped' } : !workspaceReady || workspaceBusy ? { kind: 'waiting' } : setup?.model !== 'available' || aiObserved === false ? { kind: 'noModel' } : { kind: 'ready' }}
           onOpenPage={next => next === 'Designer' ? openDesigner() : setPage(next)}
           // The task card's results are the agent's Try a task results, so Designer opens on that view.
           onOpenAgent={id => { openDesigner(id); setDocumentAction({ id: ++actionSequence.current, documentId: id, action: 'chat' }); }}
@@ -550,7 +552,7 @@ export default function App() {
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
           blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}
         {page === 'Designer' && overviewNotice && <p className="muted" role="status">{overviewNotice}</p>}
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} accessLost={accessLost} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} localCatalogBlocker={setup?.selected !== 'localVm' || localOff ? undefined : !workspaceReady || workspaceBusy ? 'workspace' : !catalogConnected || setup.model === 'locked' ? 'ai' : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} localUnavailable={localOff ? unavailableCopy.detail : undefined} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} onCreating={observeCreating} /></div>}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} accessLost={accessLost} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} localCatalogBlocker={setup?.selected !== 'localVm' || localOff ? undefined : !workspaceReady || workspaceBusy ? 'workspace' : !catalogConnected || setup.model === 'locked' ? 'ai' : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} localUnavailable={localOff ? unavailableCopy.detail : undefined} workspaceWaiting={workspaceExited(setup) && !workspaceBusy ? stoppedWaiting : undefined} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} onCreating={observeCreating} /></div>}
         <Overview onNewAgent={() => openDesigner(undefined, true)} localAiConnected={overviewAiConnected} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} activeDocumentId={firstTest === 'running' ? SAMPLE_DOCUMENT_ID : run?.busy?.documentId} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} workspaceNote={overviewWorkspaceNote} localUnavailable={localOff} filesRevision={agentsRevision} placesRevision={placesRevision} onCounts={setOverviewCounts} onSavedCount={setSavedAgents}
           onOpenDocument={(id, key) => { void openOverviewDocument(id, 'open', key); }}
           onChatDocument={id => openOverviewDocument(id, 'chat')}

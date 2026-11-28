@@ -26,7 +26,7 @@ export const navigatorErrors: Record<keyof typeof chatErrors, string> = {
   sessionsUnsupported: 'This cluster’s Orka is too old for the Navigator. It needs Orka v0.4.0 or later.',
   clusterUnavailable: 'Bridge couldn’t reach the selected cluster. Reconnect it in Clusters, then try again.',
   workspaceOutdated: 'The workspace on this computer is older than this Bridge and can’t run the Navigator yet. Nothing was sent to it.',
-  workspaceUnavailable: 'The workspace on this computer stopped answering. Quit Bridge and open it again to restart the workspace. Your agents and files are kept.',
+  workspaceUnavailable: 'The workspace on this computer stopped answering. Start it again from This computer in Clusters. Your agents and files are kept.',
   placeChanged: 'This conversation was started with another AI connection. Start a new conversation to continue.',
   accessLost: 'Access to the selected cluster needs reconnecting. Reconnect it in Clusters to see the answer.',
 };
