@@ -1,7 +1,7 @@
 //! Native Send owner fixtures. A child of the forward fixture so it can count actual wire calls.
 use super::*;
 use bridge_engine::{
-    agent_folder::AgentFolder,
+    agent_folder::{AgentFolder, DocumentId},
     clusters::commands::ClusterSession,
     send::{AgentCheck, SendOwner, SendState},
 };
@@ -1237,6 +1237,33 @@ async fn send_start_future_is_send_for_desktop_dispatch() {
         .await
         .unwrap();
     s.finish(&id(&serde_json::to_value(view).unwrap())).await;
+}
+
+#[tokio::test]
+async fn a_send_to_the_place_in_use_keeps_its_place_when_use_mints_new_ids() {
+    let s = setup().await;
+    let started = s.start().await;
+    let done = s.finish(&id(&started)).await;
+    assert_eq!(done["providerId"], s.provider.as_str());
+    s.idle_forwards().await;
+    // Check access again: the same place and AI connection, under freshly minted ids.
+    let again = serde_json::to_value(s.session.use_target(&s.target, None).await).unwrap();
+    let provider = again["providers"][0]["id"].as_str().unwrap().to_string();
+    assert_ne!(provider, s.provider);
+    let view = s.view(Some(&id(&started)));
+    assert_eq!(view["targetId"], s.target.as_str());
+    assert_eq!(view["providerId"], provider.as_str());
+    let document = serde_json::to_value(s.owner.status_document(DocumentId::SAMPLE)).unwrap();
+    assert_eq!(document["view"]["providerId"], provider.as_str());
+    // Another place in use is another place: the Send keeps the ids it was made with.
+    s.session
+        .forget(&s.session.places().places[0].key)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.view(Some(&id(&started)))["providerId"],
+        s.provider.as_str()
+    );
 }
 
 #[tokio::test]

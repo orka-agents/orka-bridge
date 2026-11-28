@@ -115,6 +115,8 @@ impl Active {
 #[derive(Default)]
 struct Inner {
     views: HashMap<SendId, SendView>,
+    /// Each Send's place key and AI connection name: the stable identity its opaque ids stood for.
+    places: HashMap<SendId, (String, String)>,
     current: HashMap<DocumentId, SendId>,
     active: Option<Active>,
     closed: bool,
@@ -903,16 +905,39 @@ impl SendOwner {
         view
     }
     pub fn status_document(&self, id: DocumentId) -> SendStatus {
-        let inner = self.inner.lock().unwrap();
+        let (view, busy, place) = {
+            let inner = self.inner.lock().unwrap();
+            let job = inner.current.get(&id).copied();
+            (
+                job.and_then(|job| inner.views.get(&job)).cloned(),
+                inner.active.as_ref().map(|job| job.document.clone()),
+                job.and_then(|job| inner.places.get(&job)).cloned(),
+            )
+        };
         SendStatus {
             document_id: id,
-            view: inner
-                .current
-                .get(&id)
-                .and_then(|job| inner.views.get(job))
-                .cloned(),
-            busy: inner.active.as_ref().map(|job| job.document.clone()),
+            view: view.map(|view| self.in_current_handles(view, place)),
+            busy,
         }
+    }
+    /// Reconnecting mints new opaque target and AI connection ids for the same place. A Send
+    /// made to the place and AI connection now selected is shown in the current ids, so it is
+    /// never mistaken for another cluster's result.
+    fn in_current_handles(&self, mut view: SendView, place: Option<(String, String)>) -> SendView {
+        let Some((key, provider)) = place else {
+            return view;
+        };
+        let Some((target, access)) = self.session.selected() else {
+            return view;
+        };
+        if crate::overview_places::Place::new(access.binding().clone()).key != key {
+            return view;
+        }
+        if let Some(current) = access.providers().iter().find(|p| p.name == provider) {
+            view.target_id = target.0.to_string();
+            view.provider_id = current.id.0.to_string();
+        }
+        view
     }
     /// Latch intent before returning. The admitted native job owns all remote cleanup.
     pub fn cancel_document(
@@ -979,12 +1004,18 @@ impl SendOwner {
         Ok(self.status_document(document))
     }
     pub fn status(&self, id: Option<&str>) -> Option<SendView> {
-        let inner = self.inner.lock().unwrap();
-        let id = match id {
-            Some(id) => SendId(parse(id)?),
-            None => *inner.current.get(&DocumentId::SAMPLE)?,
+        let (view, place) = {
+            let inner = self.inner.lock().unwrap();
+            let id = match id {
+                Some(id) => SendId(parse(id)?),
+                None => *inner.current.get(&DocumentId::SAMPLE)?,
+            };
+            (
+                inner.views.get(&id).cloned()?,
+                inner.places.get(&id).cloned(),
+            )
         };
-        inner.views.get(&id).cloned()
+        Some(self.in_current_handles(view, place))
     }
     /// Signals before the first await, so a lost IPC waiter still stops the job.
     pub async fn stop(&self, id: &str) -> Option<SendView> {
@@ -1061,6 +1092,12 @@ impl SendOwner {
             .find(|v| v.id == provider)
             .map(|v| v.name.clone())
             .ok_or(Stage::Access)?;
+        let place = crate::overview_places::Place::new(access.binding().clone()).key;
+        self.inner
+            .lock()
+            .unwrap()
+            .places
+            .insert(id, (place, provider_name.clone()));
         let kubeconfig =
             until_stop(stop, Stage::Access, self.session.read_configuration(reader)).await?;
         let fresh = access.fresh_client(kubeconfig);

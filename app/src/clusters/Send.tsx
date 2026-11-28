@@ -388,7 +388,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   const resultName = target?.context_name ?? targetName;
   const headlineTone = running || busy || outdated ? '' : snapshot?.report?.verdict === 'passed' ? ' send-headline-passed' : snapshot?.report?.verdict === 'failed' ? ' send-headline-failed' : '';
   return <><h2 className="section-label">Team cluster</h2><section ref={panel} tabIndex={-1} className="send-panel card" aria-label="Send and cluster tests">
-    <LongCard title={snapshot && resultName ? <>To <code className="code-chip">{resultName}</code></> : 'Send your agent'} status={<><StatusPill state={resultState}>{pillWord}</StatusPill><span className="status-description">{outdated ? unconfirmed ? undefined : 'Not run since your edit' : running || busy || !snapshot ? undefined : unhealthy ? undefined : uncertain ? snapshot.stage === 'stopped' && !cancellation ? 'Stopped watching' : undefined : undefined}</span></>}
+    <LongCard title={snapshot && resultName ? <>To <code className="code-chip">{resultName}</code></> : 'Send your agent'} status={<><StatusPill state={resultState}>{pillWord}</StatusPill><span className="status-description">{outdated ? unconfirmed || !samePlace ? undefined : 'Not run since your edit' : running || busy || !snapshot ? undefined : unhealthy ? undefined : uncertain ? snapshot.stage === 'stopped' && !cancellation ? 'Stopped watching' : undefined : undefined}</span></>}
       summary={snapshot && !samePlace && targetName && <>Earlier result on <code className="code-chip">{targetName}</code>.</>}
       action={snapshot && changeButton}>
     {showWarning && failing && <SendWarning anchor={warning.anchor} test={failing.id}

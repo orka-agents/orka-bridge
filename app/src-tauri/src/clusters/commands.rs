@@ -219,6 +219,10 @@ impl ClusterSession {
             .and_then(|(id, access)| (id.0.to_string() == target).then(|| access.clone()));
         (access, self.1.clone())
     }
+    /// The place in use and its current target handle, from memory only.
+    pub(crate) fn selected(&self) -> Option<(TargetId, Arc<RemoteAccess>)> {
+        self.4.lock().unwrap().clone()
+    }
     pub(crate) fn history_access(&self) -> SendAccess {
         (
             self.4
