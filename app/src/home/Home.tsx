@@ -119,10 +119,12 @@ function TooOld({ onOpenPage, switchTo }: Pick<Props, 'onOpenPage' | 'switchTo'>
     <Hero lede={false} />
     <article className="card nav-gate" aria-labelledby="nav-gate-title">
       <header className="nav-gate-head"><StatusIcon state="needs-you" /><h2 id="nav-gate-title">The workspace on this computer is older than this Bridge.</h2><StatusPill state="needs-you">Needs you</StatusPill></header>
-      <p>It can’t run the Navigator yet, so nothing was sent to it. {switchTo ? `The Navigator can think with ${switchTo.name} instead. ` : ''}Designer still works here: Try a task runs on this computer.</p>
+      <p>It can’t run the Navigator yet, so nothing was sent to it. {switchTo ? `The Navigator can think with ${switchTo.name} instead. ` : 'The Navigator can think with a cluster’s AI instead. '}Designer still works here: Try a task runs on this computer.</p>
       <div className="nav-actions">
         {switchTo && <Button type="button" kind="primary" onClick={switchTo.choose}>Switch to {switchTo.name}</Button>}
         <Button type="button" kind={switchTo ? 'secondary' : 'primary'} onClick={() => onOpenPage('Designer')}>Open Designer</Button>
+        {/* With no cluster connected in this run, Clusters is where one is added or reconnected. */}
+        {!switchTo && <Button type="button" kind="secondary" onClick={() => onOpenPage('Clusters')}>Use a cluster</Button>}
       </div>
     </article>
     <section className="nav-composer nav-composer-off" aria-label="Chat" aria-disabled="true">
