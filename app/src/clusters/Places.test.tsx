@@ -588,3 +588,12 @@ test('observed row metadata states the agent count once without repeating the ch
   expect(within(remote).getByText('0 agents')).toBeTruthy();
   expect(within(remote).getByText(/^Checked/)).toBeTruthy();
 });
+
+test('one Orka added through two contexts is two places that say they are the same installation', async () => {
+  const { sim } = native();
+  sim.snapshot = { ...sim.snapshot, places: [{ ...primary, installation: 'one-orka' }, { ...secondary, installation: 'one-orka' }, { ...primary, key: 'third', context: 'elsewhere', installation: 'another-orka' }] };
+  render(<Host />);
+  expect(within(await screen.findByRole('region', { name: 'team-dev' })).getByText('Same Orka as', { exact: false }).textContent).toBe('Same Orka as team-other');
+  expect(within(row('team-other')).getByText('Same Orka as', { exact: false }).textContent).toBe('Same Orka as team-dev');
+  expect(within(row('elsewhere')).queryByText('Same Orka as', { exact: false })).toBeNull();
+});

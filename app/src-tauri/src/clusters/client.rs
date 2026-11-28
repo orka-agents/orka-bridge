@@ -452,7 +452,10 @@ impl RemoteAccess {
                     if !uids.insert(agent.uid.clone()) || agents.len() >= 4096 {
                         return Err(ClusterError::Unavailable);
                     }
-                    agents.push(agent);
+                    // Conversation Agents are Bridge's own, never listed or counted as the person's.
+                    if !bridge_runtime_protocol::conversation_agent(&agent.name) {
+                        agents.push(agent);
+                    }
                 }
                 after = continuation(&page).map_err(cluster_error)?;
                 if after.is_none() {

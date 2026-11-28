@@ -144,6 +144,21 @@ fn place_key_ignores_ephemeral_handles_and_image_but_not_installation_or_namespa
     assert_ne!(Place::new(a).key, Place::new(b).key);
 }
 
+#[test]
+fn one_orka_through_two_contexts_is_two_places_of_one_installation() {
+    let a = binding();
+    let mut b = a.clone();
+    b.context_name = "same-orka-token".into();
+    let (first, second) = (Place::new(a.clone()), Place::new(b));
+    assert_ne!(
+        first.key, second.key,
+        "each context keeps its own place and sign-in"
+    );
+    assert_eq!(first.installation, second.installation);
+    let mut other = a;
+    other.service_uid = "another-service".into();
+    assert_ne!(Place::new(other).installation, first.installation);
+}
 fn evidence() -> crate::send_summary::AttemptDetails {
     serde_json::from_value(serde_json::json!({
         "documentId":"01234567-89ab-4cde-8fab-0123456789ab", "model":"model", "capturedAt":1,

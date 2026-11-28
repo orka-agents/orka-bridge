@@ -31,6 +31,12 @@ pub const NAVIGATOR_FAMILY: ChatFamily = ChatFamily {
     session: "bridge-nav-",
 };
 const FAMILIES: [ChatFamily; 2] = [CHAT_FAMILY, NAVIGATOR_FAMILY];
+/// Whether `name` is an Agent generated for a Try a task or Navigator conversation. These are
+/// Bridge's implementation details, not the person's agents: lists leave them out. Display
+/// only; never evidence of ownership or authority to clean anything up.
+pub fn conversation_agent(name: &str) -> bool {
+    FAMILIES.iter().any(|family| generated(name, family.agent))
+}
 impl ChatFamily {
     fn owning(name: &str, prefix: impl Fn(&ChatFamily) -> &'static str) -> Option<Self> {
         FAMILIES

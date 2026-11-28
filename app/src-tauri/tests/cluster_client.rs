@@ -301,6 +301,37 @@ async fn overview_expired_access_never_sends_or_refreshes_a_credential() {
 }
 
 #[tokio::test]
+async fn overview_never_lists_bridge_conversation_agents_as_the_persons() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let (session, _) = reading_session(
+        config(&api.start(), json!({"token":"static-fixture"})),
+        &orka,
+    );
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    session.use_target(&target, None).await;
+    let id = "0123456789abcdef0123456789abcdef";
+    *orka.agents.lock().unwrap() = Some(json!({"items":[
+        {"metadata":{"name":"web-reader","namespace":"agents","uid":"one"}},
+        {"metadata":{"name":format!("bridge-chat-agent-{id}"),"namespace":"agents","uid":"two"}},
+        {"metadata":{"name":format!("bridge-nav-agent-{id}"),"namespace":"agents","uid":"three"}},
+        {"metadata":{"name":format!("bridge-run-{id}"),"namespace":"agents","uid":"four"}}
+    ],"metadata":{}}));
+    let places = reply(session.overview().await);
+    let names: Vec<_> = places[0]["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["web-reader".to_string(), format!("bridge-run-{id}")]
+    );
+}
+
+#[tokio::test]
 async fn overview_pagination_failure_keeps_the_last_complete_inventory() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());

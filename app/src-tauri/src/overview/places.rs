@@ -57,6 +57,9 @@ pub struct Place {
     pub observed_at: Option<u64>,
     pub checked_at: Option<u64>,
     pub agents: Vec<RemoteAgent>,
+    /// The Orka installation, apart from the context that reaches it: two places with the same
+    /// one are the same Orka through two contexts. Opaque; never a capability.
+    pub installation: String,
     #[serde(skip)]
     identity: Identity,
 }
@@ -74,6 +77,7 @@ impl Place {
             observed_at: None,
             checked_at,
             agents: Vec::new(),
+            installation: identity.installation(),
             identity,
         }
     }

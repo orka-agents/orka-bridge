@@ -30,9 +30,12 @@ export default function Places({ snapshot, unavailable, status, view, place, acc
       const observed = item.observedAt !== null;
       const checkedAt = item.checkedAt ?? item.observedAt;
       const checked = checkedAt != null ? <>Checked <RelativeTime value={checkedAt} inline /></> : 'Not checked yet';
+      // The same Orka added through another context: separate places (each its own sign-in), one installation.
+      const same = item.installation ? snapshot.places.filter(other => other.key !== item.key && other.installation === item.installation).map(other => other.context) : [];
       return <section className="card place-row" aria-label={item.context} key={item.key}>
         <span className="icon-tile icon-tile-row" aria-hidden="true"><svg className="icon" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5M3 18l9 5 9-5" /></svg></span>
-        <div className="place-summary"><h2><code>{item.context}</code></h2><p className="place-meta"><span>Orka in {item.service.replace(/\s*\/\s*/g, '/')}</span><span className="muted">{checked}</span>{selected && <span className="chip">In use</span>}{observed && !item.stale && <span className="muted">{item.agents.length} {item.agents.length === 1 ? 'agent' : 'agents'}</span>}</p></div>
+        <div className="place-summary"><h2><code>{item.context}</code></h2><p className="place-meta"><span>Orka in {item.service.replace(/\s*\/\s*/g, '/')}</span><span className="muted">{checked}</span>{selected && <span className="chip">In use</span>}{observed && !item.stale && <span className="muted">{item.agents.length} {item.agents.length === 1 ? 'agent' : 'agents'}</span>}</p>
+          {same.length > 0 && <p className="place-meta muted">Same Orka as {same.map((context, index) => <span key={context}>{index > 0 && ', '}<code>{context}</code></span>)}</p>}</div>
         <StatusPill state={lost ? 'needs-you' : checkedAt !== null ? item.stale ? 'stale' : 'passed' : 'not-started'}>{lost ? 'Needs reconnecting' : checkedAt !== null ? item.stale ? 'Stale' : 'Ready' : 'Not checked'}</StatusPill>
         <Button type="button" kind={lost ? 'primary' : 'secondary'} size="small" onClick={() => onCluster(item, selected)}>{lost ? 'Reconnect' : selected ? 'Manage' : checkedAt != null ? 'Use' : 'Check'}</Button>
       </section>;

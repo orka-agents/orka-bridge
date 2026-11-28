@@ -6,14 +6,15 @@ import { RelativeTime } from '../components/RelativeTime';
 import type { AgentRow, Card } from './model';
 
 export type CardActions = { localAiReason?: string; onOpen: (id: string, clusterKey?: string) => void; onChat?: (id: string) => void; onRun?: (id: string, clusterKey?: string) => void };
-function PlaceRow({ card, actions }: { card: Card; actions: CardActions }) {
+function PlaceRow({ card, actions, named = false }: { card: Card; actions: CardActions; named?: boolean }) {
   const [details, setDetails] = useState(false);
   const id = useId();
   const action = card.status === 'passed' ? card.actions.find(a => a.id === 'chat') ?? card.actions.find(a => a.id === 'run') : card.actions.find(a => a.id === 'run');
   const label = action?.id === 'chat' ? 'New task' : 'Run tests';
+  const agent = named ? card.meta.agent : undefined;
   return <article className="overview-place" data-card-key={card.key} tabIndex={-1} aria-label={`${card.place}, ${card.pill ?? 'No recorded result'}`}>
     <div className="overview-place-head">
-      <span className={card.remote ? 'overview-mono' : undefined}>{card.place}</span>
+      <span className={card.remote ? 'overview-mono' : undefined}>{card.place}{agent && <code className="code-chip overview-place-agent" title="Name on the cluster">{agent}</code>}</span>
       {card.status ? <StatusPill state={card.status}>{card.pill}</StatusPill> : <span className="overview-note">No recorded result</span>}
       {card.meta.tests && <span className="overview-place-count">{card.meta.tests}</span>}
       {card.testedAt !== undefined && <span className="overview-time"><RelativeTime value={card.testedAt} /></span>}
@@ -58,6 +59,8 @@ export function AgentListRow({ row, actions, reveal, onToggle }: { row: AgentRow
         if (document.remote) actions.onOpen(document.documentId, document.groupKey); else actions.onOpen(document.documentId);
       }}>Open</Button> : <Button size="small" aria-label={`Details ${row.title}`} aria-expanded={expanded} aria-controls={id} onClick={toggle}>Details</Button>}
     </header>
-    {expanded && <div id={id} className="overview-places">{row.cards.map(card => <PlaceRow key={card.key} card={card} actions={actions} />)}</div>}
+    {expanded && <div id={id} className="overview-places">{row.cards.map(card => <PlaceRow key={card.key} card={card} actions={actions}
+      // Two Sends of this file to one place are told apart by the Agent each created there.
+      named={card.remote && row.cards.filter(other => other.groupKey === card.groupKey).length > 1} />)}</div>}
   </article>;
 }

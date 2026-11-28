@@ -290,3 +290,22 @@ fn navigator_and_chat_resources_never_reference_each_other() {
         );
     }
 }
+
+#[test]
+fn conversation_agents_are_exactly_the_generated_chat_and_navigator_names() {
+    use bridge_runtime_protocol::conversation_agent;
+    let id = "0123456789abcdef0123456789abcdef";
+    assert!(conversation_agent(&format!("bridge-chat-agent-{id}")));
+    assert!(conversation_agent(&format!("bridge-nav-agent-{id}")));
+    // A Send's agent, a person's agent, a near miss or a Task is never one.
+    for name in [
+        format!("bridge-run-{id}"),
+        "web-reader".to_string(),
+        format!("bridge-chat-agent-{}", &id[..31]),
+        format!("bridge-chat-agent-{}", id.to_uppercase()),
+        format!("bridge-chat-task-{id}"),
+        format!("my-bridge-nav-agent-{id}"),
+    ] {
+        assert!(!conversation_agent(&name), "{name}");
+    }
+}

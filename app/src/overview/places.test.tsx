@@ -206,3 +206,14 @@ test('replies after hiding are ignored', async () => {
   await act(async () => { resolve(places()); await Promise.resolve(); });
   expect(view.container.querySelector('.overview-places')).toBeNull();
 });
+
+test('two Sends of one file to one place are told apart by the agent each created there', async () => {
+  const separate = { ...agent, name: 'bridge-run-separate', uid: 'uid-two', record: { ...record, agentUid: 'uid-two', plannedAgentName: 'bridge-run-separate', time: 1234567990 } };
+  ipc(places([place('one', 'team-one', [agent, separate])])); render(<Overview {...props} />);
+  const parent = await expanded();
+  const sends = within(parent).getAllByRole('article', { name: 'team-one, Passed' });
+  expect(sends.map(send => send.querySelector('.overview-place-agent')?.textContent).sort()).toEqual(['bridge-run-separate', 'same-name']);
+  // One Send per place stays as it was.
+  cleanup(); ipc(); render(<Overview {...props} />);
+  expect(within(await expanded()).getByRole('article', { name: 'team-one, Passed' }).querySelector('.overview-place-agent')).toBeNull();
+});
