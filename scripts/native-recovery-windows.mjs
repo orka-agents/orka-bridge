@@ -552,7 +552,7 @@ try {
     } else {
       await capture('ready', 'ready', 'Ready');
       await evaluate(`document.querySelector('.returning-workspace summary[aria-controls="returning-workspace-inside"]').click()`);
-      await until(() => evaluate(`document.querySelector('.returning-workspace').innerText.includes('4 GB of memory')`), 'memory guidance inside disclosure');
+      await until(() => evaluate(`document.querySelector('.returning-workspace').innerText.includes('memory while Bridge is open')`), 'memory guidance inside disclosure');
       await evaluate(`document.querySelector('.returning-workspace summary[aria-controls="returning-workspace-inside"]').click()`);
       // Synthetic renderer observation only: not proof of native VM startup after Quit.
       await capture('starting-after-quit-synthetic', 'starting', 'Starting');
