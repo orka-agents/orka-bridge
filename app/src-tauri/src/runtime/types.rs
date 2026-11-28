@@ -34,6 +34,8 @@ pub enum WorkspaceOperation {
     Start,
     Services,
     Stop,
+    /// The workspace was running and serving requests.
+    Serve,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +52,9 @@ pub enum WorkspaceCause {
     Services,
     StopUnconfirmed,
     ForcedStop,
+    /// The running workspace's VM stopped by itself, or its guest channel was lost, and its
+    /// native stop was confirmed. Starting it again needs no quit.
+    Exited,
     Unknown,
 }
 /// Bounded renderer-safe facts. Private diagnostics never contribute to these fields.

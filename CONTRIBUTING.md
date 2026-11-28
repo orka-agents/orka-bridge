@@ -39,6 +39,7 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `wsStopped` | Workspace stopped | Opens there |
 | `wsCouldntStart` | Workspace couldn't start | Opens there |
 | `wsForced` | Workspace forcibly stopped | Opens there |
+| `wsExited` | The running workspace stopped unexpectedly; Restart workspace starts it again without quitting | Opens there |
 | `wsUpdate` | This version needs a new workspace | Opens there |
 | `wsRestore` | Interrupted update, restore offered | Opens there |
 | `wsRecovery` | Interrupted update, setup incomplete | Opens there |

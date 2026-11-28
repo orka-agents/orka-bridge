@@ -14,6 +14,11 @@ export const workspaceFailures = {
     workspaceFailure: { operation: 'stop', cause: 'forcedStop', codes: [] },
     localVmError: 'Starting the local VM failed: Runtime operation failed: ShutdownForced',
   },
+  // The running workspace's VM exited by itself; its stop was confirmed, so it can start again in place.
+  wsExited: {
+    workspaceFailure: { operation: 'serve', cause: 'exited', codes: [] },
+    localVmError: 'The workspace stopped unexpectedly: its VM is no longer running.',
+  },
   // A newer Bridge refuses the older retained image before booting it.
   wsUpdate: {
     workspaceFailure: { operation: 'verify', cause: 'workspaceUpdateRequired', codes: [] },

@@ -174,6 +174,24 @@ impl AppleVmSession {
     pub fn transport(&self) -> Option<&VmTransport> {
         self.transport.as_ref()
     }
+    /// The helper exited, or the guest channel was lost: this VM no longer serves. Never waits:
+    /// a client or helper owner in use is not evidence either way.
+    pub fn lost(&self) -> bool {
+        let Some(transport) = &self.transport else {
+            return true;
+        };
+        if transport
+            .borrow_client(|client| client.closed())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        self.worker
+            .lease()
+            .and_then(|lease| lease.handle.get::<AppleBackendHandle>())
+            .and_then(|handle| handle.owner.try_lock().ok().map(|mut owner| owner.exited()))
+            .unwrap_or(false)
+    }
     pub fn stop(&mut self) -> Result<(), RuntimeError> {
         let owner = self
             .worker

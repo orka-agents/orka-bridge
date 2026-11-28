@@ -30,6 +30,7 @@ export const scenarios = {
   wsStopped: 'Workspace stopped',
   wsCouldntStart: "Workspace couldn't start",
   wsForced: 'Workspace forcibly stopped',
+  wsExited: 'Workspace stopped unexpectedly',
   wsUpdate: 'Workspace update needed',
   wsRestore: 'Interrupted update, restore offered',
   wsRecovery: 'Interrupted update, setup incomplete',
@@ -631,7 +632,7 @@ async function scenarioReply(command: string, args?: Record<string, unknown>): P
       break;
     case 'setup_select_local':
       // Restart after a stop or a failed start reopens the installed workspace.
-      if (scenario !== 'wsStopped' && scenario !== 'wsCouldntStart') break;
+      if (scenario !== 'wsStopped' && scenario !== 'wsCouldntStart' && scenario !== 'wsExited') break;
       await wait(0.3);
       failed = null; stopped = null; startedAt = now(); reopened = true;
       return status();
