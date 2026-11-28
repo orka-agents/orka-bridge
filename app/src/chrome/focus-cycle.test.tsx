@@ -30,3 +30,14 @@ test('Tab runs title bar, sidebar, page, status card, and wraps to the title bar
   expect(document.activeElement?.textContent).toBe('Collapse sidebar');
   expect(fireEvent.keyDown(screen.getByRole('button', { name: 'Home' }), { key: 'Tab' })).toBe(true);
 });
+
+test('Tab with focus on the document is left to the engine, which continues from a clicked button', () => {
+  render(<Shell />);
+  screen.getByRole('button', { name: 'Add a cluster' }).focus();
+  // WebKit doesn't focus a clicked button: focus goes to the document and the engine starts the next Tab from the button.
+  (document.activeElement as HTMLElement).blur();
+  expect(document.activeElement).toBe(document.body);
+  expect(fireEvent.keyDown(document.body, { key: 'Tab' })).toBe(true);
+  expect(fireEvent.keyDown(document.body, { key: 'Tab', shiftKey: true })).toBe(true);
+  expect(document.activeElement).toBe(document.body);
+});

@@ -26,7 +26,10 @@ export function useFocusCycle(root: () => HTMLElement | null) {
       const stops = tabStops(shell);
       if (!stops.length) return;
       const active = document.activeElement;
-      const outside = !active || active === document.body || !shell.contains(active);
+      // With focus on the document itself the engine already knows where Tab goes next: WebKit doesn't focus a clicked
+      // button but starts the next Tab from it, so taking over here would send Tab from a clicked button to the title bar.
+      if (!active || active === document.body) return;
+      const outside = !shell.contains(active);
       if (event.shiftKey ? active === stops[0] || outside : active === stops.at(-1) || outside) {
         event.preventDefault();
         (event.shiftKey ? stops.at(-1) : stops[0])?.focus();
