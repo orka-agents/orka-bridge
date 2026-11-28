@@ -65,10 +65,13 @@
 .file-key { color: var(--color-text); }
 .file-delimiter { color: var(--color-text-secondary); }
 .file-comment { color: var(--color-text-secondary); }
-.file-location { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-3); min-width: 0; }
-.file-location > .agent-tool-row { flex-wrap: nowrap; }
-.file-location > .agent-tool-row > [role="status"]:empty { display: none; }
-.file-location > .agent-tool-row > [role="status"] { font: var(--type-caption); }
+/* The path takes the line beside its actions down to 14rem, then the actions move under it; it never narrows to a
+   column of single characters. Feedback has its own full-width line, so its length moves nothing. */
+.file-location { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-width: 0; }
+.file-location > .agent-path, .file-location > p:first-child { flex: 1 1 14rem; min-width: 0; margin: 0; }
+.file-location > .agent-tool-row { flex: 0 0 auto; flex-wrap: nowrap; }
+.file-location > .file-location-feedback { flex: 1 0 100%; margin: 0; font: var(--type-caption); overflow-wrap: anywhere; }
+.file-location > .file-location-feedback:empty { display: none; }
 .skeleton-field { height: 40px; margin-block: 16px; border-radius: var(--radius-control); background: var(--color-hover); }
 .skeleton-prompt { height: 140px; }
 @media (forced-colors: active) { .file-highlight { display: none; } .agent-editor { color: CanvasText; background: Canvas; caret-color: auto; } }
