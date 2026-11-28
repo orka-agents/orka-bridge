@@ -55,7 +55,7 @@ afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 
 const ready: NavigatorGate = { kind: 'ready' };
 function home(gate: NavigatorGate = ready, extra: { blockedFor?: (id: string) => string | undefined } = {}) {
-  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn(), onThisComputer: vi.fn() };
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn(), onThisComputer: vi.fn(), onManageClusters: vi.fn() };
   render(<main aria-labelledby="page-title"><Home active revision={0} gate={gate} {...handlers} {...extra} /></main>);
   return handlers;
 }
@@ -196,6 +196,7 @@ test.each<[NavigatorGate, string, string]>([
   [{ kind: 'unreachable' }, 'Can’t reach the selected cluster. Check your network or VPN.', 'Navigator · can’t reach the cluster'],
   [{ kind: 'noConnection', name: 'team-dev' }, 'Choose an AI connection for team-dev.', 'Navigator · no AI connection chosen'],
   [{ kind: 'waiting' }, 'Waiting for the workspace to start.', 'Navigator · waiting for the workspace'],
+  [{ kind: 'reconnect', name: 'team-dev', onReconnect: () => {} }, 'team-dev needs reconnecting.', 'Navigator · team-dev needs reconnecting'],
 ])('when it cannot answer (%o) the message box is disabled and a card says why', (gate, title, line) => {
   home(gate);
   expect(screen.getByRole('main', { name: 'What do you want done?' })).toBeTruthy();
@@ -229,6 +230,15 @@ test('on a cluster a proposed task runs there, while the agent card still writes
   expect(await screen.findByText('Created. It is running on team-dev.')).toBeTruthy();
 });
 
+test('a cluster that needs reconnecting offers Reconnect and Open Clusters, not a network warning', async () => {
+  const onReconnect = vi.fn(); const user = userEvent.setup(); const { onManageClusters } = home({ kind: 'reconnect', name: 'team-dev', onReconnect });
+  expect(screen.queryByText(/network or VPN/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Switch to This computer' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Reconnect' }));
+  await user.click(screen.getByRole('button', { name: 'Open Clusters' }));
+  expect(onReconnect).toHaveBeenCalledOnce();
+  expect(onManageClusters).toHaveBeenCalledOnce();
+});
 test('an unreachable cluster offers This computer', async () => {
   const user = userEvent.setup(); const { onThisComputer, onOpenPage } = home({ kind: 'unreachable' });
   await user.click(screen.getByRole('button', { name: 'Switch to This computer' }));

@@ -196,7 +196,7 @@ function launch(status: object, places: object[] = [], upgrade: () => unknown = 
     if (command === 'workspace_upgrade_status') return upgrade();
     if (command === 'setup_status') return status;
     if (command === 'setup_requirements') return requirements;
-    if (command === 'cluster_places') return { places, selectedKey: null, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places, selectedKey: null, persistenceState: 'complete', accessLost: false };
     if (command === 'overview_places') return { places, historyState: 'complete', unobserved: [] };
     return Promise.reject({ kind: 'unavailable' });
   });

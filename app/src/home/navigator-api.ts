@@ -28,6 +28,7 @@ export const navigatorErrors: Record<keyof typeof chatErrors, string> = {
   workspaceOutdated: 'The workspace on this computer is older than this Bridge and can’t run the Navigator yet. Nothing was sent to it.',
   workspaceUnavailable: 'The workspace on this computer stopped answering. Quit Bridge and open it again to restart the workspace. Your agents and files are kept.',
   placeChanged: 'This conversation was started with another AI connection. Start a new conversation to continue.',
+  accessLost: 'Access to the selected cluster needs reconnecting. Reconnect it in Clusters to see the answer.',
 };
 
 const commands: Record<ChatCommand, string> = {

@@ -15,7 +15,7 @@ function ipc(places: Place[], selectedKey: string | null, extra: (command: strin
   mockIPC((command, args) => {
     calls.push({ command, args });
     const other = extra(command, args); if (other !== undefined) return other;
-    if (command === 'cluster_places') return { places, selectedKey, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places, selectedKey, persistenceState: 'complete', accessLost: false };
     if (command === 'cluster_select') return { target, providers: [provider] };
     return null;
   });

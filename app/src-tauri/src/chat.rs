@@ -65,6 +65,8 @@ pub enum ChatError {
     WorkspaceUnavailable,
     /// This place's conversation was started on another AI connection; start a new one.
     PlaceChanged,
+    /// The selected cluster's access can no longer authenticate and needs reconnecting.
+    AccessLost,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -637,6 +639,7 @@ impl ChatOwner {
                             | ChatError::WorkspaceOutdated
                             | ChatError::WorkspaceUnavailable
                             | ChatError::ClusterUnavailable
+                            | ChatError::AccessLost
                     )
                 });
             // Before preflight passes, the previous conversation is still the one held.
@@ -660,6 +663,7 @@ impl ChatOwner {
                                 | ChatError::Permission
                                 | ChatError::SessionsUnsupported
                                 | ChatError::ClusterUnavailable
+                                | ChatError::AccessLost
                                 | ChatError::WorkspaceOutdated
                                 | ChatError::WorkspaceUnavailable
                         ) {

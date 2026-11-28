@@ -5,7 +5,7 @@ import { CardSection, type Status, StatusIcon, StatusPill } from '../components/
 import { Disclosure } from '../components/Disclosure';
 import { relativeTime } from '../components/RelativeTime';
 import { builtInTools } from './built-in-tools';
-import { type ChatPlace, type ChatSnapshot, type ChatTurn, snapshotErrorMessage } from './chat-api';
+import { type ChatPlace, type ChatSnapshot, type ChatTurn, chatErrors, snapshotErrorMessage } from './chat-api';
 import { modelLabel } from './model-label';
 import { useTurn } from './use-turn';
 
@@ -31,10 +31,10 @@ function stepIndex(phase: string) {
 }
 type Outcome = { state: Status; word: string; note?: string };
 // How a task ended, in the shared status words. `live` is the native state while this is the current task.
-function outcome(turn: ChatTurn, live?: ChatSnapshot['state']): Outcome {
+function outcome(turn: ChatTurn, live?: ChatSnapshot['state'], lost?: string): Outcome {
   if (live === 'requestingStop') return { state: 'running', word: 'Stopping', note: states.requestingStop };
   if (live === 'stopUnconfirmed' || live && turn.stopUnconfirmed) return { state: 'stale', word: 'Result unknown', note: states.stopUnconfirmed };
-  if (live === 'observationLost') return { state: 'stale', word: 'Result unknown', note: states.observationLost };
+  if (live === 'observationLost') return { state: 'stale', word: 'Result unknown', note: lost ?? states.observationLost };
   if (live === 'waitingForInput') return { state: 'needs-you', word: 'Needs you', note: states.waitingForInput };
   if (live && busyStates.includes(live) && !terminal.includes(turn.phase)) return { state: 'running', word: 'Running' };
   const stopped = turn.terminationUnconfirmed ? states.stopRequested : turn.stopUnconfirmed ? states.stopUnconfirmed : undefined;
@@ -69,8 +69,8 @@ function ToolRow({ tool }: { tool: { name: string; state: Status; word: string }
   const label = Object.hasOwn(builtInTools, tool.name) ? builtInTools[tool.name] : undefined;
   return <li className="try-tool"><StatusIcon state={tool.state} /><span>{label && <>{label} </>}<code className="code-chip">{tool.name}</code></span><span className="muted">{tool.word}</span></li>;
 }
-function Result({ label, turn, live, waiting, model, actions }: { label: string; turn: ChatTurn; live?: ChatSnapshot['state']; waiting?: string; model?: string; actions?: ReactNode }) {
-  const end = outcome(turn, live);
+function Result({ label, turn, live, lost, waiting, model, actions }: { label: string; turn: ChatTurn; live?: ChatSnapshot['state']; lost?: string; waiting?: string; model?: string; actions?: ReactNode }) {
+  const end = outcome(turn, live, lost);
   const settled = end.state !== 'running' && end.state !== 'needs-you';
   const at = stepIndex(turn.phase);
   const finalState: Status = turn.phase === 'Succeeded' ? 'passed' : turn.phase === 'Failed' ? 'failed' : 'stale';
@@ -107,7 +107,7 @@ function Result({ label, turn, live, waiting, model, actions }: { label: string;
 }
 
 // Errors that already say why a cluster can't take the task; the status line stays quiet beside them.
-const clusterErrors: ChatSnapshot['error'][] = ['permission', 'sessionsUnsupported', 'clusterUnavailable'];
+const clusterErrors: ChatSnapshot['error'][] = ['permission', 'sessionsUnsupported', 'clusterUnavailable', 'accessLost'];
 // This computer's workspace didn't answer one request. If it stopped answering entirely, the error is workspaceUnavailable.
 const localConnection = 'The workspace on this computer didn’t answer. Run the task again. If it keeps happening, quit Bridge and open it again to restart the workspace.';
 export default function TryTask({ documentId, agentName, model, blocked, place, active = true }: {
@@ -166,6 +166,8 @@ export default function TryTask({ documentId, agentName, model, blocked, place, 
     : snapshot?.state === 'working' && current && ['', 'Pending', 'Queued', 'Scheduled'].includes(current.phase) ? 'Waiting to start…'
     // The hint below the field already says why; one message, not two.
     : blocked && snapshot?.state === 'ready' ? undefined
+    // Access that can no longer authenticate is not a lost connection: reconnecting the cluster shows the result.
+    : snapshot?.state === 'observationLost' && snapshot.error === 'accessLost' ? chatErrors.accessLost
     : snapshot ? states[snapshot.state] : 'Opening Try a task…';
   const routine = !status || status === states.ready || status === states.contextUnavailable && (!snapshot?.error || clusterErrors.includes(snapshot.error));
   const canStop = !!snapshot && snapshot.state !== 'ready' && snapshot.state !== 'contextUnavailable';
@@ -208,7 +210,7 @@ export default function TryTask({ documentId, agentName, model, blocked, place, 
       {!recoveryOnCard && (canStop || canReconnect) && <div className="try-recovery">{recovery}</div>}
       {place && snapshot?.keptOnCluster && <p className="muted">Earlier tasks stay on {place.name}: your access there doesn’t allow Bridge to delete them.</p>}
     </form>
-    {current ? <Result label="Task result" turn={current} live={live} waiting={waiting} model={models.current.get(turns.length - 1)}
+    {current ? <Result label="Task result" turn={current} live={live} lost={snapshot?.error === 'accessLost' ? chatErrors.accessLost : undefined} waiting={waiting} model={models.current.get(turns.length - 1)}
       actions={recoveryOnCard ? recovery : <Button type="button" kind="secondary" disabled={!!reason} title={reason} onClick={() => { void run(current.message); }}>Run again</Button>} />
       : <p className="empty-state try-empty">No tasks run yet. The result shows here: what it used, what it answered, and how the task ended.</p>}
     {!!earlier.length && <Disclosure className="try-earlier" label={`Earlier tasks: ${earlier.length}`}>

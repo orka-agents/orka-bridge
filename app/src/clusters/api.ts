@@ -33,16 +33,18 @@ async function call<T>(command: string, args: Record<string, unknown>, valid: (v
   }
   throw new ClusterRequestError({ check, result: 'unknown' });
 }
-export type ClusterPlaceSnapshot = { places: Place[]; selectedKey: string | null; persistenceState: 'complete' | 'unavailable' };
+// `accessLost`: the selected place's access can no longer authenticate, so it needs reconnecting.
+export type ClusterPlaceSnapshot = { places: Place[]; selectedKey: string | null; persistenceState: 'complete' | 'unavailable'; accessLost: boolean };
 // Unlike Overview's refresh, this reads only the native session's retained views.
 export async function clusterPlaces(): Promise<ClusterPlaceSnapshot | undefined> {
   if (!isTauri()) return;
   try {
     const value: unknown = await invoke('cluster_places', {});
-    if (!object(value) || !keys(value, ['places', 'selectedKey', 'persistenceState']) || (value.persistenceState !== 'complete' && value.persistenceState !== 'unavailable')) return;
+    if (!object(value) || !keys(value, ['places', 'selectedKey', 'persistenceState', 'accessLost']) || (value.persistenceState !== 'complete' && value.persistenceState !== 'unavailable')
+      || typeof value.accessLost !== 'boolean' || value.accessLost && value.selectedKey === null) return;
     const retained = { places: value.places, historyState: 'complete', unobserved: [] };
     if (isPlaces(retained) && (value.selectedKey === null || typeof value.selectedKey === 'string' && retained.places.some(p => p.key === value.selectedKey))) {
-      return { places: retained.places, selectedKey: value.selectedKey, persistenceState: value.persistenceState };
+      return { places: retained.places, selectedKey: value.selectedKey, persistenceState: value.persistenceState, accessLost: value.accessLost };
     }
   } catch { /* Passive observation never exports native diagnostics or renews access. */ }
 }

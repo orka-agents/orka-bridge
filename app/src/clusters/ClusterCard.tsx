@@ -11,8 +11,12 @@ import { readPlaces, type Place } from '../overview/api';
 import './clusters.css';
 
 type Failure = { failure: ClusterFailure; operation: 'Read kubeconfig' | 'Reload kubeconfig' | 'Discover Orka' | 'Use cluster' | 'Reconnect cluster' };
+// The ServiceAccount each installation was last connected with in this run, so Reconnect can confirm the same one
+// again without asking. Its name only; never a credential.
+const accounts = new Map<string, string>();
+const installation = (t: TargetView) => JSON.stringify([t.context_name, t.service_namespace, t.service_name, t.watched_namespace]);
 type Entry = { revision: number; current?: SelectedPlace; remembered?: Place };
-export default function ClusterCard({ active = true, entry, selection, onPlace, onContextName, onOpenAgent, onDone, onRemoved }: { active?: boolean; entry?: Entry; selection?: SelectedPlace; onContextName?: (name: string | undefined) => void; onPlace: (place: SelectedPlace) => void; onOpenAgent: () => void; onDone?: () => void; onRemoved?: (key: string, targetId: string | undefined, navigate: boolean) => void }) {
+export default function ClusterCard({ active = true, entry, selection, accessLost = false, onPlace, onContextName, onOpenAgent, onDone, onRemoved }: { active?: boolean; entry?: Entry; selection?: SelectedPlace; accessLost?: boolean; onContextName?: (name: string | undefined) => void; onPlace: (place: SelectedPlace) => void; onOpenAgent: () => void; onDone?: () => void; onRemoved?: (key: string, targetId: string | undefined, navigate: boolean) => void }) {
   const [choices, setChoices] = useState<ContextView[]>([]);
   const [foundContexts, setFoundContexts] = useState<Set<string>>(new Set());
   const [contextId, setContextId] = useState('');
@@ -110,6 +114,8 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   useEffect(() => { onContextName?.(named ? contextName : undefined); }, [named, contextName, onContextName]);
   const networkFailure = contextName && error?.failure.result === 'connectionFailed' && ['clusterApi', 'orkaConnection'].includes(error.failure.check);
   const connected = access?.status === 'connected';
+  // This card shows the place in use, whose access can no longer authenticate: Reconnect confirms it again.
+  const lost = connected && accessLost && !!target && selection?.kind === 'cluster' && selection.target?.id === target.id;
   const noContexts = !error && !choices.length && !connected && !targets && (!entry?.remembered || changingContext);
   // A remembered or connected cluster's page names its Orka installation under the title, as the list does.
   const service = target ? `${target.service_namespace}/${target.service_name}` : retained?.service.replace(/\s*\/\s*/g, '/');
@@ -207,8 +213,12 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     // Native Use invalidates the old access before it replies. Do not leave App holding it.
     onPlace({ kind: 'cluster' });
     try {
-      const value = await connectCluster(target.id, needsAccount ? account.trim() : null);
+      const usedAccount = accounts.get(installation(target));
+      const name = needsAccount && account.trim() ? account.trim() : usedAccount ?? null;
+      const value = await connectCluster(target.id, name);
       if (request !== epoch.current) return;
+      if (value.status === 'connected' && name) accounts.set(installation(target), name);
+      if (value.status === 'needServiceAccount' && usedAccount && !account.trim()) setAccount(usedAccount);
       setAccess(value);
       if (value.failure) setError({ failure: value.failure, operation: 'Use cluster' });
       if (value.status === 'needServiceAccount') setNeedsAccount(true);
@@ -244,7 +254,9 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     {error && recovery && !networkFailure && <p className="muted">Your workspace and agent files are kept. Connection checks do not create an agent or run tests.</p>}
     {target && <>
       {connected ? <>
-        <ul className="cluster-checks"><li><StatusIcon state="passed" /><b>Cluster found</b></li><li><StatusIcon state="passed" /><b role="status">Access confirmed</b></li></ul>
+        <ul className="cluster-checks"><li><StatusIcon state="passed" /><b>Cluster found</b></li>{lost
+          ? <li><StatusIcon state="needs-you" /><b role="status">Access needs reconnecting</b><span className="muted">Bridge could not renew this cluster’s access. Reconnect to confirm it again.</span></li>
+          : <li><StatusIcon state="passed" /><b role="status">Access confirmed</b></li>}</ul>
         <h3>AI connection</h3><label className="sr-only" htmlFor="send-provider">AI connection</label>
         <select className="field cluster-mono-field" ref={providerField} id="send-provider" disabled={removing} value={providerId} onChange={event => { const next = event.target.value; setProviderId(next); providerName.current = access.providers.find(p => p.id === next)?.name ?? ''; onPlace({ kind: 'cluster', target, providers: access.providers, providerId: next }); }}>
           <option value="">Choose an AI connection</option>{access.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.ready ? 'Ready' : 'Not ready'}</option>)}
@@ -269,7 +281,8 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
         else void reload();
       }}>Check again</Button>}
       {!error && target && (connected ? <>
-        {onDone && <Button type="button" kind="primary" size="large" disabled={removing} onClick={onDone}>Done</Button>}
+        {lost && <Button type="button" kind="primary" size="large" disabled={busy || removing} onClick={() => { void confirm(); }}>Reconnect</Button>}
+        {onDone && <Button type="button" kind={lost ? 'secondary' : 'primary'} size="large" disabled={removing} onClick={onDone}>Done</Button>}
         <Button type="button" kind="secondary" size="large" disabled={!providerId || removing} title={!providerId ? 'Choose an AI connection first' : undefined} onClick={onOpenAgent}>Open your agent</Button>
       </> : <Button type="button" kind="primary" size="large" disabled={busy || (needsAccount && !account.trim())} onClick={() => { void confirm(); }}>Use this cluster</Button>)}
       {!error && !target && !connected && targets && targets.length > 1 && <Button type="button" kind="primary" size="large" disabled title="Choose an installation first">Use this cluster</Button>}

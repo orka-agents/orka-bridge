@@ -93,7 +93,7 @@ test('retrying a context-list read preserves a remembered working connection', a
   const ipc = vi.fn((command: string) => {
     if (command === 'cluster_reconnect') return target;
     if (command === 'cluster_use') return { status: 'connected', providers: [provider], failure: null };
-    if (command === 'cluster_places') return { places: [remembered], selectedKey: remembered.key, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [remembered], selectedKey: remembered.key, persistenceState: 'complete', accessLost: false };
     if (command === 'overview_places') return { places: [remembered], unobserved: [], historyState: 'complete' };
     if (command === 'cluster_contexts') { if (++reads === 1) throw { check: 'configuration', result: 'unknown' }; return [context]; }
     throw Error('Unexpected command ' + command);

@@ -6,9 +6,11 @@ fn confirmed() -> Arc<RemoteAccess> {
     Arc::new(RemoteAccess {
         creator: Client::try_from(kube::Config::new("http://127.0.0.1:1".parse().unwrap()))
             .unwrap(),
-        bearer: "never-persist-this-credential".into(),
+        bearer: Arc::new(super::super::bearer::Bearer::fixed(
+            "never-persist-this-credential".into(),
+            None,
+        )),
         creator_bearer: "nor-the-creator".into(),
-        expiry: None,
         binding: TargetBinding {
             cluster_identity: "a".repeat(64),
             context_id: ContextId(Uuid::new_v4()),

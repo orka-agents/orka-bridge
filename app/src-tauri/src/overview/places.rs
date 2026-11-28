@@ -116,6 +116,14 @@ struct Entry {
     access: Option<Arc<RemoteAccess>>,
     generation: u64,
 }
+impl Entry {
+    /// A place whose access can no longer authenticate is stale until it is reconnected.
+    fn current(&self) -> Place {
+        let mut view = self.view.clone();
+        view.stale |= self.access.as_ref().is_some_and(|a| a.lost());
+        view
+    }
+}
 #[derive(Default)]
 struct State {
     entries: BTreeMap<String, Entry>,
@@ -191,13 +199,16 @@ impl Inventory {
             .unwrap()
             .entries
             .get(key)
-            .map(|e| e.view.clone())
+            .map(Entry::current)
     }
     /// Retained access is selectable only after a successful current-session observation.
     pub(crate) fn connected_access(&self, key: &str) -> Option<Arc<RemoteAccess>> {
         let state = self.state.lock().unwrap();
         let entry = state.entries.get(key)?;
-        (!entry.view.stale).then(|| entry.access.clone()).flatten()
+        (!entry.view.stale)
+            .then(|| entry.access.clone())
+            .flatten()
+            .filter(|access| !access.lost())
     }
     pub(crate) fn forget(&self, key: &str) -> Result<(), &'static str> {
         let mut state = self.state.lock().unwrap();
@@ -258,7 +269,7 @@ impl Inventory {
             .unwrap()
             .entries
             .values()
-            .map(|e| e.view.clone())
+            .map(Entry::current)
             .collect()
     }
     pub(crate) async fn refresh(&self) -> Vec<Place> {

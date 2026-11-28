@@ -1,3 +1,4 @@
+use super::bearer::{Bearer, Mint, MintFuture, Minted, Refused};
 use super::credentials::{self, selected_config, ExecOwner};
 use super::*;
 use k8s_openapi::{
@@ -55,10 +56,10 @@ mod catalog_read_tests;
 /// Native access only: no Serialize/Debug implementation can export credentials.
 pub struct RemoteAccess {
     pub(crate) creator: Client,
-    pub(crate) bearer: String,
+    /// Shared by every consumer of this access, so a renewal reaches running Sends too.
+    pub(crate) bearer: Arc<Bearer>,
     // Orka has seen this credential even after the confirmed ServiceAccount fallback.
     pub(super) creator_bearer: String,
-    pub expiry: Option<k8s_openapi::apimachinery::pkg::apis::meta::v1::Time>,
     pub(super) binding: TargetBinding,
     orka: Arc<dyn OrkaRead>,
     providers: Vec<ProviderView>,
@@ -293,68 +294,62 @@ impl ClusterClient {
             Credential::Bearer {
                 value,
                 known_expiry,
-            } => (value, known_expiry),
+            } => (value, known_expiry.as_ref().map(instant)),
             Credential::CertificateOnly => (String::new(), None),
         };
         let creator = Client::try_from(resolved.config).map_err(|_| Configuration.unknown())?;
         let mut access = RemoteAccess {
             creator,
             creator_bearer: bearer.clone(),
-            bearer,
-            expiry,
+            bearer: Arc::new(Bearer::fixed(bearer, expiry)),
             binding,
             orka: self.orka.clone(),
             providers: Vec::new(),
         };
         self.check_binding(&access.binding, &access.creator, deadline)
             .await?;
-        let mut identity = if access.bearer.is_empty() {
+        let mut identity = if access.bearer.peek().is_empty() {
             Identity::NeedAccount
         } else {
             within(deadline, OrkaIdentity, access.identity()).await?
         };
         if identity == Identity::NeedAccount {
             let name = sa_name.ok_or(AccessOutcome::NeedServiceAccount)?;
-            let request = TokenRequest {
-                spec: TokenRequestSpec {
-                    audiences: vec![],
-                    expiration_seconds: Some(600),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let accounts = Api::<ServiceAccount>::namespaced(
-                access.creator.clone(),
-                &access.binding.watched_namespace,
-            );
-            let issue = async {
-                accounts
-                    .create_token_request(&name, &PostParams::default(), &request)
-                    .await
-                    .map_err(|e| kube_error(Check::ServiceAccount, e))
-            };
-            let status = within(deadline, Check::ServiceAccount, issue)
-                .await?
-                .status
-                .ok_or(Check::ServiceAccount.unknown())?;
-            if status.token.is_empty()
-                || status.expiration_timestamp.0 <= k8s_openapi::jiff::Timestamp::now()
-            {
-                return Err(Check::ServiceAccount.unknown());
-            }
-            access.bearer = status.token;
-            access.expiry = Some(status.expiration_timestamp);
-            identity = within(deadline, OrkaIdentity, access.identity()).await?;
+            let issue = issue_token(&access.creator, &access.binding.watched_namespace, &name);
+            let minted = within(deadline, Check::ServiceAccount, issue).await?;
+            let token = minted.token.clone();
+            let whoami =
+                within(deadline, OrkaIdentity, access.whoami(&*access.orka, &token)).await?;
+            let subject;
+            (identity, subject) = access.identity_of(&whoami)?;
             if identity == Identity::NeedAccount {
                 return Err(OrkaIdentity.fail(CheckResult::IdentityRejected));
             }
+            // Renewal mints again for this exact account, as this same sign-in, only while
+            // Orka still names the same subject. Without one to compare, it simply expires.
+            access.bearer = Arc::new(
+                match subject.filter(|_| identity == Identity::TokenReview) {
+                    Some(subject) => Bearer::minted(
+                        minted,
+                        Arc::new(AccountMint {
+                            client: self.clone(),
+                            creator: access.creator.clone(),
+                            binding: access.binding.clone(),
+                            account: name,
+                            subject,
+                            creator_bearer: access.creator_bearer.clone(),
+                        }),
+                    ),
+                    None => Bearer::fixed(minted.token, Some(minted.expires)),
+                },
+            );
         }
         // Even a certificate creator must check permissions as the frozen Orka bearer alone.
         if identity == Identity::TokenReview {
             let token_config = selected_config(
                 &self.kubeconfig,
                 &access.binding.context_name,
-                &access.bearer,
+                &access.bearer.peek(),
             )
             .await?;
             let token_client =
@@ -387,9 +382,8 @@ impl RemoteAccess {
         Self {
             creator: Client::try_from(kube::Config::new("http://127.0.0.1:1".parse().unwrap()))
                 .unwrap(),
-            bearer: "fixture-bearer".into(),
+            bearer: Arc::new(Bearer::fixed("fixture-bearer".into(), None)),
             creator_bearer: "fixture-creator".into(),
-            expiry: None,
             binding,
             orka,
             providers: vec![ProviderView {
@@ -405,11 +399,7 @@ impl RemoteAccess {
     pub async fn inventory(
         &self,
     ) -> Result<Vec<crate::overview_places::RemoteAgent>, ClusterError> {
-        if self
-            .expiry
-            .as_ref()
-            .is_some_and(|t| t.0 <= k8s_openapi::jiff::Timestamp::now())
-        {
+        if self.bearer.lost() {
             return Err(ClusterError::Denied);
         }
         tokio::time::timeout(OPERATION_LIMIT, async {
@@ -479,6 +469,14 @@ impl RemoteAccess {
     pub fn binding(&self) -> &TargetBinding {
         &self.binding
     }
+    /// This access can no longer authenticate to Orka and needs reconnecting.
+    pub fn lost(&self) -> bool {
+        self.bearer.lost()
+    }
+    /// Bridge minted this access's token and renews it for the confirmed account.
+    pub fn renewable(&self) -> bool {
+        self.bearer.renewable()
+    }
     pub fn providers(&self) -> &[ProviderView] {
         &self.providers
     }
@@ -489,6 +487,8 @@ impl RemoteAccess {
     ) -> Result<Value, AccessOutcome> {
         self.read_via(&*self.orka, resource, after).await
     }
+    /// One read with the current bearer. A rejected bearer is renewed once and the read
+    /// retried once; a renewal that is impossible reports the rejection.
     pub(super) async fn read_via(
         &self,
         orka: &dyn OrkaRead,
@@ -496,52 +496,55 @@ impl RemoteAccess {
         after: Option<&str>,
     ) -> Result<Value, AccessOutcome> {
         let check = resource.check();
-        let value = tokio::time::timeout(
-            REQUEST_TIMEOUT,
-            orka.get(
-                &self.creator,
-                &self.binding,
-                &self.bearer,
-                resource,
-                &self.binding.watched_namespace,
-                after,
-            ),
+        let bearer = self
+            .bearer
+            .token()
+            .await
+            .map_err(|_| check.fail(CheckResult::AuthenticationRejected))?;
+        match self.read_as(orka, resource, after, &bearer).await {
+            // Only Orka's own answer rejects the bearer; a refused port-forward is the sign-in's.
+            Err(AccessOutcome::Failed(failure))
+                if failure.check == check
+                    && failure.result == CheckResult::AuthenticationRejected =>
+            {
+                match self.bearer.rejected(&bearer).await {
+                    Ok(renewed) => self.read_as(orka, resource, after, &renewed).await,
+                    Err(_) => Err(AccessOutcome::Failed(failure)),
+                }
+            }
+            other => other,
+        }
+    }
+    async fn read_as(
+        &self,
+        orka: &dyn OrkaRead,
+        resource: OrkaResource,
+        after: Option<&str>,
+        bearer: &str,
+    ) -> Result<Value, AccessOutcome> {
+        read_with(
+            orka,
+            &self.creator,
+            &self.binding,
+            resource,
+            after,
+            bearer,
+            &self.creator_bearer,
         )
         .await
-        .map_err(|_| check.current().unknown())?
-        .map_err(|e| e.at(check))?;
-        if serde_json::to_vec(&value).map_or(true, |v| v.len() > 1024 * 1024)
-            || echoed(&value, &self.bearer)
-            || echoed(&value, &self.creator_bearer)
-        {
-            return Err(check.unknown());
-        }
-        Ok(value)
+    }
+    async fn whoami(&self, orka: &dyn OrkaRead, bearer: &str) -> Result<Value, AccessOutcome> {
+        self.read_as(orka, OrkaResource::WhoAmI, None, bearer).await
     }
     async fn identity(&self) -> Result<Identity, AccessOutcome> {
         self.identity_via(&*self.orka).await
     }
     async fn identity_via(&self, orka: &dyn OrkaRead) -> Result<Identity, AccessOutcome> {
         let identity = self.read_via(orka, OrkaResource::WhoAmI, None).await?;
-        let rejected = Check::OrkaIdentity.fail(CheckResult::IdentityRejected);
-        match identity["authenticated"].as_bool() {
-            Some(true) => {}
-            Some(false) => return Err(rejected),
-            None => return Err(Check::OrkaIdentity.unknown()),
-        }
-        // A malformed reply is unknown, never an identity rejection.
-        let (Some(ns), Some(auth)) = (
-            identity["namespace"].as_str(),
-            identity["authType"].as_str(),
-        ) else {
-            return Err(Check::OrkaIdentity.unknown());
-        };
-        match auth {
-            "tokenReview" if ns.is_empty() => Ok(Identity::NeedAccount),
-            "tokenReview" if ns == self.binding.watched_namespace => Ok(Identity::TokenReview),
-            "oidc" if ns == self.binding.watched_namespace => Ok(Identity::Oidc),
-            _ => Err(rejected),
-        }
+        Ok(self.identity_of(&identity)?.0)
+    }
+    fn identity_of(&self, identity: &Value) -> Result<(Identity, Option<Subject>), AccessOutcome> {
+        identity_in(identity, &self.binding.watched_namespace)
     }
     pub(super) async fn configured_providers(
         &self,
@@ -615,12 +618,13 @@ impl RemoteAccess {
             Identity::TokenReview => (),
         }
         let check = async {
-            let config = selected_config(
-                &current.kubeconfig,
-                &self.binding.context_name,
-                &self.bearer,
-            )
-            .await?;
+            let bearer = self
+                .bearer
+                .token()
+                .await
+                .map_err(|_| AccessOutcome::Denied)?;
+            let config =
+                selected_config(&current.kubeconfig, &self.binding.context_name, &bearer).await?;
             let client = Client::try_from(config).map_err(|_| AccessOutcome::Unavailable)?;
             let review = SelfSubjectAccessReview {
                 spec: SelfSubjectAccessReviewSpec {
@@ -687,6 +691,174 @@ impl RemoteAccess {
             }
         }
         Ok(())
+    }
+}
+/// Who Orka says a bearer is: the account's username and UID from TokenReview.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Subject {
+    username: String,
+    uid: String,
+}
+fn identity_in(
+    identity: &Value,
+    namespace: &str,
+) -> Result<(Identity, Option<Subject>), AccessOutcome> {
+    let rejected = Check::OrkaIdentity.fail(CheckResult::IdentityRejected);
+    match identity["authenticated"].as_bool() {
+        Some(true) => {}
+        Some(false) => return Err(rejected),
+        None => return Err(Check::OrkaIdentity.unknown()),
+    }
+    // A malformed reply is unknown, never an identity rejection.
+    let (Some(ns), Some(auth)) = (
+        identity["namespace"].as_str(),
+        identity["authType"].as_str(),
+    ) else {
+        return Err(Check::OrkaIdentity.unknown());
+    };
+    let kind = match auth {
+        "tokenReview" if ns.is_empty() => Identity::NeedAccount,
+        "tokenReview" if ns == namespace => Identity::TokenReview,
+        "oidc" if ns == namespace => Identity::Oidc,
+        _ => return Err(rejected),
+    };
+    let text = |key: &str| {
+        identity[key]
+            .as_str()
+            .filter(|s| !s.is_empty() && s.len() <= 1024)
+            .map(str::to_owned)
+    };
+    let subject = text("username")
+        .zip(text("uid"))
+        .map(|(username, uid)| Subject { username, uid });
+    Ok((kind, subject))
+}
+/// One bounded GET whose reply may not echo either credential.
+async fn read_with(
+    orka: &dyn OrkaRead,
+    creator: &Client,
+    binding: &TargetBinding,
+    resource: OrkaResource,
+    after: Option<&str>,
+    bearer: &str,
+    creator_bearer: &str,
+) -> Result<Value, AccessOutcome> {
+    let check = resource.check();
+    let value = tokio::time::timeout(
+        REQUEST_TIMEOUT,
+        orka.get(
+            creator,
+            binding,
+            bearer,
+            resource,
+            &binding.watched_namespace,
+            after,
+        ),
+    )
+    .await
+    .map_err(|_| check.current().unknown())?
+    .map_err(|e| e.at(check))?;
+    if serde_json::to_vec(&value).map_or(true, |v| v.len() > 1024 * 1024)
+        || echoed(&value, bearer)
+        || echoed(&value, creator_bearer)
+    {
+        return Err(check.unknown());
+    }
+    Ok(value)
+}
+/// Bridge asks for ten minutes; the server's own expiry is what counts.
+const TOKEN_SECONDS: i64 = 600;
+async fn issue_token(
+    creator: &Client,
+    namespace: &str,
+    account: &str,
+) -> Result<Minted, AccessOutcome> {
+    let request = TokenRequest {
+        spec: TokenRequestSpec {
+            audiences: vec![],
+            expiration_seconds: Some(TOKEN_SECONDS),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let status = Api::<ServiceAccount>::namespaced(creator.clone(), namespace)
+        .create_token_request(account, &PostParams::default(), &request)
+        .await
+        .map_err(|e| kube_error(Check::ServiceAccount, e))?
+        .status
+        .ok_or(Check::ServiceAccount.unknown())?;
+    if status.token.is_empty()
+        || status.expiration_timestamp.0 <= k8s_openapi::jiff::Timestamp::now()
+    {
+        return Err(Check::ServiceAccount.unknown());
+    }
+    Ok(Minted {
+        token: status.token,
+        expires: instant(&status.expiration_timestamp),
+    })
+}
+/// A server timestamp on this process's monotonic clock, so renewal follows paused test time.
+fn instant(time: &k8s_openapi::apimachinery::pkg::apis::meta::v1::Time) -> Instant {
+    let left = time.0.as_millisecond() - k8s_openapi::jiff::Timestamp::now().as_millisecond();
+    Instant::now() + Duration::from_millis(u64::try_from(left).unwrap_or(0))
+}
+/// Renews a minted ServiceAccount token exactly as Use first confirmed it: the same sign-in,
+/// installation, namespace and account, and the same subject in Orka. Never another account.
+struct AccountMint {
+    client: ClusterClient,
+    creator: Client,
+    binding: TargetBinding,
+    account: String,
+    subject: Subject,
+    creator_bearer: String,
+}
+impl AccountMint {
+    async fn renew(&self) -> Result<Minted, AccessOutcome> {
+        let deadline = Instant::now() + OPERATION_LIMIT;
+        let namespace = &self.binding.watched_namespace;
+        self.client
+            .check_binding(&self.binding, &self.creator, deadline)
+            .await?;
+        let issue = issue_token(&self.creator, namespace, &self.account);
+        let minted = within(deadline, Check::ServiceAccount, issue).await?;
+        let whoami = read_with(
+            &*self.client.orka,
+            &self.creator,
+            &self.binding,
+            OrkaResource::WhoAmI,
+            None,
+            &minted.token,
+            &self.creator_bearer,
+        );
+        let whoami = within(deadline, Check::OrkaIdentity, whoami).await?;
+        match identity_in(&whoami, namespace)? {
+            (Identity::TokenReview, Some(subject)) if subject == self.subject => {}
+            _ => return Err(Check::OrkaIdentity.fail(CheckResult::IdentityRejected)),
+        }
+        let config = selected_config(
+            &self.client.kubeconfig,
+            &self.binding.context_name,
+            &minted.token,
+        )
+        .await?;
+        let client = Client::try_from(config).map_err(|_| Check::Configuration.unknown())?;
+        within(deadline, Check::Permissions, permissions(client, namespace)).await?;
+        Ok(minted)
+    }
+}
+impl Mint for AccountMint {
+    fn mint(&self) -> MintFuture<'_> {
+        Box::pin(async move {
+            self.renew().await.map_err(|outcome| match outcome {
+                // Timeouts and dropped connections may pass; the current token is kept.
+                AccessOutcome::Unavailable
+                | AccessOutcome::Failed(ClusterFailure {
+                    result: CheckResult::Unknown | CheckResult::ConnectionFailed,
+                    ..
+                }) => Refused::Unreachable,
+                _ => Refused::Rejected,
+            })
+        })
     }
 }
 pub(super) fn deployment_watches(deployment: &Deployment, namespace: &str) -> bool {

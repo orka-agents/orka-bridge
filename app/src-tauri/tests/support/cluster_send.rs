@@ -1272,8 +1272,9 @@ async fn reload_immediately_after_running_admission_keeps_its_access() {
     assert_eq!(done["report"]["verdict"], "passed", "{done}");
     assert_eq!(s.agent_posts().len(), 1);
     s.idle_forwards().await;
+    // An unchanged reload keeps the place in use, so the next Send is admitted too.
     let next = s.start().await;
-    assert_eq!(s.finish(&id(&next)).await["error"], "access");
+    assert_eq!(s.finish(&id(&next)).await["error"], Value::Null);
     assert_eq!(s.agent_posts().len(), 1);
 }
 
@@ -1317,8 +1318,8 @@ async fn admission_does_not_wait_for_discovery_lock() {
     assert_eq!(s.view(None)["state"], "running");
     release.send(()).unwrap();
     assert!(discovery.await.unwrap());
-    // Rediscovery cleared the earlier Use, so this attempt never reaches a write.
+    // Browsing does not retire the place in use: the admitted attempt completes.
     let view = s.finish(&id(&first)).await;
-    assert_eq!(view["error"], "access");
-    assert_eq!(s.api.wire.posts(), 0);
+    assert_eq!(view["error"], Value::Null, "{view}");
+    assert_eq!(view["report"]["verdict"], "passed");
 }

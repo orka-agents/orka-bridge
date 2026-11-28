@@ -264,7 +264,7 @@ test.each(['loading', 'error'] as const)('a Send completion survives a real docu
 
 test('opening another cluster resets an old management subview before returning to Clusters', async () => {
   let selectedKey = 'one'; const second = { ...target, id: '00000000-0000-4000-8000-000000000004', context_name: 'team-two' };
-  ipc(args => { selectedKey = (args as { key: string }).key; return { target: selectedKey === 'one' ? target : second, providers: [provider] }; }, command => command === 'cluster_places' ? { places: inventory, selectedKey, persistenceState: 'complete' } : command === 'setup_status' ? { selected: 'localVm', localVm: 'ready', model: 'locked' } : undefined);
+  ipc(args => { selectedKey = (args as { key: string }).key; return { target: selectedKey === 'one' ? target : second, providers: [provider] }; }, command => command === 'cluster_places' ? { places: inventory, selectedKey, persistenceState: 'complete', accessLost: false } : command === 'setup_status' ? { selected: 'localVm', localVm: 'ready', model: 'locked' } : undefined);
   const user = userEvent.setup(); render(<App />); await user.click(screen.getByRole('button', { name: 'Overview' })); await expand();
   await user.click(screen.getByRole('button', { name: 'Run tests reader on team-one' })); await screen.findByRole('heading', { name: 'reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' })); await user.click(await within(await screen.findByRole('region', { name: 'team-one' })).findByRole('button', { name: 'Manage' }));

@@ -112,7 +112,7 @@ test.each([['keeps', 'key-a'], ['drops', null]])('reload %s the place in use as 
   vi.stubGlobal('isTauri', true);
   const place = { key: 'key-a', context: 'team', service: 'control/orka', namespace: 'agents', stale: false, observedAt: 1, checkedAt: 1, agents: [] };
   mockIPC(command => command === 'cluster_contexts' || command === 'cluster_reload' ? [context]
-    : command === 'cluster_places' ? { places: [place], selectedKey, persistenceState: 'complete' } : Promise.reject('Unsupported'));
+    : command === 'cluster_places' ? { places: [place], selectedKey, persistenceState: 'complete', accessLost: false } : Promise.reject('Unsupported'));
   const onPlace = vi.fn(); const user = userEvent.setup();
   const selection = { kind: 'cluster' as const, target, providers: [provider], providerId: provider.id };
   render(<ClusterCard selection={selection} onPlace={onPlace} onOpenAgent={vi.fn()} />);

@@ -44,6 +44,8 @@ pub struct ClusterPlaceSnapshot {
     pub places: Vec<crate::overview_places::Place>,
     pub selected_key: Option<String>,
     pub persistence_state: &'static str,
+    /// The selected place's access can no longer authenticate: it needs reconnecting.
+    pub access_lost: bool,
 }
 impl From<AccessOutcome> for AccessView {
     fn from(outcome: AccessOutcome) -> Self {
@@ -193,16 +195,18 @@ impl ClusterSession {
     /// A display-only snapshot: never reads kubeconfig, refreshes inventory or renews access.
     pub fn places(&self) -> ClusterPlaceSnapshot {
         // Do not hold the admission lock while reading the independent inventory.
-        let binding = self
+        let selected = self
             .4
             .lock()
             .unwrap()
             .as_ref()
-            .map(|(_, access)| access.binding().clone());
+            .map(|(_, access)| (access.binding().clone(), access.lost()));
         ClusterPlaceSnapshot {
             places: self.6.snapshot(),
             persistence_state: self.6.persistence_state(),
-            selected_key: binding.map(|binding| crate::overview_places::Place::new(binding).key),
+            access_lost: selected.as_ref().is_some_and(|(_, lost)| *lost),
+            selected_key: selected
+                .map(|(binding, _)| crate::overview_places::Place::new(binding).key),
         }
     }
     /// Memory-only lookup; the caller rechecks a fresh kubeconfig before writing.
@@ -456,6 +460,7 @@ impl ClusterSession {
                     failure: None,
                 };
                 let access = Arc::new(access);
+                bearer::keep_renewed(&access.bearer);
                 self.6.remember(access.clone());
                 *self.4.lock().unwrap() = id.map(|id| (id, access));
                 view

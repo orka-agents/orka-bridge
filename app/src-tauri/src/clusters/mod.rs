@@ -1,3 +1,4 @@
+pub(crate) mod bearer;
 pub mod catalog;
 pub mod chat;
 mod client;

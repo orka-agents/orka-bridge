@@ -19,7 +19,7 @@ function nativeSetup(status: Record<string, unknown>, preflight?: Record<string,
     if (command === 'setup_requirements') return { memoryBytes: 6 * 1024 ** 3, stateDiskBytes: 32e9, downloadBytes: null, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null };
     if (command === 'setup_preflight' && preflight) return { platform: 'windows', virtualization: 'ready', memory: 'ready', installedMemoryBytes: 16 * 1024 ** 3, requiredMemoryBytes: 6 * 1024 ** 3, ...preflight };
     if (command === 'setup_example') return example;
-    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
 }

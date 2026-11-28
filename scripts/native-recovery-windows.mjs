@@ -161,7 +161,7 @@ try {
           if (command === 'cluster_use') return failure ? { status: 'unavailable', providers: [], failure } : { status: 'connected', providers: [provider], failure: null };
           if (command === 'cluster_reload') return ${JSON.stringify(name)} === 'cluster-reload-pending' ? new Promise(() => {}) : [{ ...context, id: '00000000-0000-4000-8000-000000000004', name: 'corrected-context' }];
           if (command === 'setup_requirements') return null;
-          if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+          if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
           if (command === 'engine_call') throw { kind: 'unavailable' };
           throw Error('Unmocked fixture command: ' + command);
         } };
@@ -356,7 +356,7 @@ try {
         if (command === 'setup_example') return pair;
         if (command === 'overview_files') return { state: 'complete', files: [], runActive: false, historyState: 'complete', runAgents: [] };
         if (command === 'setup_requirements') return null;
-        if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+        if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
         if (command === 'engine_call') throw { kind: 'unavailable' };
         throw Error('Unmocked fixture command: ' + command);
       } };
@@ -797,7 +797,7 @@ try {
         // Known and missing size facts: fixture IPC, not the native catalog.
         if (command === 'setup_requirements') return name.startsWith('local-preflight') && name !== 'local-preflight-missing' ? ${JSON.stringify({ memoryBytes: 4 * GiB, stateDiskBytes: 20 * GiB, downloadBytes: 2800000000, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null })} : null;
         if (command === 'setup_preflight') return { platform: 'windows', virtualization: ['local-preflight-unknown', 'local-preflight-mixed'].includes(name) ? 'unknown' : ['local-preflight-blocked', 'local-preflight-cluster'].includes(name) ? 'disabled' : 'ready', memory: name === 'local-preflight-unknown' ? 'unknown' : ['local-preflight-memory', 'local-preflight-mixed'].includes(name) ? 'insufficient' : 'ready', installedMemoryBytes: name === 'local-preflight-unknown' ? null : ['local-preflight-memory', 'local-preflight-mixed'].includes(name) ? ${2 * GiB} : ${16 * GiB}, requiredMemoryBytes: ${4 * GiB} };
-        if (command === 'cluster_places') return { selectedKey: clusterSelected ? currentCluster.key : null, persistenceState: 'complete',
+        if (command === 'cluster_places') return { selectedKey: clusterSelected ? currentCluster.key : null, persistenceState: 'complete', accessLost: false,
           places: name === 'places-populated' ? rememberedPlaces : clusterSelected ? [currentCluster, ...rememberedPlaces] : [] };
         if (name === 'cluster-connected' && command === 'overview_places') return { places: clusterSelected ? [currentCluster] : [], historyState: 'complete', unobserved: [] };
         if (command === 'setup_example') return pair;
@@ -1709,7 +1709,7 @@ try {
         if (command === 'overview_places') return places;
         if (command === 'setup_example') return ${JSON.stringify(pair)};
         if (command === 'setup_requirements') return null;
-        if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+        if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
         if (command === 'engine_call') throw { kind: 'unavailable' };
         throw Error('Unmocked Overview fixture command: ' + command);
       } };
@@ -1915,7 +1915,7 @@ try {
           if (command === 'agent_creation_root') return null;
           if (command === 'setup_requirements') return null;
           if (command === 'cluster_contexts') return [];
-          if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+          if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
           if (command === 'engine_call') throw { kind: 'unavailable' };
           throw Error('Unmocked fixture command: ' + command);
         } };

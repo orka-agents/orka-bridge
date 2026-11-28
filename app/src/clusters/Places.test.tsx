@@ -20,7 +20,7 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 function native() {
   vi.stubGlobal('isTauri', true);
   const sim = { status: { selected: null as 'localVm' | null, localVm: 'idle', model: 'locked', modelSupported: true },
-    snapshot: { places: [primary, secondary] as Place[], selectedKey: primary.key as string | null, persistenceState: 'complete' }, unavailable: false };
+    snapshot: { places: [primary, secondary] as Place[], selectedKey: primary.key as string | null, persistenceState: 'complete', accessLost: false }, unavailable: false };
   const ipc = vi.fn((command: string): unknown => {
     if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return sim.status;
@@ -46,6 +46,14 @@ const row = (name: string) => screen.getByRole('region', { name });
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
+test('the place in use whose access can no longer authenticate needs reconnecting, not Ready', async () => {
+  const { sim } = native(); sim.snapshot = { ...sim.snapshot, places: [{ ...primary, stale: false }, secondary], accessLost: true };
+  render(<Host initial={connected} />);
+  const lost = await screen.findByRole('region', { name: 'team-dev' });
+  expect(within(lost).getByText('Needs reconnecting')).toBeTruthy();
+  expect(within(lost).queryByText('Ready')).toBeNull();
+  expect(within(lost).getByRole('button', { name: 'Reconnect' }).className).toContain('button-primary');
+});
 test('Places passively lists this computer and retained identities with truthful historical status', async () => {
   const { ipc } = native(); render(<Host initial={connected} />);
   await screen.findByRole('heading', { name: 'Clusters' });
@@ -294,7 +302,7 @@ test('hidden snapshot replies are fenced and returning to Clusters reads a new p
   const view = render(<Setup onOpenExample={() => {}} />);
   await waitFor(() => expect(reads).toBe(1));
   view.rerender(<Setup active={false} onOpenExample={() => {}} />);
-  await act(async () => pending.resolve({ places: [primary], selectedKey: primary.key, persistenceState: 'complete' }));
+  await act(async () => pending.resolve({ places: [primary], selectedKey: primary.key, persistenceState: 'complete', accessLost: false }));
   expect(screen.queryByRole('region', { name: 'team-dev' })).toBeNull();
   expect(reads).toBe(1);
   view.rerender(<Setup active onOpenExample={() => {}} />);

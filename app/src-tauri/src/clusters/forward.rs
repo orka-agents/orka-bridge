@@ -11,7 +11,7 @@ mod peer;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -112,7 +112,8 @@ pub struct OrkaStreamTransport {
     connection: Connection,
     namespace: String,
     provider: String,
-    bearer: String,
+    /// The access's own bearer: a renewal during a long Send or conversation reaches it.
+    bearer: Arc<super::bearer::Bearer>,
     creator_bearer: String,
     current: ClusterClient,
     creator: Client,
@@ -123,6 +124,31 @@ pub struct OrkaStreamTransport {
 impl OrkaStreamTransport {
     pub fn peer(&self) -> &ForwardPeer {
         &self.connection.peer
+    }
+    /// Sends with the current bearer. Orka authenticates a request before acting on it, so a
+    /// rejected bearer means nothing was done: it is renewed once and the request sent once
+    /// more, never again. An impossible renewal is reported as the rejection.
+    async fn authorized<T, F, Fut>(&self, send: F) -> Result<T, ErrorKind>
+    where
+        F: Fn(String) -> Fut,
+        Fut: Future<Output = Result<T, ErrorKind>>,
+    {
+        let bearer = self
+            .bearer
+            .token()
+            .await
+            .map_err(|_| ErrorKind::Authentication)?;
+        match send(bearer.clone()).await {
+            Err(ErrorKind::Authentication) => {
+                let renewed = self
+                    .bearer
+                    .rejected(&bearer)
+                    .await
+                    .map_err(|_| ErrorKind::Authentication)?;
+                send(renewed).await
+            }
+            other => other,
+        }
     }
 }
 impl RemoteAccess {
@@ -219,18 +245,26 @@ impl RunTransport for OrkaStreamTransport {
                     _ => ErrorKind::Identity,
                 });
             }
-            self.connection
-                .request(
-                    &format!("tasks/{name}/cancel"),
-                    &self.namespace,
-                    &self.bearer,
-                    &[&self.bearer, &self.creator_bearer],
-                    None,
-                    Some(&serde_json::json!({"uid":uid})),
-                    deadline,
-                    false,
-                )
-                .await
+            let path = format!("tasks/{name}/cancel");
+            let body = serde_json::json!({"uid":uid});
+            self.authorized(|bearer| {
+                let (path, body) = (&path, &body);
+                async move {
+                    self.connection
+                        .request(
+                            path,
+                            &self.namespace,
+                            &bearer,
+                            &[&bearer, &self.creator_bearer],
+                            None,
+                            Some(body),
+                            deadline,
+                            false,
+                        )
+                        .await
+                }
+            })
+            .await
         })
     }
     fn update_agent<'a>(
@@ -283,18 +317,24 @@ impl RunTransport for OrkaStreamTransport {
                 }
             }
             let after = after.map(|a| a.to_string());
-            self.connection
-                .request(
-                    path,
-                    &self.namespace,
-                    &self.bearer,
-                    &[&self.bearer, &self.creator_bearer],
-                    after.as_deref(),
-                    body,
-                    deadline,
-                    false,
-                )
-                .await
+            self.authorized(|bearer| {
+                let after = after.as_deref();
+                async move {
+                    self.connection
+                        .request(
+                            path,
+                            &self.namespace,
+                            &bearer,
+                            &[&bearer, &self.creator_bearer],
+                            after,
+                            body,
+                            deadline,
+                            false,
+                        )
+                        .await
+                }
+            })
+            .await
         })
     }
 }
@@ -334,16 +374,24 @@ impl OrkaStreamTransport {
             ChatMethod::Post => "POST",
             ChatMethod::Delete => "DELETE",
         };
-        let (status, bytes) = self
-            .connection
-            .exchange(method, uri, &self.bearer, body, deadline)
-            .await?;
-        if [&self.bearer, &self.creator_bearer].iter().any(|secret| {
-            !secret.is_empty() && bytes.windows(secret.len()).any(|w| w == secret.as_bytes())
-        }) {
-            return Err(ErrorKind::Response);
-        }
-        Ok((status, bytes))
+        self.authorized(|bearer| async move {
+            let deadline = Instant::now() + REQUEST_TIMEOUT;
+            let (status, bytes) = self
+                .connection
+                .exchange(method, uri, &bearer, body, deadline)
+                .await?;
+            if [&bearer, &self.creator_bearer].iter().any(|secret| {
+                !secret.is_empty() && bytes.windows(secret.len()).any(|w| w == secret.as_bytes())
+            }) {
+                return Err(ErrorKind::Response);
+            }
+            // A rejected credential is the access's to renew, not a reply to judge.
+            if status == 401 {
+                return Err(ErrorKind::Authentication);
+            }
+            Ok((status, bytes))
+        })
+        .await
     }
 }
 
@@ -514,10 +562,9 @@ impl Connection {
                 .map_err(|_| ErrorKind::Transport)?;
             let status = response.status().as_u16();
             let cancel = body.is_some() && path.ends_with("/cancel");
-            match status {
-                401 if !cancel => return Err(ErrorKind::Authentication),
-                403 if !cancel => return Err(ErrorKind::Permission),
-                _ => {}
+            // A 401's bounded body is read so the lease survives for one renewed retry.
+            if status == 403 && !cancel {
+                return Err(ErrorKind::Permission);
             }
             if response
                 .headers()

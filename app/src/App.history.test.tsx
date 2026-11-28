@@ -21,7 +21,7 @@ function ipc() {
     if (command === 'overview_files') return { state: 'complete', runActive: false, historyState: 'complete', runAgents: [], files: [] };
     if (command === 'overview_places') return { historyState: 'complete', unobserved: [], places: [] };
     if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
-    if (command === 'cluster_places') return { places, selectedKey: null, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places, selectedKey: null, persistenceState: 'complete', accessLost: false };
     if (command === 'agent_open') return pair;
     if (command === 'agent_selected') return documentId;
     if (command === 'agents_list') return agents;
@@ -159,7 +159,7 @@ test('the guided first run has no Back or Forward; history starts when the full 
     if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
     if (command === 'setup_requirements') return { memoryBytes: 6 * 1024 ** 3, stateDiskBytes: 32e9, downloadBytes: null, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null };
-    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
     return null;
   });
   render(<App />);

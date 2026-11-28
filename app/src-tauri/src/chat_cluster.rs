@@ -126,8 +126,8 @@ pub enum Refusal {
     /// Orka's authorization refused the request (HTTP 403).
     Denied(ChatPermission),
 }
-/// One checked round trip. A refused credential (401) is a lost connection; 403 names the
-/// permission; any other status is returned for the state machine to judge, as locally.
+/// One checked round trip. A refused credential (401) means the access needs reconnecting; 403
+/// names the permission; any other status is returned for the state machine to judge, as locally.
 pub async fn send(
     wire: &dyn ClusterWire,
     namespace: &str,
@@ -140,7 +140,7 @@ pub async fn send(
         return Err(Refusal::Failed(ChatError::Response));
     }
     match status {
-        401 => return Err(Refusal::Failed(ChatError::Connection)),
+        401 => return Err(Refusal::Failed(ChatError::AccessLost)),
         403 => return Err(Refusal::Denied(permission(request))),
         _ => {}
     }

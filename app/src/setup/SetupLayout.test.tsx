@@ -13,7 +13,7 @@ test('a downloading workspace shows the AI card beside its one card, with one Ca
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'installing', model: 'locked', modelSupported: true };
     if (command === 'setup_example') return { agent: '---\nname: web-reader\ndescription: Reads a page\n---\nFetch a page.', tests: '' };
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [], persistenceState: 'complete', selectedKey: null };
+    if (command === 'cluster_places') return { places: [], persistenceState: 'complete', accessLost: false, selectedKey: null };
     throw Error(command);
   });
   const openExample = vi.fn();
@@ -43,7 +43,7 @@ test('in the guided first run, the download shows the compact AI card above Meet
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'installing', model: 'locked', modelSupported: true };
     if (command === 'setup_example') return { agent: '---\nname: web-reader\ndescription: Reads a page\n---\nFetch a page.', tests: '' };
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [], persistenceState: 'complete', selectedKey: null };
+    if (command === 'cluster_places') return { places: [], persistenceState: 'complete', accessLost: false, selectedKey: null };
     throw Error(command);
   });
   render(<Setup guided onOpenExample={() => {}} />);

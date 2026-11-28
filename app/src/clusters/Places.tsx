@@ -8,8 +8,8 @@ import type { SetupStatus } from '../setup/state';
 import type { ClusterPlaceSnapshot, SelectedPlace } from './api';
 import './clusters.css';
 
-export default function Places({ snapshot, unavailable, status, view, place, onLocal, onCluster, recoveryRef, modelRecovery }: {
-  recoveryRef?: Ref<HTMLDivElement>; modelRecovery?: boolean;
+export default function Places({ snapshot, unavailable, status, view, place, accessLost = false, onLocal, onCluster, recoveryRef, modelRecovery }: {
+  recoveryRef?: Ref<HTMLDivElement>; modelRecovery?: boolean; accessLost?: boolean;
   snapshot?: ClusterPlaceSnapshot; unavailable: boolean; status?: SetupStatus; view: SetupView; place: SelectedPlace;
   onLocal: () => void; onCluster: (place: Place, selected: boolean) => void;
 }) {
@@ -25,14 +25,16 @@ export default function Places({ snapshot, unavailable, status, view, place, onL
     </section>
     {snapshot?.places.map(item => {
       const selected = place.kind === 'cluster' && !!place.target && snapshot.selectedKey === item.key;
+      // The place in use whose access can no longer authenticate needs reconnecting, not a fresh check.
+      const lost = selected && (accessLost || snapshot.accessLost);
       const observed = item.observedAt !== null;
       const checkedAt = item.checkedAt ?? item.observedAt;
       const checked = checkedAt != null ? <>Checked <RelativeTime value={checkedAt} inline /></> : 'Not checked yet';
       return <section className="card place-row" aria-label={item.context} key={item.key}>
         <span className="icon-tile icon-tile-row" aria-hidden="true"><svg className="icon" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5M3 18l9 5 9-5" /></svg></span>
         <div className="place-summary"><h2><code>{item.context}</code></h2><p className="place-meta"><span>Orka in {item.service.replace(/\s*\/\s*/g, '/')}</span><span className="muted">{checked}</span>{selected && <span className="chip">In use</span>}{observed && !item.stale && <span className="muted">{item.agents.length} {item.agents.length === 1 ? 'agent' : 'agents'}</span>}</p></div>
-        <StatusPill state={checkedAt !== null ? item.stale ? 'stale' : 'passed' : 'not-started'}>{checkedAt !== null ? item.stale ? 'Stale' : 'Ready' : 'Not checked'}</StatusPill>
-        <Button type="button" kind="secondary" size="small" onClick={() => onCluster(item, selected)}>{selected ? 'Manage' : checkedAt != null ? 'Use' : 'Check'}</Button>
+        <StatusPill state={lost ? 'needs-you' : checkedAt !== null ? item.stale ? 'stale' : 'passed' : 'not-started'}>{lost ? 'Needs reconnecting' : checkedAt !== null ? item.stale ? 'Stale' : 'Ready' : 'Not checked'}</StatusPill>
+        <Button type="button" kind={lost ? 'primary' : 'secondary'} size="small" onClick={() => onCluster(item, selected)}>{lost ? 'Reconnect' : selected ? 'Manage' : checkedAt != null ? 'Use' : 'Check'}</Button>
       </section>;
     })}
     {snapshot?.persistenceState === 'unavailable' && <p role="status">Remembered cluster information is unavailable. New connections may not be remembered after Bridge closes.</p>}

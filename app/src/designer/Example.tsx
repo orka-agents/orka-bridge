@@ -23,9 +23,9 @@ import type { SendStart } from '../clusters/use-send-settlement';
 
 export type DocumentAction = { id: number; documentId: string; action: 'open' | 'chat' | 'run' | 'send' | 'file' };
 
-export default function Example({ sampleRevision = 0, actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, workspaceReady = true, remote = false, catalogPaused = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview, startSend, onChatBlocked, onCreating, onView }: {
+export default function Example({ sampleRevision = 0, actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, workspaceReady = true, remote = false, accessLost = false, catalogPaused = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview, startSend, onChatBlocked, onCreating, onView }: {
   actionRequest?: DocumentAction; onActionHandled?: (id: number) => void;
-  sampleRevision?: number; agentsRevision?: number; onRegistered?: () => void; documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; workspaceReady?: boolean; remote?: boolean; catalogPaused?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
+  sampleRevision?: number; agentsRevision?: number; onRegistered?: () => void; documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; workspaceReady?: boolean; remote?: boolean; accessLost?: boolean; catalogPaused?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: AgentPair | undefined, documentId: string) => void; onRun?: (snapshot: RunSnapshot | undefined, documentId: string) => void;
   onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void; onSeeInOverview?: (sendId: string) => void; startSend?: SendStart;
   // Reports why the open agent can't try a task, so Home's Try a task for the same agent can apply the same gate.
@@ -246,11 +246,13 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
     : instructionsMissing || testDraft ? 'Write instructions in Agent view and complete the test file on disk before sending.'
     : reloading ? 'Wait for your saved files to reload' : setupPending ? 'Wait for the workspace to be ready before sending'
-    : saveState !== 'saved' || pendingSoul ? 'Save your changes first' : undefined;
+    : saveState !== 'saved' || pendingSoul ? 'Save your changes first'
+    : remote && accessLost && place.kind === 'cluster' && place.target ? `${place.target.context_name} needs reconnecting. Reconnect it in Clusters, then send.` : undefined;
   // On a cluster, Try a task runs on its chosen AI connection once the cluster is connected in this run.
   const clusterName = place.kind === 'cluster' ? place.target?.context_name : undefined;
   const chatPlace = clusterName && targetId && providerId ? { name: clusterName, targetId, providerId } : undefined;
   const remoteBlock = !remote ? undefined : !targetId ? 'Connect this cluster in Clusters to try a task on it.'
+    : accessLost ? `${clusterName} needs reconnecting. Reconnect it in Clusters to try a task on it.`
     : !providerId ? `Choose an AI connection for ${clusterName} in Clusters to try a task on it.` : undefined;
   const chatBlocked = !remote && !workspaceReady ? 'Waiting for the workspace to start.' : instructionsMissing ? 'Write instructions in Agent view before trying a task.' : remoteBlock ? remoteBlock
     : setupPending ? 'Connect the workspace and the AI in Clusters before trying a task.'

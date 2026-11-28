@@ -106,6 +106,12 @@ test('a held, unconfirmed task offers Reconnect and Stop instead of a new task',
   expect(commands()).toEqual(['agent_chat_reconnect']);
   expect(within(result()).getByRole('button', { name: 'Stop' })).toBeTruthy();
 });
+test('a task whose cluster access can no longer authenticate says to reconnect the cluster, not that the connection was lost', async () => {
+  snapshot = { ...idle, state: 'observationLost', canSend: false, error: 'accessLost', versions: [{ turns: [{ ...turn, answer: null, phase: 'Running', finishedAt: null }] }] };
+  await open();
+  expect(screen.queryByText(/connection was lost/i)).toBeNull();
+  expect(screen.getAllByText('Access to the selected cluster needs reconnecting. Reconnect it in Clusters to see this task’s result.').length).toBeGreaterThan(0);
+});
 test('a newer composer draft survives acceptance of the earlier task', async () => {
   send = () => (snapshot = { ...idle, state: 'preparing', busy: true, canSend: false });
   await open(); await enter();

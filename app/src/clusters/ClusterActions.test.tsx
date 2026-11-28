@@ -18,7 +18,7 @@ function native(failure?: { check: string; result: string }, stage = 'discover',
   mockIPC(command => {
     if (command === 'setup_status') return status;
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [place], selectedKey: place.key, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [place], selectedKey: place.key, persistenceState: 'complete', accessLost: false };
     if (command === 'overview_places') return { places: [place], historyState: 'complete', unobserved: [] };
     if (command === 'cluster_contexts') return failure && stage === 'contexts' ? Promise.reject(failure) : [context];
     if (command === 'cluster_discover') { if (failure && stage === 'discover') return Promise.reject(failure); return [target]; }
@@ -94,7 +94,7 @@ test('failed removal preserves confirmation and named cluster', async () => {
 });
 
 test.each([false, true])('In use is independent of historical status, stale=%s', stale => {
-  render(<Places snapshot={{ places: [{ ...place, stale }, { ...place, key: 'other', context: 'unchecked', observedAt: null }], selectedKey: place.key, persistenceState: 'complete' }} unavailable={false} status={status} view={setupView(status)} place={{ kind: 'cluster', target }} onLocal={() => {}} onCluster={() => {}} />);
+  render(<Places snapshot={{ places: [{ ...place, stale }, { ...place, key: 'other', context: 'unchecked', observedAt: null }], selectedKey: place.key, persistenceState: 'complete', accessLost: false }} unavailable={false} status={status} view={setupView(status)} place={{ kind: 'cluster', target }} onLocal={() => {}} onCluster={() => {}} />);
   const selected = within(screen.getByRole('region', { name: 'team-dev' }));
   expect(selected.getByText('In use').className).toContain('chip');
   expect(selected.getByText(stale ? 'Stale' : 'Ready')).toBeTruthy();

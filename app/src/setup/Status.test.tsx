@@ -57,7 +57,7 @@ test('unfinished local row, shell and card agree; finished workspace and cluster
     if (command === 'setup_status') return status;
     if (command === 'setup_requirements') return null;
     if (command === 'setup_connect_model') return { ready: true };
-    if (command === 'cluster_places') return { selectedKey: null, places: [], persistenceState: 'complete' };
+    if (command === 'cluster_places') return { selectedKey: null, places: [], persistenceState: 'complete', accessLost: false };
     if (command === 'cluster_contexts') return [];
     throw Error('Unexpected ' + command);
   });
