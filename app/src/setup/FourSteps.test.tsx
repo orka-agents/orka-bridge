@@ -1,6 +1,6 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import { infraProgress, setupView } from './progress';
+import { infraProgress, setupView, workspaceView } from './progress';
 import { SetupProgress } from './Steps';
 import type { SetupStatus } from './state';
 
@@ -31,7 +31,8 @@ test('startup is indeterminate with only observed startup time, never a transfer
     expect(value).toEqual({ value: null, text: `${elapsedMs / 1000} second${elapsedMs === 1000 ? '' : 's'} elapsed` });
   }
   expect(infraProgress(status('starting', { workspaceProgress: { phase: 'materializing', bytes: 100, totalBytes: 100, elapsedMs: 54000, remainingMs: 1000 } }))).toEqual({ value: null });
-  expect(infraProgress(status('installing', { workspaceProgress: { phase: 'materializing', bytes: 100, totalBytes: 100, elapsedMs: 1000, remainingMs: 1000 } }))?.value).toBe(1);
+  // A full copy is read back before the workspace starts: no full bar that looks stuck, and no time left to promise.
+  expect(infraProgress(status('installing', { workspaceProgress: { phase: 'materializing', bytes: 100, totalBytes: 100, elapsedMs: 1000, remainingMs: 1000 } }))).toEqual({ value: null, text: '0.0 GB copied. Bridge checks the copy before the workspace starts.' });
 });
 
 test('the same four rows stay in place across setup with progress inside the workspace row', () => {
@@ -66,4 +67,36 @@ test('unreadable status suppresses progress and current step without dropping ro
   expect(screen.queryByRole('progressbar')).toBeNull();
   expect(screen.getAllByRole('listitem')).toHaveLength(4);
   expect(document.querySelector('[aria-current="step"]')).toBeNull();
+});
+
+const phase = (name: 'verifying' | 'materializing', elapsedMs: number, bytes: number | null = null, totalBytes: number | null = null) => ({ phase: name, bytes, totalBytes, elapsedMs, remainingMs: null });
+test('each step says what is happening, and times itself from when this view saw it begin', () => {
+  const view = render(<SetupProgress {...actions} cards status={status('installing', { workspaceProgress: phase('verifying', 237000) })} />);
+  const card = screen.getByRole('region', { name: 'Workspace setup' });
+  expect(within(card).getByText('Getting ready', { selector: '.pill' })).toBeTruthy();
+  expect(within(card).getByText('Checking cluster files…')).toBeTruthy();
+  expect(within(card).getByText('237 seconds checking files.')).toBeTruthy();
+  // Native's clock keeps running into the next step; this step counts from its own start.
+  view.rerender(<SetupProgress {...actions} cards status={status('installing', { workspaceProgress: phase('materializing', 258000, 1e9, 3.8e9) })} />);
+  expect(within(card).getByText('Installing the workspace…')).toBeTruthy();
+  expect(within(card).getByText('Installing cluster files, 1.0 of 3.8 GB')).toBeTruthy();
+  expect(within(card).getByText('21 seconds installing files.')).toBeTruthy();
+  view.rerender(<SetupProgress {...actions} cards status={status('installing', { workspaceProgress: phase('materializing', 379000, 3.8e9, 3.8e9) })} />);
+  expect(within(card).getByText('Checking the installed cluster files…')).toBeTruthy();
+  expect(within(card).getByText('3.8 GB copied. Bridge checks the copy before the workspace starts.')).toBeTruthy();
+  expect(within(card).getByRole('progressbar').getAttribute('aria-valuenow')).toBeNull();
+  expect(within(card).getByText('142 seconds installing files.')).toBeTruthy();
+  expect(within(card).queryByText(/Downloading/)).toBeNull();
+});
+
+test('a step already under way when the view opens says how long setup has run, not how long the step has', () => {
+  render(<SetupProgress {...actions} cards status={status('installing', { workspaceProgress: phase('materializing', 30000, 1e9, 3.8e9) })} />);
+  expect(screen.getByText('Setup has been running for 30 seconds.')).toBeTruthy();
+});
+
+test('the returning pill and line agree with the step setup is on', () => {
+  expect(workspaceView(status('installing', { workspaceProgress: phase('verifying', 1000) }))).toMatchObject({ word: 'Getting ready', detail: 'Checking cluster files.' });
+  expect(workspaceView(status('installing', { workspaceProgress: phase('materializing', 1000, 1, 2) }))).toMatchObject({ word: 'Getting ready', detail: 'Installing the workspace.' });
+  expect(workspaceView(status('preparing'))).toMatchObject({ word: 'Getting ready', detail: 'Getting the cluster files ready.' });
+  expect(workspaceView(status('starting'))).toMatchObject({ word: 'Starting', detail: 'Starting the workspace.' });
 });

@@ -12,9 +12,11 @@ let agentName = 'my-agent';
 let quitFails = false;
 let helpFails = false;
 let helpPending: Promise<void> | null = null;
+let requirements: object | null = null;
 const ipc = vi.fn((command: string) => {
   if (command === 'setup_status') { if (unreadable) throw Error('unreadable'); return status; }
-  if (command === 'setup_requirements') return null;
+  if (command === 'setup_requirements') return requirements;
+  if (command === 'workspace_upgrade_status') return { state: 'none', transaction: null, createdAt: null, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, credential: 'absent', busy: false, error: null, repeated: false, canReplace: false, canRestore: false, canCancel: false };
   if (command === 'setup_select_local') return status = { selected: 'localVm', localVm: 'starting', model: 'locked', workspaceProgress: { phase: 'starting', elapsedMs: 18000, bytes: null, totalBytes: null, remainingMs: null } };
   if (command === 'setup_open_help') { if (helpPending) return helpPending; if (helpFails) throw Error('unavailable'); return; }
   if (command === 'quit_bridge') { if (quitFails) throw Error('unavailable'); return; }
@@ -27,7 +29,7 @@ beforeEach(() => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   localStorage.setItem('bridge.firstTest.v1', 'attempted');
   status = { selected: 'localVm', localVm: 'ready', model: 'available' };
-  agentName = 'my-agent'; unreadable = false; quitFails = false; helpFails = false; helpPending = null; ipc.mockClear(); mockIPC(ipc);
+  agentName = 'my-agent'; requirements = null; unreadable = false; quitFails = false; helpFails = false; helpPending = null; ipc.mockClear(); mockIPC(ipc);
 });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
@@ -44,8 +46,33 @@ test('a returning ready workspace has no lifecycle action and keeps its files be
   expect(card.closest('.workspace-setup-grid')).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Connect the AI', level: 2 })).toBeTruthy();
   await user.click(within(card).getByRole('button', { name: "What's inside" }));
-  expect(within(card).getByText(/Uses about 4 GB of memory while Bridge is open. Quit Bridge to free it./)).toBeTruthy();
+  // Without the build's requirements, no figure is guessed.
+  expect(within(card).getByText(/Uses this computer's memory while Bridge is open. Quit Bridge to free it./)).toBeTruthy();
   expect(screen.queryByRole('radio', { name: 'On this computer' })).toBeNull();
+});
+
+test("What's inside names the memory figure the requirements report", async () => {
+  requirements = { memoryBytes: 6 * 1024 ** 3, stateDiskBytes: 32 * 1024 ** 3, downloadBytes: null, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null };
+  const user = await open();
+  const card = await screen.findByRole('region', { name: 'Workspace' });
+  await user.click(within(card).getByRole('button', { name: "What's inside" }));
+  expect(within(card).getByText(/Uses about 6\.4 GB of memory while Bridge is open\./)).toBeTruthy();
+});
+
+// A first setup left without an AI: the workspace is ready but the first test never ran. Its card still manages it.
+test.each([
+  ['no AI connected', 'locked' as const],
+  ['the AI step not finished', 'available' as const],
+])('a ready workspace in first setup keeps What\'s inside and Start a fresh workspace with %s', async (_, model) => {
+  localStorage.setItem('bridge.firstTest.v1', 'pending');
+  status = { selected: 'localVm', localVm: 'ready', model, modelSupported: true, workspaceFreshPlan: { image: { kind: 'cached' } } };
+  const user = await open();
+  const card = await screen.findByRole('region', { name: 'Workspace setup' });
+  expect(within(card).getByRole('list', { name: 'Setup steps' })).toBeTruthy();
+  await user.click(within(card).getByRole('button', { name: "What's inside" }));
+  expect(within(card).getByText(/Uses this computer's memory while Bridge is open/)).toBeTruthy();
+  await user.click(within(card).getByRole('button', { name: 'Start a fresh workspace…' }));
+  expect(await screen.findByRole('region', { name: 'Start a fresh workspace?' })).toBeTruthy();
 });
 
 test('reopening shows observed Starting and elapsed time without another Start command', async () => {

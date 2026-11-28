@@ -4,12 +4,13 @@ import { type Status, StatusIcon, StatusPill } from '../components/DesignSystem'
 import { Disclosure } from '../components/Disclosure';
 import { agentInfo } from '../designer/agent-api';
 import type { ModelState } from './Model';
-import { canQueueModel, infraProgress, setupView } from './progress';
+import { canQueueModel, infraProgress, plural, setupActivity, setupView } from './progress';
 import Recovery from './Recovery';
 import { modelDetails } from './recovery-info';
-import { type ExamplePair, loadExample, type SetupStatus } from './state';
+import { type ExamplePair, loadExample, type SetupStatus, type WorkspaceProgress } from './state';
 import './steps.css';
 import { readForm } from '../designer/agent-form';
+import { WorkspaceInside } from './Workspace';
 import { builtInTools } from '../designer/built-in-tools';
 import { testDefinitions } from '../designer/test-definitions';
 import SetUpLater from '../firstrun/SetUpLater';
@@ -17,6 +18,8 @@ import SetUpLater from '../firstrun/SetUpLater';
 export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
 
 type Props = {
+  // Start a fresh workspace is replacing this workspace: its step says so instead of its last state.
+  replacing?: boolean;
   upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean; ordinaryRecovery?: boolean;
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
   modelUnavailable?: boolean;
@@ -24,20 +27,38 @@ type Props = {
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onOpenExample: () => void;
   // Start a fresh workspace, offered on a failure the ordinary recovery can't get past.
   onFresh?: () => void; helpLines?: string[];
+  // Outside the guided first run, a ready workspace keeps What's inside and its deliberate Start a fresh workspace…,
+  // whatever the AI and the first test: the setup card is this workspace's own card until setup finishes.
+  onFreshWorkspace?: () => void; memoryBytes?: number | null;
   // During the guided first run: the agent's instructions open in place, and stuck screens offer Set up later.
   guided?: boolean; onSetUpLater?: () => void;
   // Outside the guided first run, a workspace that is getting ready is one card beside the AI card, without the steps.
   cards?: boolean;
 };
+// Native's elapsed time runs from the start of this run of setup (a resume starts it again), not from each step. The step
+// a view sees begin is timed from there; a step already under way when the view opened can only say how long setup has run.
+type StepClock = { phase: WorkspaceProgress['phase']; from: number; known: boolean; last: number };
+function useStepTime(progress: WorkspaceProgress | null | undefined): string | undefined {
+  const [clock, setClock] = useState<StepClock>();
+  if (progress && (!clock || clock.phase !== progress.phase || progress.elapsedMs < clock.last)) {
+    const continued = !!clock && progress.elapsedMs >= clock.last;
+    // A restarted clock starts at this step; so does checking, setup's first step.
+    const restarted = !!clock && progress.elapsedMs < clock.last;
+    setClock({ phase: progress.phase, from: continued ? clock.last : 0, known: continued || restarted || progress.phase === 'verifying', last: progress.elapsedMs });
+  } else if (progress && clock && clock.last !== progress.elapsedMs) setClock({ ...clock, last: progress.elapsedMs });
+  if (!progress || progress.phase === 'starting' || !clock || clock.phase !== progress.phase) return undefined;
+  const seconds = plural(Math.floor(Math.max(0, progress.elapsedMs - clock.from) / 1000), 'second');
+  return clock.known ? `${seconds} ${progress.phase === 'verifying' ? 'checking files' : 'installing files'}.` : `Setup has been running for ${seconds}.`;
+}
 const rowClass: Record<Status, string> = { passed: 'step-done', failed: 'step-failed', running: 'step-current', 'needs-you': 'step-current', stale: 'step-waiting', 'not-started': 'step-waiting' };
 // Completed rows stay in place; only the active row opens its progress.
-function stepRows({ status, stopping, updating, updateBlocked, error, modelState = 'idle', firstCheck, initialAutomatic }: Pick<Props, 'status' | 'stopping' | 'updating' | 'updateBlocked' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic'>) {
+function stepRows({ status, stopping, updating, updateBlocked, error, modelState = 'idle', firstCheck, initialAutomatic, replacing }: Pick<Props, 'status' | 'stopping' | 'updating' | 'updateBlocked' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'replacing'>) {
   const view = setupView(status, { stopping, model: modelState, check: firstCheck, initialAutomatic });
   const failed = status.localVm === 'failed';
   const paused = status.localVm === 'cancelled' || status.localVm === 'closed';
   const connected = modelState === 'connected';
   const infra = stopping ? null : infraProgress(status);
-  const workspace: [Status, string] = updating ? ['running', 'Updating'] : updateBlocked ? ['needs-you', 'Needs you'] : stopping || status.localVm === 'closing' ? ['running', 'Stopping']
+  const workspace: [Status, string] = replacing ? ['running', 'Replacing'] : updating ? ['running', 'Updating'] : updateBlocked ? ['needs-you', 'Needs you'] : stopping || status.localVm === 'closing' ? ['running', 'Stopping']
     : status.localVm === 'ready' ? ['passed', 'Ready']
     : failed ? ['failed', "Couldn't start"] : paused ? ['needs-you', 'Paused']
     : infra ? ['running', status.localVm === 'starting' ? 'Starting' : 'Getting ready'] : ['not-started', 'Waiting'];
@@ -67,16 +88,17 @@ export function SetupProgress(props: Props) {
   const ready = status.localVm === 'ready';
   const needsModel = props.modelState === 'connected' && props.modelUnavailable && props.firstCheck === 'unknown';
   const progress = status.workspaceProgress;
+  const stepTime = useStepTime(progress);
   const copying = !stopping && status.localVm === 'installing' && progress?.phase === 'materializing';
-  const stateLine = error ? 'Workspace status is unavailable.' : props.updating ? 'Updating the workspace. Your agent files are kept.' : props.updateBlocked ? 'Workspace recovery needs attention.' : stopping ? 'Stopping the workspace…' : ready ? 'Your workspace is ready on this computer.'
+  const stateLine = error ? 'Workspace status is unavailable.' : props.replacing ? 'Bridge is replacing this workspace with a fresh one. Your agent files are kept.' : props.updating ? 'Updating the workspace. Your agent files are kept.' : props.updateBlocked ? 'Workspace recovery needs attention.' : stopping ? 'Stopping the workspace…' : ready ? 'Your workspace is ready on this computer.'
     : paused ? 'Setup is paused. Choose Start again to resume.' : status.localVm === 'starting' ? 'Starting the workspace…'
     : status.localVm === 'closing' ? 'Stopping the workspace…'
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
-    : copying ? 'Installing the workspace…' : 'Checking the cluster download…';
+    : `${setupActivity(status) ?? 'Getting the cluster files ready'}…`;
   // A paused setup waits on the creator, as the board marks it.
-  const pill: Status = error ? 'needs-you' : props.updating ? 'running' : props.updateBlocked ? 'needs-you' : paused ? 'needs-you' : view.status;
-  const workspaceReady = ready && !error && !stopping && !props.updating && !props.updateBlocked;
-  const workspaceWord = error ? 'Status unavailable' : props.updating ? 'Updating' : props.updateBlocked ? 'Needs you' : stopping || status.localVm === 'closing' ? 'Stopping' : workspaceReady ? 'Ready' : failed ? "Couldn't start" : paused ? 'Needs you' : undefined;
+  const pill: Status = error ? 'needs-you' : props.updating || props.replacing ? 'running' : props.updateBlocked ? 'needs-you' : paused ? 'needs-you' : view.status;
+  const workspaceReady = ready && !error && !stopping && !props.updating && !props.updateBlocked && !props.replacing;
+  const workspaceWord = error ? 'Status unavailable' : props.replacing ? 'Replacing' : props.updating ? 'Updating' : props.updateBlocked ? 'Needs you' : stopping || status.localVm === 'closing' ? 'Stopping' : workspaceReady ? 'Ready' : failed ? "Couldn't start" : paused ? 'Needs you' : undefined;
   const settingUp = ['preparing', 'installing', 'starting'].includes(status.localVm);
   // While the workspace is getting ready the step says so; the head carries no second running word.
   const pillShown = cards || workspaceWord !== undefined || !(pill === 'running' && settingUp);
@@ -102,7 +124,7 @@ export function SetupProgress(props: Props) {
         <dl><div><dt>Checking cluster files</dt><dd>{status.localVm === 'preparing' || progress?.phase === 'verifying' ? 'In progress' : ready || copying || status.localVm === 'starting' ? 'Checked' : 'Waiting'}</dd></div>
           <div><dt>Installing cluster files</dt><dd>{ready || status.localVm === 'starting' ? 'Installed' : copying ? 'In progress' : 'Waiting'}</dd></div>
           <div><dt>Starting the workspace</dt><dd>{ready ? 'Ready' : status.localVm === 'starting' ? 'In progress' : 'Waiting'}</dd></div></dl>
-        {progress && status.localVm !== 'starting' && progress.phase !== 'starting' && <p className="muted">{Math.floor(progress.elapsedMs / 1000)} seconds {progress.phase === 'verifying' ? 'checking files' : 'installing files'}.</p>}
+        {stepTime && status.localVm !== 'starting' && <p className="muted">{stepTime}</p>}
         {status.localVmError && <pre tabIndex={0}>{ready ? modelDetails(status.localVmError) : status.localVmError}</pre>}
       </div>}</Disclosure>}
     {cancelRow}
@@ -134,6 +156,8 @@ export function SetupProgress(props: Props) {
         {onSetUpLater && (props.firstCheck === 'failed' || props.firstCheck === 'unknown') && <SetUpLater onClick={onSetUpLater} />}
       </>}{!needsModel && !guided && <Button type="button" kind="secondary" disabled={busy || !!error} onClick={onOpenExample}>Read its instructions</Button>}</>}
     </div>}
+    {workspaceReady && !guided && <WorkspaceInside id="setup-workspace-inside" memoryBytes={props.memoryBytes} freshDisabled={busy}
+      onFresh={(props.ordinaryRecovery ?? !props.upgrade) ? props.onFreshWorkspace : undefined} />}
     {/* Guided, the instructions open here instead of in Designer, so reading them doesn't leave the first run. */}
     {!failed && ready && !needsModel && guided && <GuidedInstructions disabled={busy || !!error} onOpen={onOpenExample} />}
   </section>;

@@ -90,10 +90,12 @@ test('only an unfinished local attempt can queue a model choice', () => {
 test('transfer bytes drive the bar but measure this file step only', () => {
   const GiB = 1024 ** 3;
   const full = infraProgress(status('installing', { workspaceProgress: transfer(2 * GiB, 2 * GiB) }))!;
-  expect(full.value).toBe(1);
+  // Nothing is downloaded in this step: native copies files already on this computer, then checks the copy.
+  expect(full).toEqual({ value: null, text: '2.1 GB copied. Bridge checks the copy before the workspace starts.' });
   const half = infraProgress(status('installing', { workspaceProgress: transfer(GiB, 2 * GiB) }))!;
-  expect(half.value).toBeGreaterThan(0); expect(half.value!).toBeLessThan(full.value!);
-  expect(half.text).toBe('Downloading, 1.1 of 2.1 GB');
+  expect(half.value).toBeGreaterThan(0); expect(half.value!).toBeLessThan(1);
+  expect(half.text).toBe('Installing cluster files, 1.1 of 2.1 GB');
+  expect(infraProgress(status('installing', { workspaceProgress: { phase: 'verifying', bytes: null, totalBytes: null, elapsedMs: 1000, remainingMs: null } }))).toEqual({ value: null, text: "Bridge reads each file to make sure it's intact. This can take a few minutes." });
   expect(infraProgress(status('installing', { workspaceProgress: transfer(null, null) }))).toEqual({ value: null });
   expect(infraProgress(status('installing', { workspaceProgress: null }))!.value).toBeNull();
 });

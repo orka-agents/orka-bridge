@@ -54,7 +54,8 @@ export default function NewAgent({ active, model, onRegistered, onCreated, onCan
       <label htmlFor="new-agent-name">Name</label>
       <p className="muted" id="new-agent-name-hint">Use lowercase letters, numbers and hyphens.</p>
       <input id="new-agent-name" className="field" ref={input} autoCapitalize="none" autoCorrect="off" spellCheck={false} required minLength={1} maxLength={63} pattern="[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?" aria-invalid={problem ? 'true' : undefined} aria-describedby={problem ? 'new-agent-name-error new-agent-name-hint' : 'new-agent-name-hint'} value={name} disabled={disabled} onChange={event => { setName(event.target.value); setError(undefined); }} />
-      {problem && <p className="field-error" id="new-agent-name-error" role="alert">{problem}</p>}
+      {/* The error's line is kept free, so the form doesn't move when one appears. */}
+      <div className="new-agent-error-slot">{problem && <p className="field-error" id="new-agent-name-error" role="alert">{problem}</p>}</div>
       <Disclosure label="Naming details"><p className="muted">Use 1–63 characters. Begin and end with a letter or number. Windows device names{storage === 'bridge' ? ' and web-reader are' : ' are'} reserved. This names your files, not the agent on a cluster.</p></Disclosure>
       <fieldset disabled={disabled}><legend>Keep it in</legend>
         <label><input type="radio" name="agent-storage" checked={storage === 'bridge'} onChange={() => { setStorage('bridge'); setError(undefined); }} /> Bridge's folder</label>

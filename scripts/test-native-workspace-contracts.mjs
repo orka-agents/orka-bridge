@@ -23,7 +23,7 @@ const setupCapture = vm.runInNewContext(`(${captureSetup})`, {
   frameTree: { frame: { id: 'fixture' } }, samplePair: { agent: '', tests: '' },
   call: async () => ({ executionContextId: 1 }), evaluate: async script => { setupInjection = script; throw setupStop; },
 });
-await assert.rejects(setupCapture('dark', 'setup-fit', ['setup-transfer', 'installing', null, false, 'Downloading']), error => error === setupStop);
+await assert.rejects(setupCapture('dark', 'setup-fit', ['setup-transfer', 'installing', null, false, 'Installing cluster files']), error => error === setupStop);
 const setupValues = new Map([['bridge.firstTest.v1', 'attempted']]);
 vm.runInNewContext(setupInjection, { window: {}, localStorage: {
   setItem: (key, value) => setupValues.set(key, value), removeItem: key => setupValues.delete(key),

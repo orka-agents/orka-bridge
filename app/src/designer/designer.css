@@ -19,6 +19,8 @@
 .new-agent-form > label { margin-bottom: calc(-1 * var(--space-1)); }
 .new-agent-form > input { width: 100%; height: 40px; padding-inline: var(--space-3); font: 500 15px/20px var(--font-mono); font-variant-ligatures: none; }
 .new-agent-form p { margin: 0; }
+/* One caption line is held for the name's error, so it appearing doesn't move the form. */
+.new-agent-error-slot { min-height: 16px; margin-top: calc(-1 * var(--space-1)); }
 .new-agent-form > .muted, .new-agent-form > p { font: var(--type-caption); color: var(--color-text-secondary); }
 .new-agent-form > [role="alert"] { font: var(--type-body); color: var(--color-status-failed); }
 .new-agent-form fieldset { border: 0; padding: 0; margin: var(--space-2) 0 0; }

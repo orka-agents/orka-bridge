@@ -431,7 +431,7 @@ if scope.runsModel {
 // Exercise the two-card first setup with only synthetic IPC, at the actual minimum and wide sizes. The fixture opens
 // installing, so the Workspace card's Cancel is the first control to settle.
 waitForButton("Cancel")
-for (phase, expected) in [("installing", "Downloading, 1.1 of 2.1 GB"), ("starting", "45 seconds elapsed")] {
+for (phase, expected) in [("installing", "Installing cluster files, 1.1 of 2.1 GB"), ("starting", "45 seconds elapsed")] {
     try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
     Thread.sleep(forTimeInterval: 0.6)
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
@@ -2092,7 +2092,7 @@ try workspaceCapture("ready", ["This computer", "Ready", "Agents", "Files"])
 require(nativeHeadingExists("Connect the AI") && !nativeHeadingExists("AI") && enabledButton("Connect the AI") != nil,
         "Returning Model without a connection must be headed Connect the AI and offer it")
 click("What's inside", [])
-_ = try capture("local-workspace-inside", ["4 GB of memory"])
+_ = try capture("local-workspace-inside", ["4.3 GB of memory"])
 click("What's inside", [])
 try workspacePhase("workspace-scene-starting")
 // The fixture reports 18000 ms elapsed while starting.

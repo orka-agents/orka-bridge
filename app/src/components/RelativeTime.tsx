@@ -16,7 +16,7 @@ export function RelativeTime({ value, inline = false }: { value: number; inline?
   const exact = date.toLocaleString(), relative = relativeTime(value);
   const age = inline ? relative.charAt(0).toLowerCase() + relative.slice(1) : relative;
   return Number.isFinite(date.getTime())
-    ? <time className="coming-control" tabIndex={0} dateTime={date.toISOString()} title={exact} aria-label={`${age}. ${exact}`}>
+    ? <time className="coming-control" tabIndex={0} dateTime={date.toISOString()} aria-label={`${age}. ${exact}`}>
       {age}<span className="control-tip" aria-hidden="true">{exact}</span>
     </time>
     : <>Time unknown</>;

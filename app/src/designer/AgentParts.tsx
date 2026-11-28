@@ -9,15 +9,18 @@ import FileLocation from './FileLocation';
 import { modelLabel } from './model-label';
 
 function Unavailable({ label, reason, children, focusRef }: { label: string; reason: string; children: ReactNode; focusRef?: Ref<HTMLSpanElement> }) {
-  return <span ref={focusRef} className="coming-control" tabIndex={0} role="group" aria-label={`${label}: ${reason}`} title={reason}>
+  // One tooltip: the styled tip. A native title as well would draw a second one over the hint line under it.
+  return <span ref={focusRef} className="coming-control" tabIndex={0} role="group" aria-label={`${label}: ${reason}`}>
     {children}<span className="control-tip" aria-hidden="true">{reason}</span>
   </span>;
 }
 function toolDescription(tool: CatalogTool): string {
   return tool.kind === 'builtin' && Object.hasOwn(builtInToolDescriptions, tool.name) ? builtInToolDescriptions[tool.name] : tool.description;
 }
-export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_ID, readOnly, setupPending = false, catalog, catalogLoading = false, catalogAvailability = catalogLoading ? 'loading' : 'attempted', catalogDestination = 'This computer', remote = false, localUnavailable = false, trying = false, onPendingEdit, onChange }: {
+export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_ID, readOnly, setupPending = false, catalog, catalogLoading = false, catalogAvailability = catalogLoading ? 'loading' : 'attempted', catalogBlocker, catalogDestination = 'This computer', remote = false, localUnavailable = false, trying = false, onPendingEdit, onChange }: {
   source: string; path?: string; documentId?: string; readOnly: boolean; setupPending?: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; catalogAvailability?: 'unavailable' | 'needsConnection' | 'loading' | 'paused' | 'attempted'; catalogDestination?: string; remote?: boolean;
+  /** What keeps tools and models from loading: this computer's workspace isn't ready, it has no AI, or the cluster needs reconnecting. */
+  catalogBlocker?: 'workspace' | 'ai' | 'reconnect';
   /** This build can't run agents on this computer, so tools and models load from a cluster only. */
   localUnavailable?: boolean; onPendingEdit?: (pending: boolean) => void; onChange: (source: string) => void;
   /** Beside Try a task: instructions and model stay editable so a change can be tried at once; tools and other settings stay in Agent view. */
@@ -71,11 +74,15 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
   // Every entry says what it is: on a cluster the list holds the AI connection's configured default, so the model
   // saved in the file is named as the file's, never mixed in as another default.
   const unlistedLabel = !models ? '' : remote ? ' (in your file)' : knownModel ? ' (not offered for chat)' : ' (unlisted)';
+  const reconnectReason = 'This cluster needs reconnecting. Reconnect it in Clusters to load tools and models.';
   const catalogReason = catalogAvailability === 'needsConnection' ? 'Choose an AI connection in Clusters to load tools and models'
-    : catalogAvailability === 'unavailable' ? remote || localUnavailable ? 'Connect a cluster in Clusters to load tools and models' : 'Open Clusters to load tools and models on This computer.'
+    : catalogAvailability === 'unavailable' ? remote && catalogBlocker === 'reconnect' ? reconnectReason : remote || localUnavailable ? 'Connect a cluster in Clusters to load tools and models'
+      : catalogBlocker === 'workspace' ? 'Tools and models load once the workspace on this computer is ready. Check it in Clusters.'
+      : catalogBlocker === 'ai' ? 'Connect the AI in Clusters to load tools and models on this computer.'
+      : 'Open Clusters to load tools and models on This computer.'
     : catalogAvailability === 'paused' ? 'Tools and models are paused while another operation finishes.' : undefined;
   const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit this agent’s tools in File view.'
-    : setupPending ? 'Tools will be available when the workspace is ready.' : catalogLoading ? 'Loading tools…' : catalogReason ?? (tools === undefined ? `Couldn't read tools from ${catalogDestination}. Check Clusters or edit File view.` : undefined);
+    : setupPending ? 'Tools will be available when the workspace is ready.' : catalogLoading ? 'Loading tools…' : catalogReason ?? (tools === undefined ? catalogBlocker === 'reconnect' ? reconnectReason : `Couldn't read tools from ${catalogDestination}. Check Clusters or edit File view.` : undefined);
   useEffect(() => {
     if (toolReason) { setPicker(false); setQuery(''); return; }
     if (!picker) return;
@@ -131,7 +138,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
             {!trying && !readOnly && form.toolsEditable && ['builtin', 'tool'].includes(tool.kind ?? '') && <Button kind="icon" aria-label={`Remove ${label}`} onClick={() => { change(removeTool(source, tool.index)); focusAdd(); }}><CloseIcon /></Button>}
           </span>;
         })}
-        {trying ? null : toolReason ? <Unavailable label="Add a tool" reason={toolReason} focusRef={addPlaceholder}><Button kind="secondary" size="small" type="button" disabled title={toolReason}>Add a tool</Button></Unavailable>
+        {trying ? null : toolReason ? <Unavailable label="Add a tool" reason={toolReason} focusRef={addPlaceholder}><Button kind="secondary" size="small" type="button" disabled>Add a tool</Button></Unavailable>
           : <Button kind="secondary" size="small" type="button" ref={add} aria-expanded={picker} aria-controls={`${id}-picker`} onClick={() => { if (picker) close(); else setPicker(true); }}><span aria-hidden="true">+ </span>Add a tool</Button>}
       </div>
       {!remote && form.tools.some(tool => tool.name && unsupportedLocalTool(tool.name)) && <div className="alert alert-needs-you"><p role="alert" className="alert-title">{unsupportedToolWarning}</p></div>}

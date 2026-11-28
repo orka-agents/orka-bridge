@@ -114,8 +114,9 @@
 @media (max-width: 600px) {
   .app-shell:not(.guided) .page-content { --page-pad: var(--space-4); --page-pad-top: var(--space-4); }
 }
-/* Sparse pages (Home before a conversation, New agent, Add a cluster, and Overview and Clusters with nothing listed yet) sit at
-   the optical centre: a third of the free height above them, two thirds below. Pages with real content stay at the top. */
-.app-shell:not(.guided) > .page-content:is(:has(> .home-start), :has(> div:not([hidden]) .new-agent), :has(> div:not([hidden]) .cluster-card > .context-trigger), :has(> div:not([hidden]) .places-list > .empty-state), :has(> .overview:not([hidden]) .overview-empty)) { display: flex; flex-direction: column; }
-.app-shell:not(.guided) > .page-content:is(:has(> .home-start), :has(> div:not([hidden]) .new-agent), :has(> div:not([hidden]) .cluster-card > .context-trigger), :has(> div:not([hidden]) .places-list > .empty-state), :has(> .overview:not([hidden]) .overview-empty))::before { content: ''; flex: 1 0 0; }
-.app-shell:not(.guided) > .page-content:is(:has(> .home-start), :has(> div:not([hidden]) .new-agent), :has(> div:not([hidden]) .cluster-card > .context-trigger), :has(> div:not([hidden]) .places-list > .empty-state), :has(> .overview:not([hidden]) .overview-empty))::after { content: ''; flex: 2 0 0; }
+/* Sparse pages (Home before a conversation, New agent, Add a cluster, and Overview with nothing listed yet) sit at the
+   optical centre: a third of the free height above them, two thirds below. Pages with real content stay at the top, and so
+   does the Clusters list: it always holds This computer, as the board draws it. */
+.app-shell:not(.guided) > .page-content:is(:has(> .home-start), :has(> div:not([hidden]) .new-agent), :has(> div:not([hidden]) .cluster-card > .context-trigger), :has(> .overview:not([hidden]) .overview-empty)) { display: flex; flex-direction: column; }
+.app-shell:not(.guided) > .page-content:is(:has(> .home-start), :has(> div:not([hidden]) .new-agent), :has(> div:not([hidden]) .cluster-card > .context-trigger), :has(> .overview:not([hidden]) .overview-empty))::before { content: ''; flex: 1 0 0; }
+.app-shell:not(.guided) > .page-content:is(:has(> .home-start), :has(> div:not([hidden]) .new-agent), :has(> div:not([hidden]) .cluster-card > .context-trigger), :has(> .overview:not([hidden]) .overview-empty))::after { content: ''; flex: 2 0 0; }

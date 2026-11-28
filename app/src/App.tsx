@@ -54,8 +54,9 @@ function PageIcon({ page }: { page: Page }) {
 
 function ComingButton({ label, reason }: { label: string; reason: string }) {
   // The wrapper makes the disabled control's reason reachable with the keyboard.
-  return <span className="coming-control" tabIndex={0} role="group" aria-label={`${label}: ${reason}`} title={reason}>
-    <Button type="button" kind="secondary" disabled title={reason}>{label}</Button>
+  // One tooltip: the styled tip. A native title as well would draw a second one over the hint line.
+  return <span className="coming-control" tabIndex={0} role="group" aria-label={`${label}: ${reason}`}>
+    <Button type="button" kind="secondary" disabled>{label}</Button>
     <span className="control-tip" aria-hidden="true">{reason}</span>
   </span>;
 }
@@ -339,9 +340,13 @@ export default function App() {
   const occupied = upgradeNotice === 'busy';
   const upgradeLine = updating ? 'Updating workspace' : refreshing ? 'Checking workspace files' : occupied ? 'Workspace is busy' : recovery ? 'Workspace recovery needs attention' : 'Workspace update needs attention';
   const upgradeDetail = refreshing || occupied ? 'Showing last observed workspace information.' : recovery && !updating ? 'Finish recovery before using the local workspace.' : 'Your agent files are kept.';
-  const view = upgradeAttention ? { ...ordinaryView, line: upgradeLine, tabLine: upgradeLine, footerLine: upgradeLine, detail: upgradeDetail, tone: updating || refreshing || occupied ? 'busy' as const : 'needs-you' as const, status: updating || refreshing || occupied ? 'running' as const : 'needs-you' as const, done: false } : ordinaryView;
+  // A fresh workspace set aside but not finished is what This computer waits on, not a failed start.
+  const freshUnfinished = !upgradeAttention && (setup?.workspaceFresh?.state === 'interrupted' || setup?.workspaceFresh?.state === 'conflict');
+  const freshLine = 'Fresh workspace not finished';
+  const freshDetail = setup?.workspaceFresh?.state === 'conflict' ? "Bridge found workspace folders it didn't expect." : "Bridge didn't finish starting a fresh workspace.";
+  const view = freshUnfinished ? { ...ordinaryView, line: freshLine, tabLine: freshLine, footerLine: freshLine, detail: freshDetail, tone: 'needs-you' as const, status: 'needs-you' as const, done: false } : upgradeAttention ? { ...ordinaryView, line: upgradeLine, tabLine: upgradeLine, footerLine: upgradeLine, detail: upgradeDetail, tone: updating || refreshing || occupied ? 'busy' as const : 'needs-you' as const, status: updating || refreshing || occupied ? 'running' as const : 'needs-you' as const, done: false } : ordinaryView;
   const { line: setupLine, detail } = view;
-  const hostWorkspace = upgradeAttention ? { tone: view.tone, detail: `${upgradeLine}. ${upgradeDetail}` } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
+  const hostWorkspace = freshUnfinished ? { tone: view.tone, detail: `${freshLine}. ${freshDetail}` } : upgradeAttention ? { tone: view.tone, detail: `${upgradeLine}. ${upgradeDetail}` } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
     ? workspaceView(setup, { stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping }) : undefined;
   const hostTone = hostWorkspace?.tone ?? view.tone;
   const workspaceReady = setup?.localVm === 'ready' && !recovery && !required && !(setup.workspaceReplaced && upgradeNotice === 'unknown');
@@ -373,8 +378,8 @@ export default function App() {
       : workspaceTransition ? setupLine : undefined;
   const placeName = remote ? place.target?.context_name ?? place.pending?.name ?? 'Choose a cluster'
     : { local: 'This computer', none: 'This computer', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
-  const setupDetail = upgradeAttention ? `${upgradeLine}. ${upgradeDetail}` : setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
-  const hostDetail = setup?.localVm === 'failed' ? setupDetail : hostWorkspace?.detail ?? detail;
+  const setupDetail = freshUnfinished ? freshDetail : upgradeAttention ? `${upgradeLine}. ${upgradeDetail}` : setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
+  const hostDetail = setup?.localVm === 'failed' && !freshUnfinished ? setupDetail : hostWorkspace?.detail ?? detail;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
   const agentStatus = checksStale ? 'tests need running' : runUnavailable ? 'test status unavailable' : run?.cancellation === 'unconfirmed' ? 'cancellation not confirmed' : run?.state === 'unknown' ? 'test result unknown'
     : run?.cancellation === 'cancelling' ? 'cancelling tests'
@@ -545,7 +550,7 @@ export default function App() {
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
           blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}
         {page === 'Designer' && overviewNotice && <p className="muted" role="status">{overviewNotice}</p>}
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} accessLost={accessLost} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} localUnavailable={localOff ? unavailableCopy.detail : undefined} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} onCreating={observeCreating} /></div>}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} accessLost={accessLost} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} localCatalogBlocker={setup?.selected !== 'localVm' || localOff ? undefined : !workspaceReady || workspaceBusy ? 'workspace' : !catalogConnected || setup.model === 'locked' ? 'ai' : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} localUnavailable={localOff ? unavailableCopy.detail : undefined} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} onCreating={observeCreating} /></div>}
         <Overview onNewAgent={() => openDesigner(undefined, true)} localAiConnected={overviewAiConnected} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} activeDocumentId={firstTest === 'running' ? SAMPLE_DOCUMENT_ID : run?.busy?.documentId} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} workspaceNote={overviewWorkspaceNote} localUnavailable={localOff} filesRevision={agentsRevision} placesRevision={placesRevision} onCounts={setOverviewCounts} onSavedCount={setSavedAgents}
           onOpenDocument={(id, key) => { void openOverviewDocument(id, 'open', key); }}
           onChatDocument={id => openOverviewDocument(id, 'chat')}
@@ -556,7 +561,7 @@ export default function App() {
         {page === 'Designer' && !exampleOpen && <p role="status">Opening your agent…</p>}
       </main>
       <footer className="status-bar">
-        <OrkaSwitcher title={remote ? placeName : hostDetail} place={place} accessLost={accessLost} computerLine={savedAgents ? `${localLine} · ${savedAgents} ${savedAgents === 1 ? 'agent' : 'agents'}` : localLine} computerTone={hostTone} onPlace={choosePlace}
+        <OrkaSwitcher title={remote ? placeName : hostDetail} place={place} accessLost={accessLost} computerLine={savedAgents ? `${localLine} · ${savedAgents} ${savedAgents === 1 ? 'saved agent' : 'saved agents'}` : localLine} computerTone={hostTone} onPlace={choosePlace}
           onClusters={item => { setPage('Clusters'); localCluster.current?.showCluster(item); }} onManage={() => { setPage('Clusters'); localCluster.current?.showPlaces(); }}>
           <span className={`live-dot ${remote ? place.target ? accessLost ? 'needs-you' : 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span>{remote && place.target && <span className="chip">In use</span>}<span className="sr-only">: {remote ? place.target ? accessLost ? 'Needs reconnecting' : 'Access confirmed' : 'Not connected' : hostDetail}</span>
         </OrkaSwitcher>

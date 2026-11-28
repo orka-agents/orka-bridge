@@ -74,14 +74,15 @@ test('outside the guided run, a downloading workspace is one card with the nativ
   expect(screen.queryByRole('list', { name: 'Setup steps' })).toBeNull();
   const card = screen.getByRole('region', { name: 'Workspace setup' });
   expect(within(card).getByText('Getting ready', { selector: '.pill' })).toBeTruthy();
-  expect(screen.getByText('Downloading, 1.2 of 3.0 GB')).toBeTruthy();
+  expect(screen.getByText('Installing cluster files, 1.2 of 3.0 GB')).toBeTruthy();
   const bar = screen.getByRole('progressbar');
   expect(screen.getAllByRole('progressbar')).toHaveLength(1);
   expect(Number(bar.getAttribute('aria-valuenow'))).toBe(40);
   expect(card.contains(bar)).toBe(true);
   expect(screen.getByRole('button', { name: 'Connect the AI' }).matches(':disabled')).toBe(false);
   expect(screen.getByText('Checking cluster files')).toBeTruthy();
-  expect(screen.getByText('20 seconds installing files.')).toBeTruthy();
+  // Opened mid-install: native's time runs from the start of this run of setup, so that is what it says.
+  expect(screen.getByText('Setup has been running for 20 seconds.')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Hide details' }));
   expect(screen.queryByText('Checking cluster files')).toBeNull();
 });
@@ -220,7 +221,10 @@ test('Meet opens the owned example for editing without Run commands', async () =
   expect(within(main).getByText('Fetch before answering.')).toBeTruthy();
   const run = within(main).getByRole('button', { name: 'Run tests' });
   expect(run.matches(':disabled')).toBe(true);
-  expect(run.title).toBe('Waiting for the workspace to start.');
+  // Its reason is the styled tip and the group's name: one tooltip, no native title over it.
+  expect(run.hasAttribute('title')).toBe(false);
+  expect(run.closest('[role="group"]')?.getAttribute('aria-label')).toBe('Run tests: Waiting for the workspace to start.');
+  expect(run.parentElement?.querySelector('.control-tip')?.textContent).toBe('Waiting for the workspace to start.');
   await user.click(within(main).getByRole('button', { name: 'File' }));
   const editor = screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
   expect(editor.readOnly).toBe(false); editor.focus(); await user.keyboard('{Control>}s{/Control}');

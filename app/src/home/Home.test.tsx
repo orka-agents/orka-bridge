@@ -365,6 +365,17 @@ test('a workspace too old for the Navigator says so before anything is sent, and
   expect(calls.some(call => call.command === 'navigator_send')).toBe(false);
 });
 
+test('a workspace too old for the Navigator offers a cluster even when none was connected in this run', async () => {
+  nav.tooOld = true;
+  const user = userEvent.setup();
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn(), onThisComputer: vi.fn() };
+  render(<main aria-labelledby="page-title"><Home active revision={0} gate={ready} {...handlers} /></main>);
+  expect(await screen.findByText(/The Navigator can think with a cluster’s AI instead\./)).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Use a cluster' }));
+  expect(handlers.onOpenPage).toHaveBeenCalledWith('Clusters');
+  expect(screen.getByRole('button', { name: 'Open Designer' }).classList.contains('button-primary')).toBe(true);
+});
+
 test('each place has its own conversation: switching shows that place\'s turns and sends there', async () => {
   const places: Record<string, Turn[]> = { '': [turn('Here first', 'An answer here.')], [cluster.targetId]: [] };
   mockIPC((command, raw) => {
