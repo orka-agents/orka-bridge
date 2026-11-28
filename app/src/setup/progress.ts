@@ -19,9 +19,21 @@ export const plural = (count: number, unit: string) => `${count} ${unit}${count 
 // Native support must be affirmed: an unsupported platform or an older snapshot never offers the early choice.
 export const canQueueModel = (status: SetupStatus | undefined) =>
   status?.modelSupported === true && status.selected === 'localVm' && ['preparing', 'installing', 'starting'].includes(status.localVm);
+// What setup is doing now, from the phase native reports. Native reports no download progress: the install copies files
+// already on this computer, and a full copy is then read back and checked before the workspace starts.
+export function setupActivity(status: SetupStatus): string | undefined {
+  const progress = status.workspaceProgress;
+  if (status.localVm === 'starting') return 'Starting the workspace';
+  if (status.localVm !== 'preparing' && status.localVm !== 'installing') return undefined;
+  if (progress?.phase === 'verifying') return 'Checking cluster files';
+  if (progress?.phase === 'materializing') return progress.bytes !== null && progress.bytes === progress.totalBytes ? 'Checking the installed cluster files' : 'Installing the workspace';
+  return 'Getting the cluster files ready';
+}
 export function workspaceView(status: SetupStatus, { stopping = false, starting = false }: { stopping?: boolean; starting?: boolean } = {}): { word: string; detail: string; status: Status; tone: Tone } {
   if (stopping || status.localVm === 'closing') return { word: 'Stopping', detail: 'Stopping the workspace. Your agents and files are kept.', status: 'running', tone: 'busy' };
-  if (starting || status.selected === 'localVm' && status.localVm === 'idle' || ['preparing', 'installing', 'starting'].includes(status.localVm)) return { word: 'Starting', detail: 'Starting the workspace.', status: 'running', tone: 'busy' };
+  // Before the workspace starts, the pill and line say what setup is doing, as its steps do.
+  if (!starting && (status.localVm === 'preparing' || status.localVm === 'installing')) return { word: 'Getting ready', detail: `${setupActivity(status)}.`, status: 'running', tone: 'busy' };
+  if (starting || status.selected === 'localVm' && status.localVm === 'idle' || status.localVm === 'starting') return { word: 'Starting', detail: 'Starting the workspace.', status: 'running', tone: 'busy' };
   if (status.localVm === 'failed' && status.workspaceFailure?.operation === 'stop' && status.workspaceFailure.cause === 'forcedStop') {
     const recovery = workspaceRecovery(status.workspaceFailure);
     return { word: 'Forcibly stopped', detail: `${recovery.summary} ${recovery.preservation} ${recovery.action}`, status: 'failed', tone: 'bad' };
@@ -92,9 +104,12 @@ export function infraProgress(status: SetupStatus): Infra | null {
   const bytes = progress?.phase === 'materializing' ? progress.bytes : null;
   const total = progress?.phase === 'materializing' ? progress.totalBytes : null;
   const remaining = progress?.phase === 'materializing' ? progress.remainingMs : null;
+  if (progress?.phase === 'verifying') return { value: null, text: "Bridge reads each file to make sure it's intact. This can take a few minutes." };
   if (bytes === null || total === null) return { value: null };
+  // A full copy isn't finished: Bridge reads it back before the workspace starts. Say so rather than show a full bar.
+  if (bytes >= total) return { value: null, text: `${formatRequirementGB(total)} copied. Bridge checks the copy before the workspace starts.` };
   return {
-    value: bytes / total, text: `Downloading, ${formatRequirementGB(bytes).replace(' GB', '')} of ${formatRequirementGB(total)}`,
+    value: bytes / total, text: `Installing cluster files, ${formatRequirementGB(bytes).replace(' GB', '')} of ${formatRequirementGB(total)}`,
     remaining: remaining !== null && remaining > 0 ? `${plural(Math.ceil(remaining / 1000), 'second')} left` : undefined,
   };
 }

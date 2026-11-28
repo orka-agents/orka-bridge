@@ -326,12 +326,12 @@ try {
     ['setup-failed', 'failed', null, false, "Your workspace didn't start."],
     ['setup-image-update', 'failed', null, false, 'This version of Bridge needs a new workspace.', false, true, { operation: 'verify', cause: 'workspaceUpdateRequired', codes: [] }],
     ['setup-image-unsupported', 'failed', null, false, 'This workspace uses different cluster files.', false, true, { operation: 'verify', cause: 'workspaceVersionUnsupported', codes: [] }],
-    ['setup-transfer', 'installing', transfer, false, 'Downloading, 1.2 of 3.0 GB'],
+    ['setup-transfer', 'installing', transfer, false, 'Installing cluster files, 1.2 of 3.0 GB'],
     ['setup-transfer-queued', 'installing', transfer, true, 'Connects when the workspace is ready.'],
     // A valid first observation, then every later read fails: the card must say unavailable, not keep the old bar.
     ['setup-unavailable', 'installing', transfer, false, 'Workspace status is unavailable.', true],
     // A platform without native model support (reported by the snapshot) offers no early choice: a Waiting row, no action.
-    ['setup-transfer-unsupported', 'installing', transfer, false, 'Downloading, 1.2 of 3.0 GB', false, false],
+    ['setup-transfer-unsupported', 'installing', transfer, false, 'Installing cluster files, 1.2 of 3.0 GB', false, false],
     ['setup-startup', 'starting', startup(12000), false, '12 seconds elapsed'],
     ['setup-startup-slow', 'starting', startup(45000), false, '45 seconds elapsed'],
     ['setup-ready', 'ready', null, false, 'Your workspace is ready on this computer.'],

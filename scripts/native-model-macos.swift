@@ -431,7 +431,7 @@ if scope.runsModel {
 // Exercise the two-card first setup with only synthetic IPC, at the actual minimum and wide sizes. The fixture opens
 // installing, so the Workspace card's Cancel is the first control to settle.
 waitForButton("Cancel")
-for (phase, expected) in [("installing", "Downloading, 1.1 of 2.1 GB"), ("starting", "45 seconds elapsed")] {
+for (phase, expected) in [("installing", "Installing cluster files, 1.1 of 2.1 GB"), ("starting", "45 seconds elapsed")] {
     try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
     Thread.sleep(forTimeInterval: 0.6)
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
