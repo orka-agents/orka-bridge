@@ -18,6 +18,8 @@ import SetUpLater from '../firstrun/SetUpLater';
 export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
 
 type Props = {
+  // Start a fresh workspace is replacing this workspace: its step says so instead of its last state.
+  replacing?: boolean;
   upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean; ordinaryRecovery?: boolean;
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
   modelUnavailable?: boolean;
@@ -35,13 +37,13 @@ type Props = {
 };
 const rowClass: Record<Status, string> = { passed: 'step-done', failed: 'step-failed', running: 'step-current', 'needs-you': 'step-current', stale: 'step-waiting', 'not-started': 'step-waiting' };
 // Completed rows stay in place; only the active row opens its progress.
-function stepRows({ status, stopping, updating, updateBlocked, error, modelState = 'idle', firstCheck, initialAutomatic }: Pick<Props, 'status' | 'stopping' | 'updating' | 'updateBlocked' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic'>) {
+function stepRows({ status, stopping, updating, updateBlocked, error, modelState = 'idle', firstCheck, initialAutomatic, replacing }: Pick<Props, 'status' | 'stopping' | 'updating' | 'updateBlocked' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'replacing'>) {
   const view = setupView(status, { stopping, model: modelState, check: firstCheck, initialAutomatic });
   const failed = status.localVm === 'failed';
   const paused = status.localVm === 'cancelled' || status.localVm === 'closed';
   const connected = modelState === 'connected';
   const infra = stopping ? null : infraProgress(status);
-  const workspace: [Status, string] = updating ? ['running', 'Updating'] : updateBlocked ? ['needs-you', 'Needs you'] : stopping || status.localVm === 'closing' ? ['running', 'Stopping']
+  const workspace: [Status, string] = replacing ? ['running', 'Replacing'] : updating ? ['running', 'Updating'] : updateBlocked ? ['needs-you', 'Needs you'] : stopping || status.localVm === 'closing' ? ['running', 'Stopping']
     : status.localVm === 'ready' ? ['passed', 'Ready']
     : failed ? ['failed', "Couldn't start"] : paused ? ['needs-you', 'Paused']
     : infra ? ['running', status.localVm === 'starting' ? 'Starting' : 'Getting ready'] : ['not-started', 'Waiting'];
@@ -72,15 +74,15 @@ export function SetupProgress(props: Props) {
   const needsModel = props.modelState === 'connected' && props.modelUnavailable && props.firstCheck === 'unknown';
   const progress = status.workspaceProgress;
   const copying = !stopping && status.localVm === 'installing' && progress?.phase === 'materializing';
-  const stateLine = error ? 'Workspace status is unavailable.' : props.updating ? 'Updating the workspace. Your agent files are kept.' : props.updateBlocked ? 'Workspace recovery needs attention.' : stopping ? 'Stopping the workspace…' : ready ? 'Your workspace is ready on this computer.'
+  const stateLine = error ? 'Workspace status is unavailable.' : props.replacing ? 'Bridge is replacing this workspace with a fresh one. Your agent files are kept.' : props.updating ? 'Updating the workspace. Your agent files are kept.' : props.updateBlocked ? 'Workspace recovery needs attention.' : stopping ? 'Stopping the workspace…' : ready ? 'Your workspace is ready on this computer.'
     : paused ? 'Setup is paused. Choose Start again to resume.' : status.localVm === 'starting' ? 'Starting the workspace…'
     : status.localVm === 'closing' ? 'Stopping the workspace…'
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
     : copying ? 'Installing the workspace…' : 'Checking the cluster download…';
   // A paused setup waits on the creator, as the board marks it.
-  const pill: Status = error ? 'needs-you' : props.updating ? 'running' : props.updateBlocked ? 'needs-you' : paused ? 'needs-you' : view.status;
-  const workspaceReady = ready && !error && !stopping && !props.updating && !props.updateBlocked;
-  const workspaceWord = error ? 'Status unavailable' : props.updating ? 'Updating' : props.updateBlocked ? 'Needs you' : stopping || status.localVm === 'closing' ? 'Stopping' : workspaceReady ? 'Ready' : failed ? "Couldn't start" : paused ? 'Needs you' : undefined;
+  const pill: Status = error ? 'needs-you' : props.updating || props.replacing ? 'running' : props.updateBlocked ? 'needs-you' : paused ? 'needs-you' : view.status;
+  const workspaceReady = ready && !error && !stopping && !props.updating && !props.updateBlocked && !props.replacing;
+  const workspaceWord = error ? 'Status unavailable' : props.replacing ? 'Replacing' : props.updating ? 'Updating' : props.updateBlocked ? 'Needs you' : stopping || status.localVm === 'closing' ? 'Stopping' : workspaceReady ? 'Ready' : failed ? "Couldn't start" : paused ? 'Needs you' : undefined;
   const settingUp = ['preparing', 'installing', 'starting'].includes(status.localVm);
   // While the workspace is getting ready the step says so; the head carries no second running word.
   const pillShown = cards || workspaceWord !== undefined || !(pill === 'running' && settingUp);

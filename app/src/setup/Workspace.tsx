@@ -23,7 +23,9 @@ export function WorkspaceInside({ id, memoryBytes, onFresh, freshDisabled = fals
 
 // Returning workspace management is not another pass through first-run setup.
 // `onFresh` starts a fresh workspace; `freshOffered` says a failure can't otherwise be got past, so it is offered there too.
-export default function Workspace({ status, busy, stopping, starting, error, active, onStart, onCancel, onCluster, upgrade, updating, updateBlocked, ordinaryRecovery = !upgrade, onFresh, freshOffered = false, helpLines, memoryBytes }: {
+export default function Workspace({ status, busy, stopping, starting, error, active, onStart, onCancel, onCluster, upgrade, updating, updateBlocked: blocked, ordinaryRecovery = !upgrade, onFresh, freshOffered = false, helpLines, memoryBytes, replacing = false }: {
+  // `replacing`: Start a fresh workspace is replacing this workspace; the card says so instead of its last state.
+  replacing?: boolean;
   upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean; ordinaryRecovery?: boolean; onFresh?: () => void; freshOffered?: boolean; helpLines?: string[]; memoryBytes?: number | null;
   status: SetupStatus; busy: boolean; stopping: boolean; starting: boolean; error?: string; active: boolean;
   onStart: () => void; onCancel?: () => void; onCluster?: () => void;
@@ -54,10 +56,11 @@ export default function Workspace({ status, busy, stopping, starting, error, act
     void creationRoot().then(value => { if (current) setPath(value); });
     return () => { current = false; };
   }, [active]);
-  const view = workspaceView(status, { stopping, starting });
-  const failed = status.localVm === 'failed' && !stopping && !starting;
-  const closed = status.localVm === 'closed';
-  const stopped = status.localVm === 'cancelled';
+  const updateBlocked = blocked && !replacing;
+  const view = replacing ? { word: 'Replacing', detail: 'Bridge is replacing this workspace with a fresh one. Your agent files are kept.', status: 'running' as const } : workspaceView(status, { stopping, starting });
+  const failed = status.localVm === 'failed' && !stopping && !starting && !replacing;
+  const closed = status.localVm === 'closed' && !replacing;
+  const stopped = status.localVm === 'cancelled' && !replacing;
   const stopFailed = failed && status.workspaceFailure?.operation === 'stop';
   const forcedStop = stopFailed && status.workspaceFailure?.cause === 'forcedStop';
   const recovery = status.preflightFailure ? preflightRecovery(status.preflightFailure) : workspaceRecovery(status.workspaceFailure);
@@ -76,11 +79,11 @@ export default function Workspace({ status, busy, stopping, starting, error, act
     catch { setNotice("Couldn't copy. Open Show details to read the error."); }
   }
   // Starting shows the same bar, elapsed time and phases as first setup, and Cancel pauses it.
-  const settingUp = !stopping && ['preparing', 'installing', 'starting'].includes(status.localVm);
+  const settingUp = !stopping && !replacing && ['preparing', 'installing', 'starting'].includes(status.localVm);
   const infra = settingUp ? infraProgress(status) : null;
   const progress = status.workspaceProgress;
   const copying = status.localVm === 'installing' && progress?.phase === 'materializing';
-  const statusShown = !upgrade || error || stopFailed || ordinaryRecovery && (failed || stopped);
+  const statusShown = !upgrade || replacing || error || stopFailed || ordinaryRecovery && (failed || stopped);
   // A failure reads as a callout: what happened in the failed colour, then what to do.
   const statusCallout = statusShown && failed && !error;
   const statusLine = statusShown && <p role="status" className={statusCallout ? 'alert-title' : undefined}>{error ? 'Workspace status is unavailable. Check again before starting it.' : updating ? 'Updating the workspace. Your agent files are kept.' : stopFailed && !forcedStop ? "The workspace didn't stop." : failed ? recovery.summary : stopped ? 'The workspace stopped unexpectedly. Your agents and files are kept.' : view.detail}</p>;
@@ -128,7 +131,7 @@ export default function Workspace({ status, busy, stopping, starting, error, act
         <div><dt>Files</dt><dd>{path ? <code>{path}</code> : 'Folder unavailable'}</dd></div>
       </dl>
       <WorkspaceInside id="returning-workspace-inside" memoryBytes={memoryBytes} freshDisabled={busy || !!error}
-        onFresh={onFresh && ordinaryRecovery && !failed && !settingUp && !stopping && !closed ? onFresh : undefined} />
+        onFresh={onFresh && ordinaryRecovery && !failed && !settingUp && !stopping && !closed && !replacing ? onFresh : undefined} />
     </>}
   </section>;
 }

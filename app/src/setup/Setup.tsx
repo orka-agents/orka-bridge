@@ -81,8 +81,14 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     setUpgradeBusy(value); setUpgradeKnown(false);
     setCheck(check => check + 1);
   }, []);
+  // Start a fresh workspace: asked from the stuck AI card, a failure the ordinary recovery can't pass, or Manage.
+  const [freshAsk, setFreshAsk] = useState(false);
+  const [freshWorking, setFreshWorking] = useState(false);
+  const [freshReply, setFreshReply] = useState<FreshStatus>();
+  // While Start a fresh workspace replaces the workspace, native holds the workspace's lock: that busy is this action's own.
+  const freshReplacing = freshWorking || (status?.workspaceFresh ?? freshReply)?.state === 'replacing';
   const upgrading = upgradeBusy || !!upgrade?.busy && !!upgrade.canCancel && !upgradeObservation.pending;
-  const occupied = !!upgrade?.busy && !upgrading && !upgradeObservation.pending;
+  const occupied = !!upgrade?.busy && !upgrading && !upgradeObservation.pending && !freshReplacing;
   const recoveryOnly = !!upgrade && ['sourceSelected', 'sourceRetained', 'incomplete', 'restoring', 'restored', 'conflict'].includes(upgrade.state);
   const notice: UpgradeNotice | undefined = upgradeObservation.pending ? 'checking' : occupied ? 'busy' : !upgradeKnown && (status?.workspaceReplaced || !!upgrade && upgrade.state !== 'none' || firstTestPending()) ? 'unknown' : recoveryOnly ? 'recovery' : upgrade?.state === 'eligible' ? 'required' : upgrade?.error ? 'error' : undefined;
   const reportedUpgrade = useRef(false);
@@ -92,10 +98,6 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const [busy, setBusy] = useState(true);
   const [sending, setSending] = useState(false);
   const [pendingAction, setPendingAction] = useState<'start' | 'cancel'>();
-  // Start a fresh workspace: asked from the stuck AI card, a failure the ordinary recovery can't pass, or Manage.
-  const [freshAsk, setFreshAsk] = useState(false);
-  const [freshWorking, setFreshWorking] = useState(false);
-  const [freshReply, setFreshReply] = useState<FreshStatus>();
   const [freshDismissed, setFreshDismissed] = useState<string>();
   // A new workspace gets a new AI card: nothing the old one learned applies to it.
   const [freshGeneration, setFreshGeneration] = useState(0);
@@ -417,7 +419,9 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const upgradeAttention = !error && (upgrading || !!notice && (notice !== 'unknown' || status?.workspaceReplaced));
   const upgradeLine = upgrading ? 'Updating workspace' : upgradeObservation.pending ? 'Checking workspace files' : occupied ? 'Workspace is busy' : notice === 'recovery' ? 'Workspace recovery needs attention' : 'Workspace update needs attention';
   // The returning workspace's line repeats its detail ("Workspace ready"), so the list shows the detail once.
-  const placesView = upgradeAttention ? { ...presentation, line: upgradeLine, detail: 'Your agent files are kept.', status: upgrading || occupied || upgradeObservation.pending ? 'running' as const : 'needs-you' as const, done: false, action: 'Manage' } : workspace ? { ...presentation, line: presentation.detail } : presentation;
+  // An unfinished fresh workspace is what This computer waits on, not a failed start.
+  const freshView = freshStatus?.state === 'interrupted' ? "Bridge didn't finish starting a fresh workspace" : freshStatus?.state === 'conflict' ? "Bridge found workspace folders it didn't expect" : undefined;
+  const placesView = freshView ? { ...presentation, line: freshView, detail: freshView, status: 'needs-you' as const, done: false, action: 'Manage' } : upgradeAttention ? { ...presentation, line: upgradeLine, detail: 'Your agent files are kept.', status: upgrading || occupied || upgradeObservation.pending ? 'running' as const : 'needs-you' as const, done: false, action: 'Manage' } : workspace ? { ...presentation, line: presentation.detail } : presentation;
   const updateBlocked = !!notice && (notice !== 'unknown' || !!status?.workspaceReplaced);
   // On This computer, an update's reusable connection is offered in the AI card, unusable until the workspace starts.
   const savedConnection = workspace && upgrade?.state === 'eligible' && upgrade.credential === 'eligible';
@@ -477,15 +481,17 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
         <div className="setup-column setup-main">
         <FreshWorkspace asking={freshAsk} working={freshWorking} status={freshShown} plan={freshPlan} onConfirm={() => { void confirmFresh(); }} onCancel={() => setFreshAsk(false)} onDismiss={() => setFreshDismissed(freshKey)} />
         {!workspace && !selected && upgradePanel}
-        {workspace && status && !freshUnfinished && <Workspace ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} onStart={() => { void chooseLocal(); }} onCancel={() => { void chooseLocal('cancel'); }} onCluster={() => chooseCluster()} active={active && view === 'local'} onFresh={freshBlocked ? undefined : askFresh} freshOffered={freshOffered} helpLines={freshLines} memoryBytes={requirements?.memoryBytes} />}
-        {!workspace && selected && status && !freshUnfinished && <SetupProgress ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending || upgradeBusy || !!upgrade?.busy && !ordinaryStarting || upgradeObservation.pending || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} guided={guided} onSetUpLater={onSetUpLater} cards={twoCards} onFresh={freshOffered ? askFresh : undefined} helpLines={freshLines} onFreshWorkspace={freshBlocked ? undefined : askFresh} memoryBytes={requirements?.memoryBytes} />}
+        {workspace && status && !freshUnfinished && <Workspace replacing={freshReplacing} ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} onStart={() => { void chooseLocal(); }} onCancel={() => { void chooseLocal('cancel'); }} onCluster={() => chooseCluster()} active={active && view === 'local'} onFresh={freshBlocked ? undefined : askFresh} freshOffered={freshOffered} helpLines={freshLines} memoryBytes={requirements?.memoryBytes} />}
+        {!workspace && selected && status && !freshUnfinished && <SetupProgress replacing={freshReplacing} ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending || upgradeBusy || !!upgrade?.busy && !ordinaryStarting || upgradeObservation.pending || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} guided={guided} onSetUpLater={onSetUpLater} cards={twoCards} onFresh={freshOffered ? askFresh : undefined} helpLines={freshLines} onFreshWorkspace={freshBlocked ? undefined : askFresh} memoryBytes={requirements?.memoryBytes} />}
         </div>
         <div className="setup-column setup-side">
-        {workspace && status?.localVm !== 'ready' && <section className="card workspace-ai-waiting"><h2>AI</h2>{savedConnection ? <>
+        {/* The AI card waits out a replacement: the new workspace starts without the old connection. */}
+        {freshReplacing && !modelMounted && <section className="card workspace-ai-waiting"><h2>AI</h2><p className="muted">Connect the AI again once the fresh workspace is ready.</p></section>}
+        {workspace && status?.localVm !== 'ready' && !(freshReplacing && !modelMounted) && <section className="card workspace-ai-waiting"><h2>AI</h2>{savedConnection ? <>
           <p>A saved connection can be reused without connecting automatically.</p>
           <Button type="button" kind="secondary" disabled>Use saved connection</Button>
           <p className="muted">Start the workspace before changing its saved connection</p>
-        </> : <p className="muted">{status && ['cancelled', 'closed'].includes(status.localVm) ? 'Start the workspace before connecting the AI.' : 'Waiting for the workspace to start.'}</p>}</section>}
+        </> : <p className="muted">{freshUnfinished ? 'Connect the AI again once the fresh workspace is finished.' : status && ['cancelled', 'closed'].includes(status.localVm) ? 'Start the workspace before connecting the AI.' : 'Waiting for the workspace to start.'}</p>}</section>}
         {status && modelMounted && <div className="setup-model-slot" hidden={workspace && status.localVm !== 'ready'}><Model key={`${upgrade?.credential === 'transferred' ? 'shared' : 'ordinary'}-${freshGeneration}`} diagnostic={status.localVmError} helpLines={freshLines} onFreshWorkspace={askFresh} freshBlocked={freshBlocked} sharedConnection={upgrade?.credential === 'transferred'} title={workspace ? 'AI' : undefined} inline={!workspace && !twoCards && !status.workspaceReplaced && canQueueModel(status)} setupCard={!workspace} changeRequest={providerChange} onPlaceCard={view === 'places'} recoveryTarget={view === 'places' ? placeRecovery : null} enabled={status.model === 'available'} queueable={!status.workspaceReplaced && canQueueModel(status)} paused={!!error || changing} away={cluster} primary={status.localVm === 'ready'} onConnectRequest={() => { chooseComputer(); if (view === 'places') setPanel('local'); }} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
         {!workspace && !twoCards && selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet guided={guided} onRead={openExample} onName={onExampleName} />}
         </div>

@@ -806,7 +806,8 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
       return { ready: true, connection: { kind: 'copilot', model, account: 'octocat' } };
     }
     case 'setup_remove_model': case 'setup_reset_model': await wait(1); modelConnected = false; connectedModel = null; return { ready: false };
-    case 'workspace_upgrade_status': return upgradeNone;
+    // As native: Start a fresh workspace holds the workspace's lock, so the update status reads busy meanwhile.
+    case 'workspace_upgrade_status': return freshWorkspace?.state === 'replacing' ? { ...upgradeNone, busy: true } : upgradeNone;
     case 'workspace_fresh_start': return freshStart();
     case 'workspace_catalog':
       if (!ready() || !modelConnected) throw 'catalogUnavailable';

@@ -339,9 +339,13 @@ export default function App() {
   const occupied = upgradeNotice === 'busy';
   const upgradeLine = updating ? 'Updating workspace' : refreshing ? 'Checking workspace files' : occupied ? 'Workspace is busy' : recovery ? 'Workspace recovery needs attention' : 'Workspace update needs attention';
   const upgradeDetail = refreshing || occupied ? 'Showing last observed workspace information.' : recovery && !updating ? 'Finish recovery before using the local workspace.' : 'Your agent files are kept.';
-  const view = upgradeAttention ? { ...ordinaryView, line: upgradeLine, tabLine: upgradeLine, footerLine: upgradeLine, detail: upgradeDetail, tone: updating || refreshing || occupied ? 'busy' as const : 'needs-you' as const, status: updating || refreshing || occupied ? 'running' as const : 'needs-you' as const, done: false } : ordinaryView;
+  // A fresh workspace set aside but not finished is what This computer waits on, not a failed start.
+  const freshUnfinished = !upgradeAttention && (setup?.workspaceFresh?.state === 'interrupted' || setup?.workspaceFresh?.state === 'conflict');
+  const freshLine = 'Fresh workspace not finished';
+  const freshDetail = setup?.workspaceFresh?.state === 'conflict' ? "Bridge found workspace folders it didn't expect." : "Bridge didn't finish starting a fresh workspace.";
+  const view = freshUnfinished ? { ...ordinaryView, line: freshLine, tabLine: freshLine, footerLine: freshLine, detail: freshDetail, tone: 'needs-you' as const, status: 'needs-you' as const, done: false } : upgradeAttention ? { ...ordinaryView, line: upgradeLine, tabLine: upgradeLine, footerLine: upgradeLine, detail: upgradeDetail, tone: updating || refreshing || occupied ? 'busy' as const : 'needs-you' as const, status: updating || refreshing || occupied ? 'running' as const : 'needs-you' as const, done: false } : ordinaryView;
   const { line: setupLine, detail } = view;
-  const hostWorkspace = upgradeAttention ? { tone: view.tone, detail: `${upgradeLine}. ${upgradeDetail}` } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
+  const hostWorkspace = freshUnfinished ? { tone: view.tone, detail: `${freshLine}. ${freshDetail}` } : upgradeAttention ? { tone: view.tone, detail: `${upgradeLine}. ${upgradeDetail}` } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
     ? workspaceView(setup, { stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping }) : undefined;
   const hostTone = hostWorkspace?.tone ?? view.tone;
   const workspaceReady = setup?.localVm === 'ready' && !recovery && !required && !(setup.workspaceReplaced && upgradeNotice === 'unknown');
@@ -373,8 +377,8 @@ export default function App() {
       : workspaceTransition ? setupLine : undefined;
   const placeName = remote ? place.target?.context_name ?? place.pending?.name ?? 'Choose a cluster'
     : { local: 'This computer', none: 'This computer', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
-  const setupDetail = upgradeAttention ? `${upgradeLine}. ${upgradeDetail}` : setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
-  const hostDetail = setup?.localVm === 'failed' ? setupDetail : hostWorkspace?.detail ?? detail;
+  const setupDetail = freshUnfinished ? freshDetail : upgradeAttention ? `${upgradeLine}. ${upgradeDetail}` : setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
+  const hostDetail = setup?.localVm === 'failed' && !freshUnfinished ? setupDetail : hostWorkspace?.detail ?? detail;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
   const agentStatus = checksStale ? 'tests need running' : runUnavailable ? 'test status unavailable' : run?.cancellation === 'unconfirmed' ? 'cancellation not confirmed' : run?.state === 'unknown' ? 'test result unknown'
     : run?.cancellation === 'cancelling' ? 'cancelling tests'

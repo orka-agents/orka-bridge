@@ -15,6 +15,9 @@ const refused = { kind: 'modelReconnect', message: 'SECRET', cleanup: ['disconne
 let status: SetupStatus;
 let fresh: () => Promise<FreshStatus>;
 let refusals: unknown[] = [];
+// Native holds the workspace's lock while a fresh workspace replaces it; its update status then reads busy.
+let lockHeld = false;
+const upgradeNone = { state: 'none', transaction: null, createdAt: null, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, credential: 'absent', busy: false, error: null, repeated: false, canReplace: false, canRestore: false, canCancel: false };
 const ipc = vi.fn((command: string): unknown => {
   if (command === 'setup_status') return status;
   if (command === 'setup_requirements') return null;
@@ -22,6 +25,7 @@ const ipc = vi.fn((command: string): unknown => {
   if (command === 'setup_check_model') return { account: 'octocat', models: [{ id: 'gpt-4.1' }], preselected: 'gpt-4.1' };
   if (command === 'setup_select_local') return status = { selected: 'localVm', localVm: 'starting', model: 'locked', modelSupported: true };
   if (command === 'workspace_fresh_start') return fresh();
+  if (command === 'workspace_upgrade_status' && lockHeld) return { ...upgradeNone, busy: true };
   if (command === 'agents_list') return [];
   if (command === 'agent_creation_root') return '/agents';
   if (command === 'cluster_contexts') return [];
@@ -34,7 +38,7 @@ beforeEach(() => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   localStorage.setItem('bridge.firstTest.v1', 'attempted');
   status = { selected: 'localVm', localVm: 'ready', model: 'available', modelSupported: true, workspaceFreshPlan: { image: { kind: 'cached' } } };
-  refusals = [];
+  refusals = []; lockHeld = false;
   fresh = async () => ({ state: 'replaced', transaction, ai: 'removed', reclaimable: [retired], cleaning: true });
   clipboard = ''; ipc.mockClear(); mockIPC(ipc);
 });
@@ -273,6 +277,47 @@ test('a transaction that was set aside but not finished says so and finishes on 
   expect(screen.queryByRole('region', { name: 'Start a fresh workspace?' })).toBeNull();
   expect(await screen.findByRole('region', { name: 'Fresh workspace' })).toBeTruthy();
   expect(calls('workspace_fresh_start')).toHaveLength(1);
+});
+
+test('while a fresh workspace replaces this one, its card says so: not Ready, and not Needs you for its own lock', async () => {
+  let finish!: (value: FreshStatus) => void;
+  fresh = () => { lockHeld = true; return new Promise(resolve => { finish = resolve; }); };
+  const user = userEvent.setup();
+  render(<App />);
+  await openLocalSetup(user);
+  const card = await screen.findByRole('region', { name: 'Workspace' });
+  await user.click(within(card).getByRole('button', { name: "What's inside" }));
+  await user.click(within(card).getByRole('button', { name: 'Start a fresh workspace…' }));
+  await user.click(within(await screen.findByRole('region', { name: 'Start a fresh workspace?' })).getByRole('button', { name: 'Start a fresh workspace' }));
+  expect(await within(card).findByText('Replacing', { selector: '.pill' })).toBeTruthy();
+  expect(within(card).getByText('Bridge is replacing this workspace with a fresh one. Your agent files are kept.')).toBeTruthy();
+  // Let the update status report the lock: it is this action's own, not something waiting on the person.
+  await waitFor(() => expect(calls('workspace_upgrade_status').length).toBeGreaterThan(1), { timeout: 3000 });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+  expect(within(card).getByText('Replacing', { selector: '.pill' })).toBeTruthy();
+  expect(within(card).queryByText('Needs you', { selector: '.pill' })).toBeNull();
+  expect(within(card).queryByText(/ready on this computer/)).toBeNull();
+  expect(within(card).queryByRole('button', { name: 'Start a fresh workspace…' })).toBeNull();
+  expect(screen.getByText('Connect the AI again once the fresh workspace is ready.')).toBeTruthy();
+  lockHeld = false;
+  status = { selected: 'localVm', localVm: 'preparing', model: 'locked', modelSupported: true, workspaceFresh: { state: 'replaced', transaction, ai: 'removed', reclaimable: [], cleaning: false } };
+  await act(async () => finish(status.workspaceFresh!));
+  expect(await screen.findByRole('region', { name: 'Fresh workspace' })).toBeTruthy();
+});
+
+test('an unfinished fresh workspace is what This computer waits on, in the list and the shell', async () => {
+  status = { selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'Bridge must finish starting a fresh workspace before starting the local cluster.', workspaceFailure: { operation: 'verify', cause: 'unknown', codes: [] }, workspaceFresh: { state: 'interrupted', transaction }, workspaceFreshPlan: { image: { kind: 'cached' } } };
+  const user = userEvent.setup();
+  render(<App />);
+  await openLocalSetup(user);
+  await screen.findByRole('heading', { name: "Bridge didn't finish starting a fresh workspace" });
+  expect(screen.getByText('Connect the AI again once the fresh workspace is finished.')).toBeTruthy();
+  expect(screen.queryByText("Workspace couldn't start")).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  const row = await screen.findByRole('region', { name: 'This computer' });
+  expect(within(row).getByText("Bridge didn't finish starting a fresh workspace")).toBeTruthy();
+  expect(within(row).getByText('Needs you', { selector: '.pill' })).toBeTruthy();
+  expect(screen.getAllByText('Fresh workspace not finished').length).toBeGreaterThan(0);
 });
 
 test('folders Bridge did not expect are named, with what to do', async () => {
