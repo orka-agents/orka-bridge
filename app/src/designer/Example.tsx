@@ -20,6 +20,7 @@ import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
 import Send, { SendHistory } from '../clusters/Send';
 import type { SendStart } from '../clusters/use-send-settlement';
+import { rovingIndex, rovingKeyDown } from '../components/roving';
 
 export type DocumentAction = { id: number; documentId: string; action: 'open' | 'chat' | 'run' | 'send' | 'file' };
 
@@ -290,10 +291,10 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     <div className="page-heading designer-heading">
       <div className="agent-heading-copy"><h1 className={info.name ? 'agent-name' : undefined} id={active && !creating ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{view === 'Try' ? <p className="muted">Try a task on {chatPlace?.name ?? 'this computer'} before you rely on it.</p> : info.description ? <p className="muted">{info.description}</p> : pair && <p className="muted">No description in the agent file.</p>}</div>
       <div className="heading-actions">
-        <div className="view-switch" role="group" aria-label="Designer view">
-          <button type="button" aria-pressed={view === 'Agent'} onClick={() => setView('Agent')}>Agent</button>
-          <button type="button" aria-pressed={view === 'Try'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('Try')}>Try a task</button>
-          <button type="button" aria-pressed={view === 'File'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('File')}>File</button>
+        <div className="view-switch" role="group" aria-label="Designer view" onKeyDown={rovingKeyDown}>
+          <button type="button" aria-pressed={view === 'Agent'} tabIndex={rovingIndex(view === 'Agent', true, true)} onClick={() => setView('Agent')}>Agent</button>
+          <button type="button" aria-pressed={view === 'Try'} tabIndex={rovingIndex(view === 'Try', true, false)} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('Try')}>Try a task</button>
+          <button type="button" aria-pressed={view === 'File'} tabIndex={rovingIndex(view === 'File', true, false)} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('File')}>File</button>
         </div>
         <label className="agent-selector"><span className="sr-only">Agent</span><select className="field" disabled={!entries || selecting} title={!entries ? 'Reading your agents' : selecting ? 'Opening your agent' : undefined} value={boundDocument} onChange={event => { setSelectionError(undefined); setWantsCreate(false); onNewAgentHandled?.(); requestDocument(event.target.value); }}>
           {!entries?.some(entry => entry.id === boundDocument) && <option value={boundDocument}>{pair?.name ?? 'Current agent'}</option>}

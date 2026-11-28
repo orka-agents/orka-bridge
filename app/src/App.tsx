@@ -13,6 +13,7 @@ import type { ClustersView, DesignerView, Location } from './chrome/history';
 import { useNavigationHistory } from './chrome/useNavigationHistory';
 import ThemeButton from './chrome/ThemeButton';
 import SidebarToggle from './chrome/SidebarToggle';
+import { useFocusCycle } from './chrome/focus-cycle';
 import { narrowWindow, readSidebarCollapsed, useNarrowWindow, writeSidebarCollapsed } from './chrome/sidebar';
 import OrkaSwitcher from './chrome/OrkaSwitcher';
 import WindowControls, { customTitleBar } from './chrome/WindowControls';
@@ -66,6 +67,7 @@ export default function App() {
   const leaveGuided = useCallback(() => { guidedLeft.current = true; finishGuidedFirstRun(); setGuided(false); }, []);
   // Set up later, offered only where setup has stopped, ends guidance on the same page; focus stays on its heading.
   const setUpLater = useCallback(() => { leaveGuided(); requestAnimationFrame(() => document.getElementById('page-title')?.focus()); }, [leaveGuided]);
+  useFocusCycle(useCallback(() => document.querySelector<HTMLElement>('.app-shell'), []));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   // Narrow windows always show the rail; there the toggle opens the full sidebar over the page until a page is chosen.
   const narrow = useNarrowWindow();

@@ -6,6 +6,7 @@ import { PlaceNotes } from './places';
 import { AgentListRow } from './card';
 import { type AgentFocus, sendAgentCheck } from '../clusters/send-api';
 import './overview.css';
+import { rovingIndex, rovingKeyDown } from '../components/roving';
 
 export type OverviewProps = {
   onNewAgent?: () => void; active: boolean; runBusy: boolean; localAiConnected: boolean; activeDocumentId?: string; workspaceKey: string;
@@ -202,7 +203,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       </div></div>
     {!empty && <div className="overview-filters">
       {options.length > 4 ? <select className="field" aria-label="Place" value={selectedPlace} onChange={event => { setReveal(undefined); setPlaceFilter(event.target.value); }}><option value="all">All places</option>{options.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}</select>
-        : <div className="view-switch" role="group" aria-label="Place">{[{ key: 'all', label: 'All' }, ...options].map(p => <button key={p.key} type="button" aria-pressed={selectedPlace === p.key} onClick={() => { setReveal(undefined); setPlaceFilter(p.key); }}>{p.label}</button>)}</div>}
+        : <div className="view-switch" role="group" aria-label="Place" onKeyDown={rovingKeyDown}>{[{ key: 'all', label: 'All' }, ...options].map((p, index, all) => <button key={p.key} type="button" aria-pressed={selectedPlace === p.key} tabIndex={rovingIndex(selectedPlace === p.key, all.some(item => item.key === selectedPlace), index === 0)} onClick={() => { setReveal(undefined); setPlaceFilter(p.key); }}>{p.label}</button>)}</div>}
       <input className="field" aria-label="Filter by name" placeholder="Filter by name" value={nameFilter} onChange={event => { setReveal(undefined); setNameFilter(event.target.value); }} />
       <span className="overview-filter-count" role="status">{summaryLabel(rows, partial)}</span>
     </div>}
