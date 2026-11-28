@@ -360,6 +360,19 @@ func clickButton(_ label: String) {
     }
     fail("No visible enabled native button: \(label)")
 }
+// The context picker opens under its trigger (components/anchored-popover.ts) and its list scrolls inside it, so in a
+// 540x640 window the later contexts start below the popover's edge. Scroll that list, as a person would, not the page.
+func clickPickerChoice(_ label: String) {
+    for _ in 0..<12 {
+        if !visibleButtons(label).isEmpty { clickButton(label); return }
+        guard let choice = nativeButtons(label).first, let popover = popoverBounds(choice), !popover.isEmpty else { break }
+        let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -80, wheel2: 0, wheel3: 0)
+        scroll?.location = CGPoint(x: popover.midX, y: popover.maxY - 24)
+        scroll?.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.3)
+    }
+    fail("Picker choice not reachable by scrolling its list: \(label)")
+}
 // Whole accessibility tree, below the fold included: for counting, not for proving visibility.
 func nativeStrings() -> [String] {
     nativeElements().flatMap { element in
@@ -1287,7 +1300,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         let names = ["fixture-cluster", "conditional-fixture", "denied-fixture", "missing-tools-fixture", "unreadable-tools-fixture", "fixture-secondary"]
         require((1...names.count).contains(index), "Unknown fixture context index")
         clickButton("kubectl context")
-        clickButton(names[index - 1])
+        clickPickerChoice(names[index - 1])
         Thread.sleep(forTimeInterval: 1)
         return try capture("cluster-card-selected", "Clusters")
     }
