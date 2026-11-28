@@ -2210,12 +2210,40 @@ do {
     }
     guard let chooser = panel, let chooserBounds = nativeBounds(chooser) else { fail("Native repo folder chooser missing") }
     // Drive the real NSOpenPanel's Go to Folder sheet; never inject picker IPC.
-    for down in [true, false] {
-        let event = CGEvent(keyboardEventSource: nil, virtualKey: 5, keyDown: down)!
-        event.flags = [.maskCommand, .maskShift]; event.post(tap: .cghidEventTap)
+    // The panel can be in the accessibility tree before it takes keys, so a fixed pause could send Cmd-Shift-G and
+    // the path to nothing (CI run 46107695940, light). Wait for the Go to Folder field to have focus, retrying the
+    // shortcut, and for it to hold the whole path before pressing Return.
+    func goToFolderField() -> AXUIElement? {
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+            let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+        let field = focused as! AXUIElement
+        // The panel's own search field is a text field too; Go to Folder's is not a search field.
+        guard ["AXTextField", "AXComboBox"].contains(attribute(field, "AXRole") as? String ?? ""),
+            attribute(field, "AXSubrole") as? String != "AXSearchField" else { return nil }
+        return field
     }
-    Thread.sleep(forTimeInterval: 0.3)
+    var goField: AXUIElement?
+    for _ in 0..<3 where goField == nil {
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: 5, keyDown: down)!
+            event.flags = [.maskCommand, .maskShift]; event.post(tap: .cghidEventTap)
+        }
+        for _ in 0..<20 {
+            goField = goToFolderField()
+            if goField != nil { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+    }
+    guard let goField else { fail("Go to Folder did not open in the native repo chooser") }
     typeText(selectedRepo.path)
+    var typed: String?
+    for _ in 0..<30 {
+        typed = attribute(goField, "AXValue") as? String
+        if typed?.hasPrefix(selectedRepo.path) == true { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(typed?.hasPrefix(selectedRepo.path) == true, "Go to Folder did not receive the repo path: \(typed ?? "no value")")
     key(36)
     var navigated = false
     for _ in 0..<50 {
