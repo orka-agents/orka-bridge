@@ -358,7 +358,8 @@ test('Manage refreshes confirmed agents and offers cancellable removal, finite f
   await user.click(await screen.findByRole('button', { name: 'Show details' }));
   await screen.findByRole('heading', { name: 'Agents on this cluster' });
   expect(await screen.findByText('reader')).toBeTruthy();
-  expect(screen.getByTitle(new Date(fresh.observedAt).toLocaleString())).toBeTruthy();
+  // The exact time is the timestamp's one hover tip.
+  expect(screen.getByText(new Date(fresh.observedAt).toLocaleString(), { selector: '.control-tip' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Change context' }));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'kubectl context' })));
   await user.click(screen.getByRole('button', { name: 'Remove' }));
