@@ -54,6 +54,8 @@
 .workspace-progress-details pre { margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-small); background: var(--color-chrome); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--type-caption); font-family: var(--font-mono); }
 .workspace-step-actions { display: flex; align-items: center; gap: var(--space-2) var(--space-3); flex-wrap: wrap; margin-top: var(--space-4); }
 .workspace-step-actions:empty { display: none; }
+/* What's inside on the setup card sits apart from the actions above it. */
+.setup-progress > .inside-disclosure { margin-top: var(--space-3); }
 .workspace-step-actions .muted { font: var(--type-body); color: var(--color-text-secondary); }
 .first-test-recovery { margin-top: var(--space-3); }
 .first-test-recovery > p { margin: 0 0 var(--space-2); }

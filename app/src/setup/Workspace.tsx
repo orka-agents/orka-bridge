@@ -8,17 +8,28 @@ import { infraProgress, workspaceView } from './progress';
 import { helpDetails, workspaceRecovery } from './recovery-info';
 import { preflightRecovery } from './preflight-state';
 import type { SetupStatus } from './state';
+import { formatRequirementGB } from './requirements';
+
+// What's inside a workspace, with the deliberate reset. The memory figure is the one the requirements name.
+// `onFresh` is offered only while the workspace can be replaced; `freshDisabled` holds it while something else runs.
+export function WorkspaceInside({ id, memoryBytes, onFresh, freshDisabled = false }: { id: string; memoryBytes?: number | null; onFresh?: () => void; freshDisabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return <Disclosure className="inside-disclosure" label="What's inside" open={open} controls={id} onOpenChange={setOpen}>
+    {open && <div id={id}><p>The workspace includes Orka and the tools your agents use. {memoryBytes ? `Uses about ${formatRequirementGB(memoryBytes)} of memory while Bridge is open.` : "Uses this computer's memory while Bridge is open."} Quit Bridge to free it.</p>
+      {/* A deliberate reset, kept quiet: the confirmation says what it replaces. */}
+      {onFresh && <Button type="button" kind="quiet" disabled={freshDisabled} onClick={onFresh}>Start a fresh workspace…</Button>}</div>}
+  </Disclosure>;
+}
 
 // Returning workspace management is not another pass through first-run setup.
 // `onFresh` starts a fresh workspace; `freshOffered` says a failure can't otherwise be got past, so it is offered there too.
-export default function Workspace({ status, busy, stopping, starting, error, active, onStart, onCancel, onCluster, upgrade, updating, updateBlocked, ordinaryRecovery = !upgrade, onFresh, freshOffered = false, helpLines }: {
-  upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean; ordinaryRecovery?: boolean; onFresh?: () => void; freshOffered?: boolean; helpLines?: string[];
+export default function Workspace({ status, busy, stopping, starting, error, active, onStart, onCancel, onCluster, upgrade, updating, updateBlocked, ordinaryRecovery = !upgrade, onFresh, freshOffered = false, helpLines, memoryBytes }: {
+  upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean; ordinaryRecovery?: boolean; onFresh?: () => void; freshOffered?: boolean; helpLines?: string[]; memoryBytes?: number | null;
   status: SetupStatus; busy: boolean; stopping: boolean; starting: boolean; error?: string; active: boolean;
   onStart: () => void; onCancel?: () => void; onCluster?: () => void;
 }) {
   const [agents, setAgents] = useState<AgentEntry[]>();
   const [path, setPath] = useState<string>();
-  const [inside, setInside] = useState(false);
   // A failed start's details start open, as the board shows: the stage and what the workspace reported. A stop's stay closed.
   // The choice is kept per failure and read during render, so a new failure never draws with the last one's state, even for one frame.
   const failureKey = `${status.localVm}/${status.workspaceFailure?.operation ?? ''}/${status.workspaceFailure?.cause ?? ''}`;
@@ -116,11 +127,8 @@ export default function Workspace({ status, busy, stopping, starting, error, act
         <div><dt>Agents</dt><dd>{agents ? agents.length ? `${agents[0].name}${agents.length > 1 ? ` and ${agents.length - 1} more` : ''}` : 'No saved agents yet' : 'Agent list unavailable'}</dd></div>
         <div><dt>Files</dt><dd>{path ? <code>{path}</code> : 'Folder unavailable'}</dd></div>
       </dl>
-      <Disclosure label="What's inside" open={inside} controls="returning-workspace-inside" onOpenChange={setInside}>
-        {inside && <div id="returning-workspace-inside"><p>The workspace includes Orka and the tools your agents use. Uses about 4 GB of memory while Bridge is open. Quit Bridge to free it.</p>
-          {/* A deliberate reset, kept quiet: the confirmation says what it replaces. */}
-          {onFresh && ordinaryRecovery && !failed && !settingUp && !stopping && !closed && <Button type="button" kind="quiet" disabled={busy || !!error} onClick={onFresh}>Start a fresh workspace…</Button>}</div>}
-      </Disclosure>
+      <WorkspaceInside id="returning-workspace-inside" memoryBytes={memoryBytes} freshDisabled={busy || !!error}
+        onFresh={onFresh && ordinaryRecovery && !failed && !settingUp && !stopping && !closed ? onFresh : undefined} />
     </>}
   </section>;
 }

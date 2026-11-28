@@ -10,6 +10,7 @@ import { modelDetails } from './recovery-info';
 import { type ExamplePair, loadExample, type SetupStatus } from './state';
 import './steps.css';
 import { readForm } from '../designer/agent-form';
+import { WorkspaceInside } from './Workspace';
 import { builtInTools } from '../designer/built-in-tools';
 import { testDefinitions } from '../designer/test-definitions';
 import SetUpLater from '../firstrun/SetUpLater';
@@ -24,6 +25,9 @@ type Props = {
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onOpenExample: () => void;
   // Start a fresh workspace, offered on a failure the ordinary recovery can't get past.
   onFresh?: () => void; helpLines?: string[];
+  // Outside the guided first run, a ready workspace keeps What's inside and its deliberate Start a fresh workspace…,
+  // whatever the AI and the first test: the setup card is this workspace's own card until setup finishes.
+  onFreshWorkspace?: () => void; memoryBytes?: number | null;
   // During the guided first run: the agent's instructions open in place, and stuck screens offer Set up later.
   guided?: boolean; onSetUpLater?: () => void;
   // Outside the guided first run, a workspace that is getting ready is one card beside the AI card, without the steps.
@@ -134,6 +138,8 @@ export function SetupProgress(props: Props) {
         {onSetUpLater && (props.firstCheck === 'failed' || props.firstCheck === 'unknown') && <SetUpLater onClick={onSetUpLater} />}
       </>}{!needsModel && !guided && <Button type="button" kind="secondary" disabled={busy || !!error} onClick={onOpenExample}>Read its instructions</Button>}</>}
     </div>}
+    {workspaceReady && !guided && <WorkspaceInside id="setup-workspace-inside" memoryBytes={props.memoryBytes} freshDisabled={busy}
+      onFresh={(props.ordinaryRecovery ?? !props.upgrade) ? props.onFreshWorkspace : undefined} />}
     {/* Guided, the instructions open here instead of in Designer, so reading them doesn't leave the first run. */}
     {!failed && ready && !needsModel && guided && <GuidedInstructions disabled={busy || !!error} onOpen={onOpenExample} />}
   </section>;

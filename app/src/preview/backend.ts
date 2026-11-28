@@ -55,6 +55,7 @@ export const scenarios = {
   overviewEmpty: 'No saved agents yet',
   clusterContexts: 'Add a cluster with kubectl contexts',
   wsStarting: 'First setup, the workspace starting',
+  wsReadyNoAi: 'First setup left with the workspace ready and no AI',
   firstDownloadFails: 'First run: the workspace download fails once',
   firstTestFails: 'First run: the first test fails',
   firstTestStale: 'First run: the first test needs running again',
@@ -447,7 +448,7 @@ function clusterReply(command: string, args?: Record<string, unknown>): unknown 
 // Scenarios that open in states the ordinary walk can't reach. Replies come from ./fixtures; a command
 // a scenario doesn't own falls through to the ordinary script in handle().
 const unscripted = Symbol('unscripted');
-const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed', 'clusterReady', 'clusterContexts', 'wsStarting', 'firstDownloadFails', 'firstTestFails', 'firstTestStale', 'firstTestUnknown'].includes(scenario);
+const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed', 'clusterReady', 'clusterContexts', 'wsStarting', 'wsReadyNoAi', 'firstDownloadFails', 'firstTestFails', 'firstTestStale', 'firstTestUnknown'].includes(scenario);
 const upgradeScenario = scenario === 'wsUpdate' || scenario === 'wsRestore' || scenario === 'wsRecovery';
 const sendScenario = ['sendBlocked', 'sendRunning', 'sendFailed', 'sendPassed', 'sendLocalFailed'].includes(scenario);
 const remoteScenario = sendScenario || scenario === 'clusterDenied' || scenario === 'clusterUnreachable';
@@ -915,8 +916,8 @@ export function installPreview() {
     // Each load starts from the scenario, not from the previous walk's browser storage. Theme and sidebar choices are kept: they are presentation only.
     for (const key of Object.keys(localStorage)) if (key.startsWith('bridge.') && key !== themePreference && key !== sidebarPreference) localStorage.removeItem(key);
     if (!fresh) localStorage.setItem('bridge.welcomeSeen.v1', '1');
-    // wsStarting is a first setup still under way, so its first test is still pending.
-    if (!fresh) localStorage.setItem('bridge.firstTest.v1', scenario === 'wsStarting' ? 'pending' : 'attempted');
+    // wsStarting and wsReadyNoAi are a first setup still under way, so their first test is still pending.
+    if (!fresh) localStorage.setItem('bridge.firstTest.v1', scenario === 'wsStarting' || scenario === 'wsReadyNoAi' ? 'pending' : 'attempted');
   } catch { /* Storage is optional in the preview. */ }
   (globalThis as { isTauri?: boolean }).isTauri = true;
   mockWindows('main');

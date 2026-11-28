@@ -2092,7 +2092,7 @@ try workspaceCapture("ready", ["This computer", "Ready", "Agents", "Files"])
 require(nativeHeadingExists("Connect the AI") && !nativeHeadingExists("AI") && enabledButton("Connect the AI") != nil,
         "Returning Model without a connection must be headed Connect the AI and offer it")
 click("What's inside", [])
-_ = try capture("local-workspace-inside", ["4 GB of memory"])
+_ = try capture("local-workspace-inside", ["4.3 GB of memory"])
 click("What's inside", [])
 try workspacePhase("workspace-scene-starting")
 // The fixture reports 18000 ms elapsed while starting.

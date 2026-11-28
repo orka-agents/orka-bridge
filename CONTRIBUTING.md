@@ -30,7 +30,7 @@ globally to install dependencies.
 
 For quick UI work without a VM, start the dev server from `app/` with `npm run dev` and open `http://127.0.0.1:1420/?scenario=fresh`. In development builds only, a `scenario` query loads a scripted stand-in for the native commands (`app/src/preview/backend.ts`), so screens can be walked and captured in any browser. Scenarios are `fresh`, `ready`, `connected`, `restart`, `ghMissing`, `ghSignedOut`, `runFails` and `vmFailed`. Add `speed=20` to shorten waits, `clean` to hide the scenario toolbar and `page=Home`, `Overview`, `Designer` or `Clusters` to open that page. Like the app, the preview opens on Welcome while nothing is set up (`fresh`, `ghMissing`, `ghSignedOut`, `vmFailed`), on Clusters while setup is in progress (`restart`), and on Home once a workspace is ready (`ready`, `connected`, `runFails`, `clusterReady`). The preview is not native verification: it never runs a VM, an agent or a model.
 
-These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer, `memoryLow`, `checkAtStart`, `noWorkspace`, the `first…` and the `copilot…` ones open on Welcome in the guided first run, and the rest open on Home; the steps say where the state appears, starting from Clusters unless they name another page.
+These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer (`wsReadyNoAi` on Clusters), `memoryLow`, `checkAtStart`, `noWorkspace`, the `first…` and the `copilot…` ones open on Welcome in the guided first run, and the rest open on Home; the steps say where the state appears, starting from Clusters unless they name another page.
 
 | Scenario | State | Where it appears |
 | --- | --- | --- |
@@ -44,6 +44,7 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `wsRecovery` | Interrupted update, setup incomplete | Opens there |
 | `wsVersionUnsupported` | The workspace uses different cluster files; Start a fresh workspace sits beside Open the matching Bridge version | Opens there |
 | `wsStarting` | First setup, the workspace starting with its progress; Connect the AI checks the GitHub sign-in at once and waits with the account and model | Opens there |
+| `wsReadyNoAi` | A first setup left with the workspace ready and no AI: the setup card keeps What's inside and Start a fresh workspace… | Opens on Clusters; This computer → Connect the AI |
 | `firstDownloadFails` | First run: the workspace download fails partway, then Try again finishes it | Get started → Set up → Continue |
 | `firstTestFails` | First run: the first agent's test fails | Get started → Set up → Continue, then Connect the AI |
 | `firstTestStale` | First run: the first test's result is from an earlier edit, so it needs running again | Get started → Set up → Continue, then Connect the AI |
