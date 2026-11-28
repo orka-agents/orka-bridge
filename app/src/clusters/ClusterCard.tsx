@@ -242,7 +242,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
         <ul className="cluster-checks"><li><StatusIcon state="passed" /><b>Cluster found</b></li><li><StatusIcon state="passed" /><b role="status">Access confirmed</b></li></ul>
         <h3>AI connection</h3><label className="sr-only" htmlFor="send-provider">AI connection</label>
         <select className="field cluster-mono-field" ref={providerField} id="send-provider" disabled={removing} value={providerId} onChange={event => { const next = event.target.value; setProviderId(next); providerName.current = access.providers.find(p => p.id === next)?.name ?? ''; onPlace({ kind: 'cluster', target, providers: access.providers, providerId: next }); }}>
-          <option value="">Choose an AI connection</option>{access.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.ready ? 'Ready' : 'Not ready'}</option>)}
+          <option value="" disabled>Choose an AI connection</option>{access.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.ready ? 'Ready' : 'Not ready'}</option>)}
         </select><p className="muted">Send checks whether this AI connection supports your agent's model.</p>
         <p className="muted">{checkedAt != null ? <>Checked <RelativeTime value={checkedAt} inline /></> : 'Last check unavailable'}</p>
         <h3>Agents on this cluster</h3>

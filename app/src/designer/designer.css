@@ -91,7 +91,7 @@
 .description-line.field { width: 100%; height: var(--height-control); }
 .agent-part > .alert { max-width: none; }
 .agent-tool-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
-.agent-part .model-select { width: 300px; max-width: 100%; font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
+.agent-part .model-select { width: 360px; max-width: 100%; font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
 /* Add a tool matches the 32px tool chips beside it. */
 .agent-tool-row > .button-small, .agent-tool-row > .coming-control > .button-small { min-height: 32px; height: 32px; }
 /* A tool is a well chip: its label, its id in mono and a remove button. */

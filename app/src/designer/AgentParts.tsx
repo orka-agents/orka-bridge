@@ -68,7 +68,9 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
   const models = catalog?.models.state === 'ready' ? catalog.models.items.filter(model => model.pickerEnabled !== false && model.chatSupported !== false) : undefined;
   const listed = models?.some(model => model.id === form.model);
   const knownModel = catalog?.models.state === 'ready' && catalog.models.items.some(model => model.id === form.model);
-  const unlistedLabel = !remote && models ? knownModel ? ' (not offered for chat)' : ' (unlisted)' : '';
+  // Every entry says what it is: on a cluster the list holds the AI connection's configured default, so the model
+  // saved in the file is named as the file's, never mixed in as another default.
+  const unlistedLabel = !models ? '' : remote ? ' (in your file)' : knownModel ? ' (not offered for chat)' : ' (unlisted)';
   const catalogReason = catalogAvailability === 'needsConnection' ? 'Choose an AI connection in Clusters to load tools and models'
     : catalogAvailability === 'unavailable' ? remote || localUnavailable ? 'Connect a cluster in Clusters to load tools and models' : 'Open Clusters to load tools and models on This computer.'
     : catalogAvailability === 'paused' ? 'Tools and models are paused while another operation finishes.' : undefined;
@@ -159,7 +161,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
       <div className="agent-tool-row">
         <select id={`${id}-model`} className="field model-select" disabled={!!modelReason} title={modelReason ?? modelTip} value={form.model ?? ''} onChange={event => change(changeModel(source, event.target.value))}>
           {!listed && <option value={form.model ?? ''}>{form.model ? `${modelLabel(form.model)}${unlistedLabel}` : 'No model in this file'}</option>}
-          {models?.map(model => <option key={model.id} value={model.id}>{!remote && model.id === catalog?.defaultModel ? `Workspace default: ${modelLabel(model.id)}` : modelLabel(model.id)}</option>)}
+          {models?.map(model => <option key={model.id} value={model.id}>{model.id === catalog?.defaultModel ? `${remote ? 'AI connection' : 'Workspace'} default: ${modelLabel(model.id)}` : modelLabel(model.id)}</option>)}
         </select>
         {modelHelp && <span className="muted">{modelHelp}</span>}
       </div>
