@@ -60,6 +60,7 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `keyUnsupported` | The workspace's image can't use an API key: refused before anything is saved or sent | As `keyRejected` |
 | `aiMismatch` | Saved AI connection from an earlier setup | This computer → Manage → Connect the AI |
 | `aiStuck` | The workspace refuses to remove the previous AI connection: Check again once, then Start a fresh workspace, its confirmation, the replacement and the first-setup screen it lands on | This computer → Manage → Connect the AI, Check again, then Start a fresh workspace twice |
+| `aiUnknown` | The workspace may keep an AI connection Bridge can't name (an earlier connect never answered): Start a fresh workspace is offered at once | This computer → Manage → Connect the AI |
 | `freshStopUnconfirmed` | Start a fresh workspace refused because the workspace's stop can't be confirmed | This computer → Manage → What's inside → Start a fresh workspace…, then Start a fresh workspace |
 | `freshReclaimable` | Start a fresh workspace can't delete the previous workspace, and names its folder as space to reclaim | As `freshStopUnconfirmed`, then wait for the deletion |
 | `freshDownload` | The confirmation says first install downloads the workspace again, and how much | As `freshStopUnconfirmed`, up to the confirmation |

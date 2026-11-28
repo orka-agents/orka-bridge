@@ -74,6 +74,8 @@ export const keyInvalid = { kind: 'modelKeyInvalid', message: "Paste the whole k
 export const keyUnsupported = (vendor: 'openai' | 'anthropic') => ({ kind: 'modelKeyUnsupported', message: 'The workspace on this computer cannot use an API key. Its image predates API-key connections.', vendor });
 // The workspace's connect tool refuses to remove the previous AI connection, as on a real Windows run.
 export const reconnectRefused = { kind: 'modelReconnect', message: 'Bridge could not remove the previous AI connection from the local cluster. The saved sign-in was kept.', cleanup: ['disconnectRetainedModel', 'refused'] };
+// A connect was sent and its answer never arrived: the workspace may keep a connection Bridge can't name.
+export const reconnectUnknown = { kind: 'modelReconnect', message: 'Bridge could not remove the previous AI connection from the local cluster. The saved sign-in was kept.', cleanup: ['connectionUnknown', 'refused'] };
 export const modelGuest = { kind: 'modelGuest', message: 'The guest model handler is unavailable or is not idle.' };
 export const installationMismatch = (installation: string, savedInstallation: string, credentialSlot: string) => ({
   kind: 'modelInstallationMismatch', message: "Bridge's saved AI connection is from an earlier setup.",

@@ -60,6 +60,39 @@ async function stuck() {
   return user;
 }
 
+// One rule for every stuck class. Each row: the refusals native gives, and how many Connect presses reach the way out.
+test.each([
+  ['a connection Bridge cannot name (connectionUnknown) is stuck at once', [{ kind: 'modelReconnect', cleanup: ['connectionUnknown', 'refused'] }], 1],
+  ['a removal the workspace refuses is stuck after Check again is refused too', [refused, refused], 2],
+  ['a connectionUnknown after an earlier refusal is stuck at once', [refused, { kind: 'modelReconnect', cleanup: ['connectionUnknown', 'refused'] }], 2],
+])('%s', async (_, replies, presses) => {
+  refusals = [...replies];
+  const user = userEvent.setup();
+  render(<App />);
+  await openLocalSetup(user);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  if (presses > 1) {
+    await screen.findByRole('alert');
+    expect(screen.queryByRole('button', { name: 'Start a fresh workspace' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Check again' }));
+  }
+  expect(await screen.findByRole('button', { name: 'Start a fresh workspace' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Start a fresh workspace' }));
+  expect(await screen.findByRole('region', { name: 'Start a fresh workspace?' })).toBeTruthy();
+});
+
+test('a cleanup that may only be slow (not refused) keeps Check again, never the fresh workspace', async () => {
+  refusals = [{ kind: 'modelReconnect', cleanup: ['modelStatus', 'timeout'] }, { kind: 'modelReconnect', cleanup: ['modelStatus', 'timeout'] }];
+  const user = userEvent.setup();
+  render(<App />);
+  await openLocalSetup(user);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Check again' }));
+  await screen.findByRole('button', { name: 'Check again' });
+  expect(screen.queryByRole('button', { name: 'Start a fresh workspace' })).toBeNull();
+});
+
 test('the stuck AI card leads to one confirmation, then the ordinary first-setup screen', async () => {
   const user = await stuck();
   const alert = screen.getByRole('alert');

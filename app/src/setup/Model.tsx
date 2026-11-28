@@ -393,7 +393,9 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   const preflight = error && !removalFailed && !keyMode ? preflightStep(error, hasSignIn) : undefined;
   // Cleanup refused twice in a row, after one Check again or Retry removal: a host-only reset can't clear the workspace's
   // own record of the old connection, so the card offers a fresh workspace instead of another round.
-  const stuck = error?.category === 'modelReconnect' && reconnectFailures >= 2;
+  // One rule for every stuck class: a connection Bridge can't name (connectionUnknown) can never be removed from here,
+  // so it is stuck at once; a refusal is stuck once Check again or Retry removal was refused again.
+  const stuck = error?.category === 'modelReconnect' && (error.cleanup?.[0] === 'connectionUnknown' || reconnectFailures >= 2);
   const freshAction = stuck && !!onFreshWorkspace && !sharedConnection && !freshBlocked;
   const summary = preflight?.summary ?? error?.message;
   const nextStep = preflight?.step ?? (stuck ? freshAction ? "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace is the sure way back: Bridge replaces the workspace on this computer, keeps your agent files, and you connect the AI again."

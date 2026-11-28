@@ -12,7 +12,7 @@ import { sidebarPreference } from '../chrome/sidebar';
 import { themePreference } from '../chrome/theme';
 import {
   clusterCatalog, type Credential, contextTargets, createdSeed, deniedAccess, kubeContexts, failingClusterPlace, failingClusterProvider, failingClusterTarget, type FailureScenario,
-  installationMismatch, keyInvalid, keyRejected, keyUnsupported, modelGuest, reconnectRefused, sendRows, unreachableCluster, upgradeStatus, workspaceFailures,
+  installationMismatch, keyInvalid, keyRejected, keyUnsupported, modelGuest, reconnectRefused, reconnectUnknown, sendRows, unreachableCluster, upgradeStatus, workspaceFailures,
 } from './fixtures';
 
 export const scenarios = {
@@ -36,6 +36,7 @@ export const scenarios = {
   wsRecovery: 'Interrupted update, setup incomplete',
   wsVersionUnsupported: 'Workspace uses different cluster files',
   aiStuck: 'Workspace refuses to remove the previous AI connection',
+  aiUnknown: "The workspace may keep an AI connection Bridge can't name",
   freshStopUnconfirmed: "Start a fresh workspace: the stop can't be confirmed",
   freshReclaimable: "Start a fresh workspace: the old workspace can't be deleted",
   freshDownload: 'Start a fresh workspace: the download must be fetched again',
@@ -504,7 +505,8 @@ function failedStatus(name: FailureScenario) {
 const retiredFolder = (transaction: string) => `C:\\Users\\you\\AppData\\Local\\ai.orka.bridge\\discarded-${transaction}`;
 let freshWorkspace: Record<string, unknown> | null = scenario === 'freshInterrupted' ? { state: 'interrupted', transaction: uuid('fresh-interrupted') }
   : scenario === 'freshConflict' ? { state: 'conflict', found: ['C:\\Users\\you\\AppData\\Local\\ai.orka.bridge\\local-vm-v1', retiredFolder(uuid('fresh-conflict'))] } : null;
-let cleanupRefused = scenario === 'aiStuck' || scenario === 'freshBlocked';
+let cleanupRefused = scenario === 'aiStuck' || scenario === 'freshBlocked' || scenario === 'aiUnknown';
+const refusal = () => scenario === 'aiUnknown' ? reconnectUnknown : reconnectRefused;
 // Native's plan: whether the action can start, and whether first install reuses the cached download.
 // A new computer has nothing downloaded yet; elsewhere first install reuses the download already here.
 const freshPlan = () => ({ ...(scenario === 'freshBlocked' ? { blocked: 'updateHistory' } : {}), image: scenario === 'freshDownload' ? { kind: 'download', bytes: 1_967_572_914 } : fresh && !selected && scenario !== 'firstCached' ? { kind: 'download' } : { kind: 'cached' } });
@@ -687,7 +689,7 @@ async function scenarioReply(command: string, args?: Record<string, unknown>): P
       if (cleanupRefused) {
         await wait(2);
         if (!ready()) throw modelGuest;
-        throw reconnectRefused;
+        throw refusal();
       }
       if (!mismatch) break;
       await wait(2);
@@ -696,7 +698,7 @@ async function scenarioReply(command: string, args?: Record<string, unknown>): P
     case 'setup_remove_model':
       if (!cleanupRefused) break;
       await wait(1);
-      throw reconnectRefused;
+      throw refusal();
     case 'setup_reset_model':
       if (scenario !== 'aiMismatch') break;
       await wait(1);
