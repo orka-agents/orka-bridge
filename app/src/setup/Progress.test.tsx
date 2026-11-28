@@ -221,7 +221,10 @@ test('Meet opens the owned example for editing without Run commands', async () =
   expect(within(main).getByText('Fetch before answering.')).toBeTruthy();
   const run = within(main).getByRole('button', { name: 'Run tests' });
   expect(run.matches(':disabled')).toBe(true);
-  expect(run.title).toBe('Waiting for the workspace to start.');
+  // Its reason is the styled tip and the group's name: one tooltip, no native title over it.
+  expect(run.hasAttribute('title')).toBe(false);
+  expect(run.closest('[role="group"]')?.getAttribute('aria-label')).toBe('Run tests: Waiting for the workspace to start.');
+  expect(run.parentElement?.querySelector('.control-tip')?.textContent).toBe('Waiting for the workspace to start.');
   await user.click(within(main).getByRole('button', { name: 'File' }));
   const editor = screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
   expect(editor.readOnly).toBe(false); editor.focus(); await user.keyboard('{Control>}s{/Control}');
