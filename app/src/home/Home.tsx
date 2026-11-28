@@ -209,8 +209,10 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
   });
   // On a cluster the line says where it runs; the model is the one its last answer used.
   // The line always names the place whose conversation is on screen, then the model its last answer used.
-  const line = place ? <>runs on {place.name}{thinksWith?.kind === 'cluster' && <span className="nav-line-wide"> · thinks with {thinksWith.model}</span>}</>
-    : <>runs on this computer{thinksWith && thinksWith.kind !== 'cluster' && <span className="nav-line-wide"> · thinks with {vendors[thinksWith.kind]} · {thinksWith.model}</span>}</>;
+  // When the line is too long for the box, the place's name shortens in the middle of the line; the model stays.
+  const model = place ? thinksWith?.kind === 'cluster' ? thinksWith.model : undefined
+    : thinksWith && thinksWith.kind !== 'cluster' ? `${vendors[thinksWith.kind]} · ${thinksWith.model}` : undefined;
+  const line = <><span className="nav-line-place">runs on {place ? place.name : 'this computer'}</span>{model && <span className="nav-line-model"> · thinks with {model}</span>}</>;
   // A refused send shows on its own turn below; the field alert is for everything else.
   const failure = error && error.message !== failed?.reason ? error.message : readError;
   const composer = <form className={`nav-composer${empty ? ' nav-composer-start' : ''}`} aria-label="Chat" onSubmit={event => { event.preventDefault(); void send(draft); }}>
@@ -222,10 +224,11 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
         if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(draft); }
       }} />
     <div className="nav-composer-foot">
-      <span className="nav-line">Navigator · {line}</span>
-      <span className="nav-links">
+      <span className="nav-line" title={`Navigator · runs on ${place ? place.name : 'this computer'}${model ? ` · thinks with ${model}` : ''}`}><span className="nav-line-lead">Navigator · </span>{line}</span>
+      {/* An empty conversation has nothing to start over, and the line gets the room. */}
+      {!empty && <span className="nav-links">
         <Button type="button" kind="quiet" disabled={thinking || !!command} onClick={() => { void startOver(); }}>New conversation</Button>
-      </span>
+      </span>}
       {thinking ? <Button type="button" kind="primary" size="large" disabled={command === 'agent_chat_stop' || snapshot?.state === 'requestingStop'} onClick={() => { void act('agent_chat_stop'); }}>Stop</Button>
         : <Button type="submit" kind="primary" size="large" disabled={!!reason || !draft.trim()} title={reason}>Send</Button>}
     </div>

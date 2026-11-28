@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -256,6 +257,22 @@ test('on a build without the local cluster Home names the cluster route, not a w
   await user.click(screen.getByRole('button', { name: 'Switch to team-dev' }));
   expect(choose).toHaveBeenCalledOnce();
   expect(screen.getByRole('button', { name: 'Send' }).matches(':disabled')).toBe(true);
+});
+
+test('the box\'s line keeps one row beside Send and gives way in the place\'s name, never the model', async () => {
+  const user = userEvent.setup(); home({ kind: 'ready', place: cluster });
+  // An empty conversation has nothing to start over.
+  expect(screen.queryByRole('button', { name: 'New conversation' })).toBeNull();
+  await user.type(await screen.findByRole('textbox', { name: 'Message' }), 'What is a Session?');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() => expect(document.querySelector('.nav-line-model')?.textContent).toBe(' · thinks with fixture-model'));
+  expect(document.querySelector('.nav-line-place')?.textContent).toBe('runs on team-dev');
+  expect(document.querySelector('.nav-line')?.getAttribute('title')).toBe('Navigator · runs on team-dev · thinks with fixture-model');
+  const css = readFileSync('src/home/home.css', 'utf8');
+  expect(css).toContain('.nav-composer-foot { display: grid; grid-template-columns: minmax(0, 1fr) auto auto;');
+  expect(css).toContain('.nav-line-place { flex: 0 1000 auto; min-width: 5ch; }');
+  expect(css).toContain('.nav-line-model { flex: none; max-width: calc(100% - 17ch); }');
+  expect(css).not.toContain('.nav-line-wide { display: none; }');
 });
 
 test('a conversation forgotten by a replaced workspace starts over instead of hiding new turns', async () => {

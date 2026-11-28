@@ -82,6 +82,9 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string>();
   const [saveState, setSaveState] = useState<SaveState>('saved');
+  // Once this agent has been edited here, the head of its editor keeps saying Saved, beside where the editing happens.
+  const [editedHere, setEditedHere] = useState<string>();
+  useEffect(() => { if (saveState !== 'saved') setEditedHere(boundDocument); }, [saveState, boundDocument]);
   const [pendingSoul, setPendingSoul] = useState(false);
   const pendingSoulCurrent = useRef(false);
   const [reloading, setReloading] = useState(false);
@@ -304,7 +307,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     {!pair ? error ? <div className="designer-file card"><div className="alert alert-failed"><p role="alert" className="alert-title">{error}</p></div><div className="heading-actions"><Button type="button" kind="primary" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</Button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div className="designer-work">
       <div className="designer-editing">
-      <div className="file-toolbar"><h2 className={view === 'File' ? 'section-label file-name' : 'section-label'}>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2>{!error && <span className="muted" role="status">{saveLabel}</span>}</div>
+      <div className="file-toolbar"><h2 className={view === 'File' ? 'section-label file-name' : 'section-label'}>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2>{!error && <span className="muted" role="status">{saveLabel || (editedHere === boundDocument ? 'Saved' : '')}</span>}</div>
       {error && <div className="save-error"><div className="alert alert-failed"><p role="alert" className="alert-title">{error}</p></div><div className="save-error-actions"><Button kind="primary" type="button" onClick={() => { void flush(true); }}>Try saving again</Button><span className="save-state" role="status">{saveLabel}</span></div></div>}
       <div className="designer-file card">
         {view === 'File' ? <>

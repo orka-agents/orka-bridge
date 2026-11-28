@@ -328,7 +328,8 @@ test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains 
   } else if (state === 'edited') {
     await user.click(screen.getByRole('button', { name: 'File' }));
     await user.type(screen.getByRole('textbox', { name: 'Agent file' }), ' Edited.');
-    await screen.findByText('Saved', { selector: 'span' });
+    // The editor head and the tests card both say Saved once the edit is written.
+    await waitFor(() => expect(document.querySelector('.file-toolbar [role="status"]')?.textContent).toBe('Saved'));
   }
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.queryByRole('heading', { name: 'Your first agent passed its test' })).toBeNull();
