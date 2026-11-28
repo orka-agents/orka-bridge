@@ -18,6 +18,7 @@ fn main() {
     if a[1] == "bad-ready" || a[1] == "unobserved" { control.write_all(b"BAD!!").unwrap(); }
     else { control.write_all(b"BRVM\x01").unwrap(); }
     guest.write_all(b"guest-only\n").unwrap();
+    if a[1] == "crash" { std::process::exit(9); }
     if a[1] == "unobserved" { std::thread::sleep(Duration::from_secs(60)); return; }
     if a[1] == "guest-eof" { let mut byte = [0]; assert_eq!(guest.read(&mut byte).unwrap(), 0); }
     let mut expected = 1u64;

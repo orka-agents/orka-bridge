@@ -89,6 +89,10 @@ impl RuntimeWorker {
         }
         error
     }
+    /// The installed image's guest build, for capabilities its serving hello does not state.
+    pub(crate) fn guest_build(&self) -> &str {
+        &self.image.identity().build_source_commit
+    }
     pub fn lease(&self) -> Option<&VmLease> {
         self.lease.as_ref()
     }

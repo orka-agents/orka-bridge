@@ -13,7 +13,7 @@ function native() {
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_status') return { selected, localVm: stopped ? 'cancelled' : 'ready', model: stopped ? 'locked' : 'available' };
     if (command === 'setup_requirements') return null;
-    if (command === 'setup_connect_model') return { ready: true };
+    if (command === 'setup_connect_model') return { ready: true, connection: { kind: 'copilot', model: 'gpt-6.1-terra', account: 'octocat' } };
     if (command === 'setup_cancel_local') { stopped = true; return { selected, localVm: 'cancelled', model: 'locked' }; }
     if (command === 'cluster_contexts') return [];
     throw Error('Unexpected command: ' + command);
@@ -35,7 +35,8 @@ test('AI connection is the only next primary and its prerequisite is visible bef
   expect(await screen.findByText('Connected', { selector: '.steps-head .pill' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Open your first agent' }).className).toBe('button button-primary');
   expect(document.body.textContent).not.toMatch(/guest|\bVM\b|inference/);
-  expect(screen.getByText('gpt-5.6-terra', { selector: 'code' })).toBeTruthy();
+  // The model the native reply names, never one the card assumed.
+  expect(screen.getByText('gpt-6.1-terra', { selector: 'code' })).toBeTruthy();
   expect(screen.queryByText('Engine diagnostics')).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'engine_call')).toBe(false);
 });

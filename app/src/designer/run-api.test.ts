@@ -1,7 +1,7 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { afterEach, expect, test, vi } from 'vitest';
 import { SAMPLE_DOCUMENT_ID } from './agent-api';
-import { isRunSnapshot, runCall } from './run-api';
+import { isJobRunSnapshot, isRunSnapshot, jobCall, runCall } from './run-api';
 afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
 const base = { state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'one', question: 'What is the answer?', phase: 'Succeeded', answer: '42', completedTools: [], verdict: 'passed', assertions: [{ id: 'answer', kind: 'contains', expected: '42', verdict: 'passed' }] }] }, acknowledged: [], pending: null, error: null };
 test('only automatic first-test admission opts into the bundled-source check', async () => {
@@ -72,4 +72,34 @@ test('missing or malformed evidence and impossible local stages fail closed', ()
   expect(isRunSnapshot({ ...base, stage: null })).toBe(false);
   expect(isRunSnapshot({ ...base, stage: 'private-stage' })).toBe(false);
   expect(isRunSnapshot({ ...base, model: 4 })).toBe(false);
+});
+
+// Shapes from the native job tests: the job's result is only in `job`, never a stage report.
+const jobId = '5f0c2a1e-7b3d-4c8e-9a61-2d4f8b0e6c13';
+const outcome = { stage: 'review', instructions: 'Fetch the page and reply with its title only.', tools: ['web_fetch'], answer: 'The title is Example Domain.', used: ['web_fetch'], review: { verdict: 'done', summary: 'It gives the page title.', gaps: [] }, startedAt: 1, finishedAt: 2 };
+const job = { documentId: jobId, busy: null, state: 'complete', stage: 'done', canRun: true, report: null, acknowledged: [], pending: null, error: null, job: outcome };
+test('a job snapshot carries its outcome, never a report, and only a job may end with a job error', () => {
+  expect(isJobRunSnapshot(job)).toBe(true);
+  for (const error of ['draft', 'answer', 'review', 'model']) expect(isJobRunSnapshot({ ...job, error, job: { ...outcome, review: null } })).toBe(true);
+  expect(isRunSnapshot({ ...base, error: 'draft' })).toBe(false);
+  expect(isRunSnapshot(job)).toBe(false);
+  expect(isJobRunSnapshot({ ...job, report: base.report })).toBe(false);
+  expect(isJobRunSnapshot({ ...job, job: undefined })).toBe(false);
+  for (const change of [{ stage: 'check' }, { tools: ['code_exec'] }, { review: { verdict: 'passed', summary: 'x', gaps: [] } }, { review: { ...outcome.review, gaps: Array(6).fill('gap') } }, { extra: 1 }, { finishedAt: -1 }]) {
+    expect(isJobRunSnapshot({ ...job, job: { ...outcome, ...change } })).toBe(false);
+  }
+});
+test('an agent snapshot stays readable while a job holds the workspace under its fixed name', () => {
+  expect(isRunSnapshot({ ...base, busy: { documentId: jobId, name: 'Your job' } })).toBe(true);
+  expect(isRunSnapshot({ ...base, busy: { documentId: jobId, name: 'Someone else' } })).toBe(false);
+});
+test('a job starts with its id and sentence, and only native\'s fixed refusals are shown', async () => {
+  vi.stubGlobal('isTauri', true);
+  const ipc = vi.fn((command: string) => command === 'job_run_start' ? job : Promise.reject('diagnostic detail'));
+  mockIPC(ipc);
+  expect(await jobCall('job_run_start', jobId, 'Tell me the title')).toEqual({ ok: true, snapshot: job });
+  expect(ipc.mock.calls[0]).toEqual(['job_run_start', { id: jobId, prompt: 'Tell me the title' }]);
+  expect(await jobCall('agent_run_status', jobId)).toEqual({ ok: false, message: 'Run information is not supported by this build.' });
+  mockIPC(() => Promise.reject('Connect the AI before running the job.'));
+  expect(await jobCall('job_run_start', jobId, 'Tell me the title')).toEqual({ ok: false, message: 'Connect the AI before running the job.' });
 });

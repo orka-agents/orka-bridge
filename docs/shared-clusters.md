@@ -134,6 +134,17 @@ the sign-in's existing named `create serviceaccounts/token` authority, and
 performs the normal identity, access and Orka reads. Discovery and forwarding
 rights belong to that sign-in, not the narrow ServiceAccount used for Orka.
 
+The token follows the expiry the cluster returns (Bridge asks for ten minutes).
+While Bridge stays open, it requests a new token for the same account through
+the same sign-in shortly before that expiry, and once more if Orka rejects the
+current one. Each renewal repeats Use's checks: the same recorded installation
+and watched namespace, the same account name, the same TokenReview username and
+UID in Orka, and the ten permissions as the new token alone. A renewal never
+switches accounts. When it cannot be made, the cluster shows as needing
+reconnecting until **Use this cluster** confirms it again. A bearer taken from
+the kubeconfig is never renewed by Bridge; when it expires or Orka rejects it,
+the cluster also needs reconnecting.
+
 Before sending an Orka credential, Bridge checks the selected Pod's controller
 ReplicaSet and that ReplicaSet's controller Deployment against the recorded
 Deployment UID. It repeats the checks around opening the forward and refuses
@@ -159,6 +170,48 @@ linked-Agent ownership blocks Send and separate-Agent recovery rather than
 adopting or duplicating the Agent; Bridge does not erase pending work. There is
 no automatic re-enrolment. A legacy remembered place remains stale and separate
 from a newly confirmed place until explicitly forgotten.
+
+### Conversations on a cluster
+
+Try a task and the Navigator run on the selected cluster once it is connected in
+this run and an AI connection is chosen for it. Each conversation creates, in the
+watched namespace, one `bridge-chat-agent-*` or `bridge-nav-agent-*` Agent on
+that AI connection, one `bridge-chat-task-*` or `bridge-nav-task-*` Task of
+`type: ai` per message, and one `bridge-chat-*` or `bridge-nav-*` Session. As
+with Send, Bridge recognises its own resources by these generated names and the
+UID each create acknowledged; it adds no labels. Through Orka it calls:
+
+| Request | Permission |
+|---|---|
+| `GET providers/{name}` (Navigator only, for the default model) | `get providers` |
+| `POST agents`, `GET agents/{name}` | `create`, `get` agents |
+| `POST tasks`, `GET tasks/{name}`, `/result`, `/events` | `create`, `get` tasks |
+| `GET sessions/{name}` | `get sessions` |
+| `DELETE tasks/{name}` (Stop, and replacing a conversation) | `delete tasks` |
+| `DELETE sessions/{name}`, `DELETE agents/{name}` (replacing a conversation) | `delete` sessions, agents |
+
+The creator role grants all of these. Send's run cancellation uses
+`update tasks/cancel`, which the creator role does not grant; conversations do
+not use it. A refused request names the permission it needed. A refused delete
+leaves the earlier conversation's resources on the cluster, and Bridge says so
+once. Quitting Bridge deletes nothing: the last conversation's Agent, Tasks and
+Session stay in the namespace.
+
+Each place keeps its own conversation, for Try a task and for the Navigator:
+this computer has one, and each cluster has one by its remembered place.
+Switching the selected place shows that place's conversation, or an empty one,
+and never continues or confirms another place's turns; nothing is deleted on a
+switch. A turn on a place that is no longer selected keeps running, and Stop
+reaches it when you return. A cluster conversation started on another AI
+connection is shown read-only until New conversation. Bridge keeps up to eight
+conversations while it is open; beyond that it drops the least recently used
+idle one, and a dropped cluster conversation's resources are deleted, or kept
+and said, exactly as New conversation would.
+
+The Navigator runs on this computer only when the installed workspace says it
+accepts the Navigator's `bridge-nav-*` names. A workspace from an earlier
+release does not, so Bridge sends it nothing and Home says the workspace is too
+old, offering a cluster connected in this run and Designer instead.
 
 ### Observer
 

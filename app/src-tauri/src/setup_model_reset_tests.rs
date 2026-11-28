@@ -38,7 +38,9 @@ fn mismatch_reset_deletes_only_recorded_slot_in_every_phase_without_guest_io() {
             let current = Uuid::new_v4();
             let (mut client, worker) = peer(Uuid::new_v4(), |_| panic!("mismatch contacted guest"));
             let error = setup
-                .connect_stored_model(current, &mut client, &vault, || panic!("recaptured"))
+                .connect_stored_model(current, Some("gpt-5.6-terra"), &mut client, &vault, || {
+                    panic!("recaptured")
+                })
                 .unwrap_err();
             assert_eq!(error.kind, "modelInstallationMismatch");
             let wire = serde_json::to_value(error).unwrap();
@@ -144,7 +146,9 @@ fn malformed_connection_identity_never_offers_mismatch_reset_or_touches_credenti
             panic!("malformed binding contacted guest")
         });
         let error = setup
-            .connect_stored_model(current, &mut client, &vault, || panic!("captured"))
+            .connect_stored_model(current, Some("gpt-5.6-terra"), &mut client, &vault, || {
+                panic!("captured")
+            })
             .unwrap_err();
         assert_eq!(error.kind, "modelUnavailable");
         assert!(error.recovery.is_none());

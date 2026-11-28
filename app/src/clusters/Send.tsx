@@ -8,15 +8,9 @@ import type { SelectedPlace } from './api';
 import type { SendStart } from './use-send-settlement';
 import { type AttemptSummary, type Cancellation, type SendCheck, type SendHistoryDetail, type SendStatus, sendCall, sendErrors, sendHistory, sendHistoryDetail, sendPreflight } from './send-api';
 import './clusters.css';
-import { CardSection, Details, Elapsed, GeneratedValue, LongCard, type Status, StatusIcon, StatusPill } from '../components/DesignSystem';
+import { Details, Elapsed, GeneratedValue, LongCard, type Status, StatusIcon, StatusPill } from '../components/DesignSystem';
 import { changedFiles, resultAnnouncement, TestProgress, TestResults } from '../components/TestResults';
 
-/** Opens the Send card; only the card's submit action owns the failed-test warning. */
-export function SendEntry({ blocked, onProceed }: { blocked?: string; onProceed: () => void }) {
-  return <div className="send-entry">
-    <Button type="button" kind="secondary" disabled={!!blocked} title={blocked} onClick={onProceed}>Send to a cluster</Button>
-  </div>;
-}
 const edge = 8;
 /** Non-modal platform popover placed with measured coordinates, so it overlays rather than moves the page. */
 function SendWarning({ anchor, test, onFix, onSend, onDismiss }: { anchor: HTMLElement; test: string; onFix: () => void; onSend: () => void; onDismiss: (focusAnchor: boolean) => void }) {
@@ -48,6 +42,8 @@ function SendWarning({ anchor, test, onFix, onSend, onDismiss }: { anchor: HTMLE
     </div>
   </div>;
 }
+// Fixed checks are named in words ("Access"); a tool's row is named by its id, so it reads as code.
+const toolRow = /^[a-z][a-z0-9_.-]*$/;
 const words = { passed: 'pass', failed: 'fail', unknown: 'unknown', cancelled: 'cancelled' } as const;
 const cancellationLabels = { cancelling: 'Cancelling tests', requested: 'Cancellation requested', confirmed: 'Tests cancelled', unconfirmed: 'Cancellation not confirmed', denied: 'Cannot cancel', unsupported: 'Cannot cancel' };
 function CancellationNotice({ cancellation, report }: { cancellation?: Cancellation | null; report: SendHistoryDetail['report'] }) {
@@ -150,7 +146,9 @@ function SavedSend({ attempt, revision, onChanged }: { attempt: AttemptSummary; 
     </Disclosure>
   </li>;
 }
-export function SendHistory({ revision, onChanged }: { revision: string; onChanged?: () => void }) {
+const historyLimits = 'Up to 256 Sends, 64 MiB total and 4 MiB per Send. Old terminal details are evicted first. Interrupted Sends are not resumed. Checking their status never sends tests again. Removing saved details changes only this computer, not the cluster. Removed or evicted answers may not be recoverable.';
+/** Beside a Send card, Past Sends appears once a Send has been saved, and its limits move into the Send card's Details. */
+export function SendHistory({ revision, onChanged, beside = false }: { revision: string; onChanged?: () => void; beside?: boolean }) {
   const [history, setHistory] = useState<AttemptSummary[]>();
   const [error, setError] = useState<string>();
   const [retry, setRetry] = useState(0);
@@ -161,18 +159,21 @@ export function SendHistory({ revision, onChanged }: { revision: string; onChang
     }, (failure: Error) => { if (mounted) setError(failure.message); });
     return () => { mounted = false; };
   }, [revision, retry]);
-  return <section className="send-history card" aria-label="Past Sends"><Disclosure label="Past Sends">
-    <p>Earlier Sends and their test results. An interrupted Send may still be running on the cluster.</p>
-    <Details hint="Saved results and limits"><p>Up to 256 Sends, 64 MiB total and 4 MiB per Send. Old terminal details are evicted first. Interrupted Sends are not resumed. Checking their status never sends tests again. Removing saved details changes only this computer, not the cluster. Removed or evicted answers may not be recoverable.</p></Details>
+  if (beside && !error && !history?.length) return null;
+  return <section className="send-history card" aria-labelledby="past-sends-title"><h3 id="past-sends-title">Past Sends</h3>
+    <p className="muted">Earlier Sends and their test results. An interrupted Send may still be running on the cluster.</p>
+    {!beside && <Details hint="Saved results and limits"><p>{historyLimits}</p></Details>}
     {error ? <><p role="alert">{error}</p><Button type="button" kind="secondary" onClick={() => setRetry(v => v + 1)}>Retry saved Sends</Button></>
       : history ? history.length ? <ol>{history.map(attempt => <SavedSend key={attempt.id} attempt={attempt} revision={revision} onChanged={onChanged} />)}</ol> : <p>No saved Sends yet.</p> : <p role="status">Reading saved Sends…</p>}
-  </Disclosure></section>;
+  </section>;
 }
-export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID, place, source, model, agentName, testCount, local, stale, blocked, onChooseCluster, onReloadSource, onSeeInOverview, onFixLocal, onFixInDesigner, startSend: startOwnedSend }: {
-  expanded?: boolean; documentId?: string; place: SelectedPlace; source?: SourceId; model?: string; agentName?: string; testCount?: number; local?: RunSnapshot; stale: boolean;
+export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, model, agentName, testCount, local, stale, blocked, onChooseCluster, onReloadSource, onSeeInOverview, onFixLocal, onFixInDesigner, onActivity, startSend: startOwnedSend }: {
+  documentId?: string; place: SelectedPlace; source?: SourceId; model?: string; agentName?: string; testCount?: number; local?: RunSnapshot; stale: boolean;
   blocked?: string; onChooseCluster?: () => void; onReloadSource?: () => Promise<void>; onFixInDesigner?: () => void;
   /** Opens Overview on the agent recorded for this native Send attempt. */
   onSeeInOverview?: (sendId: string) => void; onFixLocal?: (testId: string) => void;
+  /** True while this card holds a Send in progress or its result. */
+  onActivity?: (active: boolean) => void;
   startSend?: SendStart;
 }) {
   const [status, setSnapshot] = useState<SendStatus>();
@@ -233,7 +234,10 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
   const checked = checkingEnabled && check?.key === checkKey ? check : undefined;
   const matched = checked?.value && sameSource(source, checked.value.source) === true;
   const mismatched = checked?.value?.source != null && !matched;
-  const reason = blocked ?? (foreignBusy ? `${foreignBusy.name} is sending tests.` : undefined) ?? (!target || !provider ? 'Choose a cluster and AI connection in Clusters first'
+  const pending = place.kind === 'cluster' && !target ? place.pending : undefined;
+  const reason = blocked ?? (foreignBusy ? `${foreignBusy.name} is sending tests.` : undefined) ?? (!target || !provider ? pending
+    ? pending.unreachable ? `Can’t reach ${pending.name}. Check your network or VPN, then send.` : pending.key ? `${pending.name} needs reconnecting. Reconnect it in Clusters, then send.` : `Finish connecting ${pending.name} in Clusters, then send.`
+    : 'Choose a cluster and AI connection in Clusters first'
     : !agentHash || !testsHash ? 'Saved file versions are unavailable. Open your agent again before sending.'
     : !checked ? 'Checking this destination…' : checked.error ?? (mismatched ? 'Your saved files changed. Reload them to check this destination.'
     : !checked.value?.canSend ? 'Resolve the destination checks before sending.' : undefined));
@@ -300,15 +304,15 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
   const [resultState, pillWord]: [Status, string | undefined] = running || busy ? ['running', cancelling ? 'Cancelling tests' : 'Running tests']
     : outdated ? ['stale', !samePlace ? 'Earlier result' : unconfirmed ? 'Revision not confirmed' : 'Earlier files']
     : unhealthy ? ['needs-you', cancellationLabels[cancellation]]
-    : needsAttention ? ['needs-you', 'Needs attention']
+    : needsAttention ? ['needs-you', 'Needs you']
     : uncertain ? ['stale', 'Result unknown']
     : snapshot?.report?.verdict === 'passed' ? ['passed', 'Passed']
     : snapshot?.report?.verdict === 'failed' ? ['failed', 'Failed']
     : snapshot?.report?.verdict === 'cancelled' ? ['not-started', 'Cancelled']
-    : snapshot?.error ? needsAttention ? ['needs-you', 'Needs attention'] : ['failed', 'Failed']
+    : snapshot?.error ? needsAttention ? ['needs-you', 'Needs you'] : ['failed', 'Failed']
     : checkingEnabled && !checked ? ['running', 'Checking destination']
     : !target || !provider || !agentHash || !testsHash || blocked ? ['not-started', 'Not started']
-    : reason ? ['needs-you', 'Needs attention'] : ['passed', 'Ready to send'];
+    : reason ? ['needs-you', 'Needs you'] : ['passed', 'Ready to send'];
   const passedCount = snapshot?.report?.cases.filter(c => c.verdict === 'passed').length ?? 0;
   const headline = outdated ? 'Earlier result' : running || busy ? 'Tests on your cluster' : unhealthy ? (cancellation === 'requested' ? 'Waiting for the cluster' : 'Tests may still be running')
     : needsAttention ? 'Send needs attention' : uncertain ? 'Outcome not confirmed' : snapshot?.report?.verdict === 'cancelled' ? 'Tests cancelled on the cluster'
@@ -336,7 +340,7 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
   const passedChecks = rows.filter(row => row.status === 'allowed').length;
   const checkRows = (items: SendCheck['rows']) => <ul>{items.map(row => <li key={`${row.label}-${row.message}`} data-state={row.status}>
     <span className="preflight-state"><StatusIcon state={row.status === 'allowed' ? 'passed' : row.status === 'blocked' ? 'needs-you' : row.status === 'cannotCheck' ? 'needs-you' : 'not-started'} />{{ allowed: 'Ready', blocked: 'Blocked', cannotCheck: 'Can’t check', unverified: 'Unverified' }[row.status]}</span>
-    <div><b>{row.label}</b><p>{row.message}</p></div>
+    <div><b>{toolRow.test(row.label) ? <code className="code-chip">{row.label}</code> : row.label}</b><p>{row.message}</p></div>
   </li>)}</ul>;
   const refreshDestination = (kind: 'primary' | 'secondary') => mismatched ? <Button type="button" kind={kind} disabled={busy || running || !onReloadSource} onClick={() => {
     setReloadError(undefined);
@@ -344,91 +348,115 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
   }}>Reload saved files</Button> : <Button type="button" kind={kind} disabled={busy || running} onClick={() => setRefresh(v => v + 1)}>Check again</Button>;
   // Recovery takes precedence over navigation, even when an agent was created successfully.
   // Status/cancellation act on the recorded Send; a new Send still uses the selected destination.
-  const recovery = checkCancellation ? 'status' : mismatched ? 'reload' : !target || !provider ? 'choose' : checked && reason ? 'check' : undefined;
+  const recovery = checkCancellation ? 'status' : mismatched ? 'reload' : blocked && !snapshot ? 'blocked' : !target || !provider ? 'choose' : checked && reason ? 'check' : undefined;
   const passedResult = !outdated && snapshot?.report?.verdict === 'passed';
+  const cancelledResult = !outdated && !recovery && snapshot?.report?.verdict === 'cancelled';
   const fixResult = !outdated && !uncertain && !unhealthy && !snapshot?.error && snapshot?.report?.verdict === 'failed' && snapshot.report.cases.some(c => c.phase === 'Succeeded' && c.assertions.some(a => a.verdict === 'failed')) && onFixInDesigner;
   const sendButton = (kind: 'primary' | 'secondary') => <Button type="button" kind={kind} disabled={!!reason || busy || !!message} title={reason} onClick={event => startSend(event.currentTarget)}>{snapshot ? againLabel : sendLabel}</Button>;
-  const overviewButton = (kind: 'primary' | 'secondary') => seeOverview && snapshot && onSeeInOverview && <Button type="button" kind={kind} onClick={() => onSeeInOverview(snapshot.id)}>See in Overview</Button>;
+  const overviewButton = (kind: 'primary' | 'secondary' | 'quiet') => seeOverview && snapshot && onSeeInOverview && <Button type="button" kind={kind} onClick={() => onSeeInOverview(snapshot.id)}>See in Overview</Button>;
   const retryCancellation = retryCancel && <Button type="button" kind="secondary" disabled={busy} onClick={() => { void control('send_history_cancel'); }}>Retry cancellation</Button>;
+  const changeButton = target && <Button type="button" kind="quiet" disabled={busy || running || !onChooseCluster} title={busy || running ? 'Wait for this Send to finish before changing the destination.' : !onChooseCluster ? 'Change the destination in Clusters.' : undefined} onClick={onChooseCluster}>Change</Button>;
   const primaryAction = recovery === 'status' ? <Button type="button" kind="primary" disabled={busy} onClick={() => { void control('send_history_check'); }}>Check cluster status</Button>
-    : recovery === 'reload' || recovery === 'check' ? refreshDestination('primary')
-    : recovery === 'choose' ? <Button type="button" kind="primary" onClick={onChooseCluster} disabled={!onChooseCluster}>Choose a cluster</Button>
-    : fixResult ? <Button type="button" kind="primary" disabled={busy} onClick={onFixInDesigner}>Fix in Designer</Button>
-    : passedResult && seeOverview ? overviewButton('primary') : sendButton('primary');
-  const secondaryAction = recovery === 'status' ? retryCancellation : recovery ? overviewButton('secondary')
-    : fixResult || passedResult && seeOverview ? sendButton('secondary') : overviewButton('secondary');
+    : recovery === 'reload' ? refreshDestination('primary')
+    // A blocked destination keeps its Send action in view, disabled, with Check again beside it.
+    : recovery === 'check' ? sendButton('primary')
+    : recovery === 'blocked' ? <Button type="button" kind="primary" disabled title={blocked}>{target && provider ? sendLabel : 'Send to a cluster'}</Button>
+    : recovery === 'choose' ? <Button type="button" kind="secondary" onClick={onChooseCluster} disabled={!onChooseCluster}>Choose a cluster</Button>
+    // Rerunning comes first, as on every result; fixing the agent is the one primary action.
+    : fixResult ? <>{sendButton('secondary')}<Button type="button" kind="primary" disabled={busy} onClick={onFixInDesigner}>Fix in Designer</Button></>
+    // A passing result has nothing left to fix: running it again and seeing it in Overview are equal choices.
+    : passedResult && seeOverview ? sendButton('secondary') : sendButton('primary');
+  const secondaryAction = recovery === 'status' ? retryCancellation : recovery === 'check' ? refreshDestination('secondary') : recovery === 'blocked' ? undefined : recovery ? overviewButton('secondary')
+    : fixResult ? overviewButton('secondary') : passedResult && seeOverview ? overviewButton('secondary') : overviewButton(cancelledResult ? 'quiet' : 'secondary');
   // canSend means an attempt is permitted; advisory "unverified" rows (inference, create proof) stay with the collapsed checks.
   const destinationReady = !!checked?.value?.canSend && !mismatched;
   const readyToSend = destinationReady && !reason && !busy && !running && !message;
   const destinationModel = checked?.value?.model ?? model;
   const hasHappened = !!(foreignBusy || message || snapshot || controlCancelling);
-  // Only an unused local Send may be hidden. Keep all existing work and recovery visible.
-  const visible = expanded || !!target || !!snapshot || !!foreignBusy || busy || !!message;
-  return <>{visible && <h2 className="section-label">Team cluster</h2>}<section hidden={!visible} ref={panel} tabIndex={-1} className="send-panel card" aria-label="Send and cluster tests">
-    <LongCard title={target ? <>To <code>{target.context_name}</code></> : 'Send your agent'} status={<><StatusPill state={resultState}>{pillWord}</StatusPill><span className="status-description">{outdated ? unconfirmed ? undefined : 'Not run since your edit' : running || busy || !snapshot ? undefined : unhealthy ? undefined : uncertain ? snapshot.stage === 'stopped' && !cancellation ? 'Stopped watching' : undefined : undefined}</span></>} summary={snapshot && <>{targetName && <>{samePlace ? 'Result on ' : 'Earlier result on '}<code>{targetName}</code>. </>}{snapshot.model && <>Captured model: <code>{modelLabel(snapshot.model)}</code>.</>}</>}
-      action={<>
-        {target && <Button type="button" kind="quiet" disabled={busy || running || !onChooseCluster} title={busy || running ? 'Wait for this Send to finish before changing the destination.' : !onChooseCluster ? 'Change the destination in Clusters.' : undefined} onClick={onChooseCluster}>Change</Button>}
-        <div className="workspace-step-actions">{running ? <Button type="button" kind="secondary" disabled={busy || cancelling} onClick={() => { void mutate('send_cancel'); }}>Cancel tests</Button>
-          : <>{primaryAction}{secondaryAction}</>}
-      </div></>}>
+  const active = !!snapshot || busy || running;
+  useEffect(() => { onActivity?.(active); }, [active, onActivity]);
+  // The checks belong to the next Send: once a result is shown they fold away unless they block it.
+  const blockedByChecks = recovery === 'check' && checkingEnabled && !!checked && !destinationReady;
+  // After a result they move into Details, where advisory rows stay readable before a rerun.
+  const checksInline = !snapshot || outdated || blockedByChecks;
+  const checksDisclosure = checkingEnabled && !!checked && rows.length > 0 && <Disclosure className="send-checks send-preflight" label={`${readyToSend ? 'Ready to send: ' : ''}${passedChecks} check${passedChecks === 1 ? '' : 's'} passed`}>
+    {checkRows(destinationReady ? rows : rows.filter(row => row.status !== 'blocked' && row.status !== 'cannotCheck'))}
+    {reloadError && destinationReady && <p role="alert">{reloadError}</p>}
+  </Disclosure>;
+  const reasonHint = !checkingEnabled && reason && (blocked || !foreignBusy) && <p className="muted send-reason">{reason}</p>;
+  // A result keeps the selected destination in its title; an earlier one names its own place in the summary.
+  const resultName = target?.context_name ?? targetName;
+  const headlineTone = running || busy || outdated ? '' : snapshot?.report?.verdict === 'passed' ? ' send-headline-passed' : snapshot?.report?.verdict === 'failed' ? ' send-headline-failed' : '';
+  return <><h2 className="section-label">Team cluster</h2><section ref={panel} tabIndex={-1} className="send-panel card" aria-label="Send and cluster tests">
+    <LongCard title={snapshot && resultName ? <>To <code className="code-chip">{resultName}</code></> : 'Send your agent'} status={<><StatusPill state={resultState}>{pillWord}</StatusPill><span className="status-description">{outdated ? unconfirmed || !samePlace ? undefined : 'Not run since your edit' : running || busy || !snapshot ? undefined : unhealthy ? undefined : uncertain ? snapshot.stage === 'stopped' && !cancellation ? 'Stopped watching' : undefined : undefined}</span></>}
+      summary={snapshot && !samePlace && targetName && <>Earlier result on <code className="code-chip">{targetName}</code>.</>}
+      action={snapshot && changeButton}>
     {showWarning && failing && <SendWarning anchor={warning.anchor} test={failing.id}
       onFix={() => { setWarning(undefined); onFixLocal?.(failing.id); }}
       onSend={() => { setWarning(undefined); void mutate('send_start', warning.separate); }}
       onDismiss={focusAnchor => { setWarning(undefined); if (focusAnchor) warning.anchor.focus(); }} />}
    <p className="sr-only test-announcement" role="status" aria-live="polite" aria-atomic="true">{!running ? outdated ? revisionExplanation : cancellation && cancellation !== 'confirmed' ? `${cancellationLabels[cancellation]}.` : snapshot?.stage === 'stopped' && !cancellation ? 'Stopped watching.' : uncertain ? 'Test result unknown.' : resultAnnouncement(snapshot?.report) : undefined}</p>
-    {!checkingEnabled && reason && (blocked || !foreignBusy) && <p className="muted">{reason}</p>}
-    <CardSection title="What you send">
-    <p>{agentName ? <code>{agentName}</code> : 'Your saved agent'}{testCount !== undefined ? ` with ${testCount} test${testCount === 1 ? '' : 's'}` : ' and test files'}{provider && <>, {destinationModel ? modelLabel(destinationModel) : provider.name}{provider.ready ? ', checked when tests run' : ' · AI connection not ready'}</>}.{target && <> Into <code>{target.service_namespace}/{target.service_name}</code> on <code>{target.context_name}</code>, namespace <code>{target.watched_namespace}</code>.</>}</p>
-    </CardSection>
+    {recovery === 'choose' && reasonHint}
+    {!running && !busy && target && <p className="send-what">{agentName ? <code className="code-chip">{agentName}</code> : 'Your saved agent'}{testCount !== undefined ? ` with ${testCount} test${testCount === 1 ? '' : 's'}` : ' and test files'}{provider && <>, {destinationModel ? modelLabel(destinationModel) : provider.name}{provider.ready ? ', checked when tests run' : ' · AI connection not ready'}</>}.{target && <> Into <code className="code-chip">{target.service_namespace}/{target.service_name}</code> on <code className="code-chip">{target.context_name}</code>, namespace <code className="code-chip">{target.watched_namespace}</code>.</>}</p>}
+    {failing && !snapshot && <p className="send-local"><b>This computer</b> <span>Failed</span></p>}
     {checkingEnabled && !destinationReady && <section className="send-preflight" aria-label="Before Send" aria-busy={!checked}>
+      {failingChecks.length > 0 && <h4 className="section-label">Before Send</h4>}
       {checkRows(failingChecks)}
-      {reason && <p role={checked ? 'alert' : 'status'}>{reason}</p>}
+      {reason && !blockedByChecks && <p role={checked ? 'alert' : 'status'}>{reason}</p>}
       {!checked && <Elapsed />}
       {reloadError && <p role="alert">{reloadError}</p>}
     </section>}
-    {checkingEnabled && checked && rows.length > 0 && <Disclosure className="send-checks send-preflight" label={`${readyToSend ? 'Ready to send: ' : ''}${passedChecks} check${passedChecks === 1 ? '' : 's'} passed`} hint="Show checks">
-      {checkRows(destinationReady ? rows : rows.filter(row => row.status !== 'blocked' && row.status !== 'cannotCheck'))}
-      {reloadError && destinationReady && <p role="alert">{reloadError}</p>}
-    </Disclosure>}
-    {hasHappened && <CardSection title="What happened">
-    {snapshot && <h4>{headline}</h4>}
+    {checksInline && !blockedByChecks && checksDisclosure}
+    {hasHappened && <div className="send-result">
+    {snapshot && <h4 className={`send-headline${headlineTone}`}>{headline}</h4>}
     {foreignBusy && <p role="status">{foreignBusy.name} is sending tests.</p>}
     {message && <p role="alert">{message}</p>}
     {snapshot?.storageError && snapshot.error !== 'storage' && <p role="alert">Bridge could not save this Send. Its saved summary may be missing or unknown.</p>}
     {(running || controlCancelling) && <TestProgress stage={cancelling ? 'Cancelling tests…' : stages[snapshot!.stage]} />}
-    {snapshot?.agentAction && snapshot.agentAction !== 'unchanged' && snapshot.acknowledged.some(resource => resource.kind === 'Agent') && <p role="status">{{ create: 'Agent created on the cluster.', update: 'Agent updated on the cluster.' }[snapshot.agentAction]}</p>}
+    {!running && snapshot?.agentAction && snapshot.agentAction !== 'unchanged' && snapshot.acknowledged.some(resource => resource.kind === 'Agent') && <p role="status">{{ create: 'Agent created on the cluster.', update: 'Agent updated on the cluster.' }[snapshot.agentAction]}</p>}
     <CancellationNotice cancellation={cancelling ? 'cancelling' : cancellation} report={snapshot?.report ?? null} />
+    {snapshot?.report?.cases.some(c => c.verdict === 'cancelled') && <p className="muted">{cancellationDetails}</p>}
     {snapshot?.stage === 'stopped' && !cancellation && <p role="status">Stopped watching. The cluster may still be running checks.</p>}
     {snapshot?.error && snapshot.stage !== 'stopped' && !cancellation && <p role="alert">{sendErrors[snapshot.error as keyof typeof sendErrors]}</p>}
     {snapshot && !samePlace && <p role="status">This result belongs to another cluster or AI connection, not your current selection.</p>}
     {revisionExplanation && <p className="muted">{revisionExplanation}</p>}
     {outdated && uncertain && !snapshot?.report && <p>Earlier result unknown</p>}
-    <TestResults report={snapshot?.report} stale={outdated} />
-    </CardSection>}
-    <Details hint="Resources and file hashes">
-      <dl className="cluster-details"><div><dt>Source</dt><dd>Your saved agent and test files</dd></div>
-        <div><dt>This computer</dt><dd>{localEvidence}</dd></div>
-        {target && <div><dt>Destination</dt><dd><code>{target.context_name}</code> · <code>{target.watched_namespace}</code></dd></div>}
-      </dl>
+    <TestResults report={snapshot?.report} stale={outdated} collapsed />
+    </div>}
+    <div className="workspace-step-actions send-actions">{running ? <Button type="button" kind="secondary" disabled={busy || cancelling} onClick={() => { void mutate('send_cancel'); }}>Cancel tests</Button>
+      : <>{primaryAction}{secondaryAction}{!snapshot && recovery !== 'choose' && changeButton}</>}
+    </div>
+    {blockedByChecks && reason && <p className="muted send-reason" role="alert">{reason}</p>}
+    {recovery !== 'choose' && reasonHint}
+    {blockedByChecks && checksDisclosure}
+    {/* Open while tests run, where it explains what Cancel keeps and offers a separate agent. */}
+    <Details key={running ? 'running' : 'settled'} hint="How Send works, checks and file hashes" defaultOpen={running}>
+      {/* What a Send does and what Cancel keeps, then the other ways to send, then the checks, then the evidence. */}
+      <h5 className="section-label">How Send works</h5>
+      <p>Repeated Sends use the same linked agent, kept on the cluster even if a test fails. Sending requires permission to create an agent and run its tests. Updating a changed agent also requires permission to patch that agent; unchanged tests do not. Saved answers and test receipts remain in Past Sends on this computer, within its retention limits. Cancel tests requests cancellation of this Send's unfinished tests. It keeps the agent, tests and completed answers. Closing Bridge only ends watching.</p>
       {!running && <div className="workspace-step-actions">
-        {recovery && sendButton('secondary')}
-        {(recovery === 'status' || fixResult) && overviewButton('secondary')}
+        {recovery && recovery !== 'check' && recovery !== 'blocked' && sendButton('secondary')}
+        {recovery === 'status' && overviewButton('secondary')}
         {recovery !== 'choose' && (!target || !provider) && <Button type="button" kind="secondary" onClick={onChooseCluster} disabled={!onChooseCluster}>Choose a cluster</Button>}
         {canSeparate && <Button type="button" kind="secondary" disabled={busy} onClick={event => startSend(event.currentTarget, true)}>Send as a separate agent</Button>}
         {checkingEnabled && checked && recovery !== 'reload' && recovery !== 'check' && refreshDestination('secondary')}
       </div>}
       {!running && canSeparate && <p>Sends as a new agent; the old one keeps running.</p>}
-      {provider && <p>AI connection: <code>{provider.name}</code></p>}
-      {snapshot && <><dl className="cluster-details"><div><dt>Result destination</dt><dd>{targetName ?? 'Not confirmed'}</dd></div>
-      <div><dt>Model sent</dt><dd><code>{snapshot.model ?? 'Not captured'}</code></dd></div>
-    </dl>
-      {snapshot.agentName && <GeneratedValue label="Planned agent" value={snapshot.agentName} />}
+      {!checksInline && checksDisclosure}
+      <h5 className="section-label">Resources and file hashes</h5>
+      <dl className="cluster-details"><div><dt>Source</dt><dd>Your saved agent and test files</dd></div>
+        <div><dt>This computer</dt><dd>{localEvidence}</dd></div>
+        {target && <div><dt>Destination</dt><dd><code>{target.context_name}</code> · <code>{target.watched_namespace}</code></dd></div>}
+        {provider && <div><dt>AI connection</dt><dd><code>{provider.name}</code></dd></div>}
+        {snapshot && <><div><dt>Result destination</dt><dd>{targetName ?? 'Not confirmed'}</dd></div>
+          <div><dt>Model sent</dt><dd><code>{snapshot.model ?? 'Not captured'}</code></dd></div></>}
+      </dl>
+      {snapshot && <>{snapshot.agentName && <GeneratedValue label="Planned agent" value={snapshot.agentName} />}
       {snapshot.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Test file hash" value={snapshot.source.tests} /></>}
       {snapshot.acknowledged.map(r => <GeneratedValue key={`${r.kind}-${r.uid}`} label={r.kind} value={r.name} />)}
       {snapshot.pending && <GeneratedValue label={`Possibly created ${snapshot.pending.kind}`} value={snapshot.pending.name} />}</>}
-      <p>Repeated Sends use the same linked agent, kept on the cluster even if a test fails. Sending requires permission to create an agent and run its tests. Updating a changed agent also requires permission to patch that agent; unchanged tests do not. Saved answers and test receipts remain in Past Sends on this computer, within its retention limits. Cancel tests requests cancellation of this Send's unfinished tests. It keeps the agent, tests and completed answers. Closing Bridge only ends watching.
-        {snapshot?.report?.cases.some(c => c.verdict === 'cancelled') && <> {cancellationDetails}</>}</p>
+      <p>Past Sends keeps {historyLimits[0].toLowerCase()}{historyLimits.slice(1)}</p>
     </Details>
     </LongCard>
-  </section><SendHistory onChanged={() => setRefresh(value => value + 1)} revision={`${historyRevision}:${documentId}:${status?.busy?.documentId ?? ''}:${snapshot?.id ?? ''}:${snapshot?.state ?? ''}:${snapshot?.stage ?? ''}:${snapshot?.cancellation ?? ''}:${snapshot?.storageError ?? false}`} /></>;
+  </section><SendHistory beside onChanged={() => setRefresh(value => value + 1)} revision={`${historyRevision}:${documentId}:${status?.busy?.documentId ?? ''}:${snapshot?.id ?? ''}:${snapshot?.state ?? ''}:${snapshot?.stage ?? ''}:${snapshot?.cancellation ?? ''}:${snapshot?.storageError ?? false}`} /></>;
 }

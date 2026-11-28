@@ -67,32 +67,34 @@ test.each([
   } else expect(region.querySelector('.button-primary')).toBeNull();
 });
 
-test('four fixed steps contain one native file bar and expandable details', async () => {
+test('outside the guided run, a downloading workspace is one card with the native file bar and its details open', async () => {
   native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await screen.findByRole('heading', { name: 'This computer' });
-  expect(screen.getByText('Getting your workspace ready', { selector: 'p' })).toBeTruthy();
-  const steps = screen.getByRole('list', { name: 'Setup steps' });
-  expect(within(steps).getAllByRole('listitem')).toHaveLength(4);
-  expect(screen.getByText('Downloading, 1.2 of 3.0 GB')).toBeTruthy();
+  expect(screen.queryByText('Getting your workspace ready', { selector: 'p' })).toBeNull();
+  expect(screen.queryByRole('list', { name: 'Setup steps' })).toBeNull();
+  const card = screen.getByRole('region', { name: 'Workspace setup' });
+  expect(within(card).getByText('Getting ready', { selector: '.pill' })).toBeTruthy();
+  expect(screen.getByText('Installing cluster files, 1.2 of 3.0 GB')).toBeTruthy();
   const bar = screen.getByRole('progressbar');
   expect(screen.getAllByRole('progressbar')).toHaveLength(1);
   expect(Number(bar.getAttribute('aria-valuenow'))).toBe(40);
-  expect(bar.closest('li')).toBe(within(steps).getAllByRole('listitem')[1]);
+  expect(card.contains(bar)).toBe(true);
   expect(screen.getByRole('button', { name: 'Connect the AI' }).matches(':disabled')).toBe(false);
-  expect(screen.queryByText('Checking cluster files')).toBeNull();
-  await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.getByText('Checking cluster files')).toBeTruthy();
-  expect(screen.getByText('20 seconds installing files.')).toBeTruthy();
+  // Opened mid-install: native's time runs from the start of this run of setup, so that is what it says.
+  expect(screen.getByText('Setup has been running for 20 seconds.')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Hide details' }));
+  expect(screen.queryByText('Checking cluster files')).toBeNull();
 });
 
 test.each(['installing', 'starting'])('tab, footer and list agree on workspace step during %s', async state => {
   native(state); render(<App />); await openLocalSetup();
   expect(within(screen.getByRole('navigation')).getByText('Setting up, step 2 of 4')).toBeTruthy();
   expect(within(screen.getByRole('contentinfo')).getByText('Getting your workspace ready, step 2 of 4')).toBeTruthy();
-  expect(document.querySelector('.setup-progress [aria-current="step"] b')?.textContent).toBe('Get your workspace ready');
+  expect(document.querySelector('.setup-progress .pill')?.textContent).toBe(state === 'starting' ? 'Starting' : 'Getting ready');
   expect(document.querySelector('.setup-progress .pill')?.className).toBe('pill status-running');
   expect(screen.getByRole('button', { name: 'Connect the AI' }).hasAttribute('disabled')).toBe(false);
-  expect(screen.getByText('Pick any time')).toBeTruthy();
+  expect(screen.getByText('Choose now to connect automatically when the workspace is ready.')).toBeTruthy();
 });
 
 test('one setup stack stays independent of the AI and introduction stack', async () => {
@@ -102,6 +104,7 @@ test('one setup stack stays independent of the AI and introduction stack', async
   const model = await waitFor(() => {
     const heading = screen.getByRole('heading', { name: 'Connect the AI' });
     expect(heading.className).not.toContain('sr-only');
+    screen.getByRole('list', { name: 'Setup steps' });
     return heading.closest('section')!;
   });
   const steps = screen.getByRole('list', { name: 'Setup steps' });
@@ -124,12 +127,14 @@ test.each([12000, 95000])('startup stays indeterminate with observed elapsed tim
 
 test('unavailable progress never fabricates bytes or time left, and the bar stays indeterminate', async () => {
   native('installing', null); render(<App />); await openLocalSetup();
-  await screen.findByRole('list', { name: 'Setup steps' });
+  await screen.findByRole('region', { name: 'Workspace setup' });
   expect(screen.getByRole('progressbar').hasAttribute('aria-valuenow')).toBe(false);
   expect(screen.queryByText(/seconds left|minute left|of .*GiB/)).toBeNull();
 });
 
 test('readiness removes the bar without moving completed rows', async () => {
+  // The guided first run keeps one list of steps from start to readiness.
+  localStorage.setItem('bridge.firstRun.v1', 'active');
   const { ready } = native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 31000, remainingMs: null }); render(<App />); await openLocalSetup();
   await screen.findByRole('progressbar');
   const list = screen.getByRole('list', { name: 'Setup steps' });
@@ -143,21 +148,23 @@ test('readiness removes the bar without moving completed rows', async () => {
 
 test('startup details never reuse the previous file phase timing', async () => {
   native('starting', { phase: 'materializing', bytes: 100, totalBytes: 100, elapsedMs: 54000, remainingMs: 1000 });
-  const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(screen.getByRole('button', { name: 'Show details' }));
+  render(<App />); await openLocalSetup();
+  // On its own card the phases are open from the start.
+  expect(await screen.findByText('Starting the workspace', { selector: 'dt' })).toBeTruthy();
   expect(screen.queryByText(/54 seconds|second left|in this file step/)).toBeNull();
   expect(screen.getByRole('progressbar').hasAttribute('aria-valuenow')).toBe(false);
 });
 
 test('the active Clusters tab replaces the local setup header without workspace effects', async () => {
   const { ipc } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  expect(screen.queryByRole('button', { name: 'Back to clusters' })).toBeNull();
+  // Outside the guided run the workspace card page has the same way back as This computer.
+  expect(screen.getByRole('button', { name: 'Back to clusters' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Choose where agents run' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await screen.findByRole('region', { name: 'This computer' });
   expect(ipc.mock.calls.some(([cmd]) => ['setup_cancel_local', 'setup_change_local'].includes(cmd))).toBe(false);
   await openLocalSetup(user);
-  expect(screen.queryByRole('button', { name: 'Back to clusters' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Back to clusters' })).toBeTruthy();
 });
 
 test.each(['installing', 'ready'])('returning from Designer keeps the %s local view; active Clusters returns to Places', async phase => {
@@ -204,7 +211,8 @@ test('keyboard Cancel then start again calls native retry and keeps the Meet pan
 });
 
 test('Meet opens the owned example for editing without Run commands', async () => {
-  const { ipc } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
+  // Outside the guided run Meet waits beside a paused setup; while the workspace downloads it is two cards.
+  const { ipc } = native('cancelled'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   expect(await screen.findByRole('heading', { name: 'web-reader' })).toBeTruthy();
   expect(screen.getByText('Answers from the web page named in the request')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('Ready after setup')).toBeTruthy();
@@ -213,7 +221,10 @@ test('Meet opens the owned example for editing without Run commands', async () =
   expect(within(main).getByText('Fetch before answering.')).toBeTruthy();
   const run = within(main).getByRole('button', { name: 'Run tests' });
   expect(run.matches(':disabled')).toBe(true);
-  expect(run.title).toBe('Waiting for the workspace to start.');
+  // Its reason is the styled tip and the group's name: one tooltip, no native title over it.
+  expect(run.hasAttribute('title')).toBe(false);
+  expect(run.closest('[role="group"]')?.getAttribute('aria-label')).toBe('Run tests: Waiting for the workspace to start.');
+  expect(run.parentElement?.querySelector('.control-tip')?.textContent).toBe('Waiting for the workspace to start.');
   await user.click(within(main).getByRole('button', { name: 'File' }));
   const editor = screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
   expect(editor.readOnly).toBe(false); editor.focus(); await user.keyboard('{Control>}s{/Control}');
@@ -224,7 +235,7 @@ test('Meet opens the owned example for editing without Run commands', async () =
 
 test('unreadable setup status keeps owned editing but never admits Run or discovery', async () => {
   const { ipc, unreadable } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
+  await user.click(await screen.findByRole('button', { name: 'Designer' }));
   unreadable();
   await waitFor(() => expect(within(screen.getByRole('contentinfo')).getAllByText('Workspace unavailable').length).toBeGreaterThan(0));
   await user.click(screen.getByRole('button', { name: 'File' }));
@@ -235,7 +246,7 @@ test('unreadable setup status keeps owned editing but never admits Run or discov
 
 test('setup readiness does not reopen the already editable document', async () => {
   const { ipc, ready } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
+  await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByRole('textbox', { name: 'Instructions' });
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
   ready();
@@ -294,7 +305,7 @@ test('opening Designer while Continue awaits native admission opens editing but 
 });
 
 test('a failed example read is not presented as an endless load', async () => {
-  const { ipc } = native(); mockIPC(command => command === 'setup_example' ? Promise.reject('unavailable') : ipc(command)); render(<App />); await openLocalSetup();
+  const { ipc } = native('cancelled'); mockIPC(command => command === 'setup_example' ? Promise.reject('unavailable') : ipc(command)); render(<App />); await openLocalSetup();
   expect(await screen.findByText('The example could not be opened. Try opening Designer.')).toBeTruthy();
   expect(screen.queryByText('Opening the example\'s introduction…')).toBeNull();
 });
@@ -394,7 +405,9 @@ test('an observed unconfirmed stop retains the selected workspace without admitt
   render(<App />); await openLocalSetup();
   expect(await screen.findByRole('button', { name: 'Quit Bridge' })).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'This computer', level: 1 })).toBeTruthy();
-  expect(screen.queryByRole('button', { name: /Start|Restart workspace|Continue|Try again/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: /Start|Continue|Try again/ })).toBeNull();
+  // Restart stays in view, disabled, so the remedy reads as Quit Bridge first.
+  expect((screen.getByRole('button', { name: 'Restart workspace' }) as HTMLButtonElement).disabled).toBe(true);
   expect(ipc.mock.calls.some(([c]) => ['setup_select_local', 'setup_change_local'].includes(c))).toBe(false);
 });
 
@@ -414,7 +427,7 @@ test('an unreadable status makes the card unavailable instead of keeping the las
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(screen.getByRole('progressbar')).toBeTruthy();
   const card = () => within(screen.getByRole('region', { name: 'Workspace setup' }));
-  expect(card().getByText('Get your workspace ready').closest('li')?.getAttribute('aria-current')).toBe('step');
+  expect(card().getByText('Getting ready', { selector: '.pill' })).toBeTruthy();
   unreadable();
   await waitFor(() => expect(within(screen.getByRole('contentinfo')).getAllByText('Workspace unavailable').length).toBeGreaterThan(0), { timeout: 3000 });
   expect(screen.getByText('Workspace status is unavailable.', { selector: '.workspace-steps > [role="status"]' })).toBeTruthy();
@@ -422,16 +435,13 @@ test('an unreadable status makes the card unavailable instead of keeping the las
   expect(screen.queryByRole('progressbar')).toBeNull();
   expect(screen.queryByText(/Installing, 1.1 GiB/)).toBeNull();
   expect(card().getByText('Workspace status is unavailable.')).toBeTruthy();
-  const steps = screen.getByRole('list', { name: 'Setup steps' });
-  // The list is a last-known snapshot, not a live observation: nothing runs and no row is current.
-  expect(steps.querySelector('.step-current, [aria-current]')).toBeNull();
-  expect(within(steps).getAllByText(/^Last known: /)).toHaveLength(4);
+  // The card is a last-known snapshot, not a live observation: nothing runs.
+  expect(card().getByText('Status unavailable', { selector: '.pill' }).className).toContain('status-needs-you');
   expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toHaveLength(0);
   readable();
   await waitFor(() => expect(screen.getByRole('progressbar')).toBeTruthy(), { timeout: 3000 });
-  expect(card().getByText('Get your workspace ready').closest('li')?.getAttribute('aria-current')).toBe('step');
-  expect(within(steps).queryByText(/^Last known: /)).toBeNull();
+  expect(card().getByText('Getting ready', { selector: '.pill' })).toBeTruthy();
   expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toHaveLength(0);
 });

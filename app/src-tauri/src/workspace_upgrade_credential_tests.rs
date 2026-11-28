@@ -116,6 +116,7 @@ fn copilot_reuse_after_transfer_and_restore_reaches_guest_capability_before_load
         let error = setup
             .connect_stored_model(
                 installation,
+                Some("gpt-5.6-terra"),
                 &mut client,
                 &Vault(Mutex::new(vec![])),
                 || panic!("no recapture"),
@@ -281,6 +282,8 @@ fn definitive_failed_key_connect_cannot_auto_delete_a_retained_shared_slot() {
         nonce,
     )
     .unwrap();
+    // A guest whose build takes API keys.
+    client.allow_model_keys();
     let setup = SetupStore::with_upgrade_root(Some(s.data.clone()), Some(s.local.clone()));
     setup.select_local().unwrap();
     let error = setup

@@ -6,18 +6,19 @@ import { RelativeTime } from '../components/RelativeTime';
 import type { AgentRow, Card } from './model';
 
 export type CardActions = { localAiReason?: string; onOpen: (id: string, clusterKey?: string) => void; onChat?: (id: string) => void; onRun?: (id: string, clusterKey?: string) => void };
-function PlaceRow({ card, actions }: { card: Card; actions: CardActions }) {
+function PlaceRow({ card, actions, named = false }: { card: Card; actions: CardActions; named?: boolean }) {
   const [details, setDetails] = useState(false);
   const id = useId();
   const action = card.status === 'passed' ? card.actions.find(a => a.id === 'chat') ?? card.actions.find(a => a.id === 'run') : card.actions.find(a => a.id === 'run');
-  const label = action?.id === 'chat' ? 'Chat' : 'Run tests';
+  const label = action?.id === 'chat' ? 'New task' : 'Run tests';
+  const agent = named ? card.meta.agent : undefined;
   return <article className="overview-place" data-card-key={card.key} tabIndex={-1} aria-label={`${card.place}, ${card.pill ?? 'No recorded result'}`}>
     <div className="overview-place-head">
-      <span className={card.remote ? 'overview-mono' : undefined}>{card.place}</span>
+      <span className={card.remote ? 'overview-mono' : undefined}>{card.place}{agent && <code className="code-chip overview-place-agent" title="Name on the cluster">{agent}</code>}</span>
       {card.status ? <StatusPill state={card.status}>{card.pill}</StatusPill> : <span className="overview-note">No recorded result</span>}
       {card.meta.tests && <span className="overview-place-count">{card.meta.tests}</span>}
       {card.testedAt !== undefined && <span className="overview-time"><RelativeTime value={card.testedAt} /></span>}
-      {action && <Button size="small" disabled={!card.remote && !!actions.localAiReason} aria-describedby={!card.remote ? actions.localAiReason : undefined} aria-label={`${label} ${card.subject}${card.remote ? ` on ${card.place}` : ''}`} onClick={() => {
+      {action && <Button size="small" disabled={!card.remote && !!actions.localAiReason} aria-describedby={!card.remote ? actions.localAiReason : undefined} aria-label={`${action.id === 'chat' ? `${label} with` : label} ${card.subject}${card.remote ? ` on ${card.place}` : ''}`} onClick={() => {
         if (!card.documentId) return;
         if (action.id === 'chat') actions.onChat?.(card.documentId);
         else if (card.remote) actions.onRun?.(card.documentId, card.groupKey);
@@ -44,7 +45,7 @@ export function AgentListRow({ row, actions, reveal, onToggle }: { row: AgentRow
   return <article className="overview-agent" aria-label={row.title}>
     <header className="overview-agent-head">
       <h2 aria-label={row.title}><button type="button" className="overview-row-toggle" aria-label={`Show places for ${row.title}`} aria-describedby={`${id}-summary`} aria-expanded={expanded} aria-controls={id} onClick={toggle}>
-        <span className="overview-agent-identity"><svg className={`icon${expanded ? ' overview-chevron-open' : ''}`} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
+        <span className="overview-agent-identity"><svg className={`icon${expanded ? ' overview-chevron-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
           <span className="overview-agent-name"><span className="overview-agent-title">{row.title}</span><span className="overview-description">{row.description}</span></span>
         </span>
         <span className="overview-marks">{marks.map(card => <span key={card.groupKey} role="img" className="overview-mark" aria-label={`${card.place}: ${card.pill ?? 'No recorded result'}`} title={`${card.place}: ${card.pill ?? 'No recorded result'}`}>
@@ -58,6 +59,8 @@ export function AgentListRow({ row, actions, reveal, onToggle }: { row: AgentRow
         if (document.remote) actions.onOpen(document.documentId, document.groupKey); else actions.onOpen(document.documentId);
       }}>Open</Button> : <Button size="small" aria-label={`Details ${row.title}`} aria-expanded={expanded} aria-controls={id} onClick={toggle}>Details</Button>}
     </header>
-    {expanded && <div id={id} className="overview-places">{row.cards.map(card => <PlaceRow key={card.key} card={card} actions={actions} />)}</div>}
+    {expanded && <div id={id} className="overview-places">{row.cards.map(card => <PlaceRow key={card.key} card={card} actions={actions}
+      // Two Sends of this file to one place are told apart by the Agent each created there.
+      named={card.remote && row.cards.filter(other => other.groupKey === card.groupKey).length > 1} />)}</div>}
   </article>;
 }

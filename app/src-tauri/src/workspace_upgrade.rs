@@ -24,7 +24,7 @@ use tokio::sync::watch;
 
 #[path = "workspace_upgrade_retry.rs"]
 mod retry;
-const STORE: &str = "workspace-upgrades-v1";
+pub(crate) const STORE: &str = "workspace-upgrades-v1";
 type MetadataFiles<'a> = [(&'static str, &'a Option<Vec<u8>>); 2];
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -186,7 +186,7 @@ fn eligible_status(
         return Ok(UpgradeStatusDto::none());
     };
     let root = local.join("local-vm-v1");
-    if !root.try_exists()? {
+    if !root.try_exists()? || never_booted(&root)? {
         return Ok(UpgradeStatusDto::none());
     }
     let journal = Journal::open(&root)?;
@@ -214,6 +214,16 @@ fn eligible_status(
         can_replace: true,
         ..UpgradeStatusDto::none()
     })
+}
+/// A first install that never finished is not a workspace to update: no guest ever booted it, so
+/// it holds nothing to keep, and the launch starts it again from scratch. Before its first record
+/// it has no installation at all. A record that cannot be read is left to the update checks.
+fn never_booted(root: &Path) -> Result<bool, RuntimeError> {
+    let Some(bytes) = read_bytes(&root.join("record.json"), 32768)? else {
+        return Ok(true);
+    };
+    Ok(serde_json::from_slice::<InstallationRecord>(&bytes)
+        .is_ok_and(|record| record.phase != StatePhase::Consumed))
 }
 fn saved_credential_label(
     model: Option<&[u8]>,
@@ -1047,6 +1057,8 @@ impl WorkspaceUpgrade {
         space: impl FnOnce(&Dir) -> Result<u64, ImageError>,
     ) -> Result<UpgradeStatus, RuntimeError> {
         cancelled(closed)?;
+        // An unfinished fresh workspace owns local-vm-v1's name until it settles.
+        crate::workspace_fresh::admit(&self.local)?;
         let previous = self.read_intent()?;
         if let Some(intent) = &previous {
             if intent.phase != Phase::Restored
@@ -1281,6 +1293,7 @@ impl WorkspaceUpgrade {
         transaction: Uuid,
         point: impl Fn(&str) -> Result<(), RuntimeError>,
     ) -> Result<UpgradeStatus, RuntimeError> {
+        crate::workspace_fresh::admit(&self.local)?;
         self.reconcile_removed()?;
         let mut intent = self.read_intent()?.ok_or(RuntimeError::RetainedState)?;
         if intent.transaction != transaction || intent.phase == Phase::Restored {
@@ -1444,6 +1457,7 @@ pub(crate) fn validate_transaction(
     if transaction.is_nil() || !local.join(STORE).try_exists()? {
         return Err(RuntimeError::RetainedState);
     }
+    crate::workspace_fresh::admit(local)?;
     let owner = WorkspaceUpgrade::open(data, local)?;
     let intent = owner
         .read_intent()?
@@ -1473,7 +1487,17 @@ pub(crate) fn validate_transaction(
     }
     Ok(UpgradeStatus::SourceRetained)
 }
+/// Whether a workspace update has recorded a transaction. Its records name the workspace in
+/// `local-vm-v1`, so a fresh workspace must not replace that directory while they exist.
+pub(crate) fn has_transaction(data: &Path, local: &Path) -> Result<bool, RuntimeError> {
+    if !local.join(STORE).try_exists()? {
+        return Ok(false);
+    }
+    let owner = WorkspaceUpgrade::open(data, local)?;
+    Ok(!owner.intents()?.is_empty())
+}
 pub(crate) fn validate_new_replacement(data: &Path, local: &Path) -> Result<(), RuntimeError> {
+    crate::workspace_fresh::admit(local)?;
     if !local.join(STORE).try_exists()? {
         return Ok(());
     }
@@ -1531,6 +1555,7 @@ pub(crate) fn admit_prepared(
     }
     journal.verify_state()?;
     let local = root.parent().ok_or(RuntimeError::RetainedState)?;
+    crate::workspace_fresh::admit(local)?;
     if !local.join(STORE).try_exists()? {
         return Ok(());
     }
@@ -1542,6 +1567,8 @@ pub(crate) fn admit_prepared(
 }
 pub(crate) fn admit(data: &Path, root: &Path) -> Result<(), RuntimeError> {
     let local = root.parent().ok_or(RuntimeError::RetainedState)?;
+    // An unfinished fresh workspace must settle before any workspace is opened or created.
+    crate::workspace_fresh::admit(local)?;
     if !local.join(STORE).try_exists()? {
         return Ok(());
     }

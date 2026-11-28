@@ -13,7 +13,7 @@ test('AI recovery stays usable after observed failure and restart without claimi
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_status') return status();
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
     if (command === 'setup_select_local') { phase = 'ready'; return status(); }
     if (command === 'setup_connect_model') throw { kind: 'modelInstallationMismatch', recovery: {
       installation: '10000000-0000-4000-8000-000000000001', savedInstallation: '20000000-0000-4000-8000-000000000002', credentialSlot: '30000000-0000-4000-8000-000000000003',
@@ -44,7 +44,7 @@ test.each(['stay', 'navigate'])('AI recovery keeps reset completion visible afte
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
     if (command === 'setup_connect_model') throw { kind: 'modelInstallationMismatch', recovery: {
       installation: '10000000-0000-4000-8000-000000000001', savedInstallation: '20000000-0000-4000-8000-000000000002', credentialSlot: '30000000-0000-4000-8000-000000000003',
     } };
@@ -55,8 +55,10 @@ test.each(['stay', 'navigate'])('AI recovery keeps reset completion visible afte
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' })); // Places' navigation action
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(await screen.findByRole('heading', { level: 1, name: 'This computer' })).toBeTruthy();
-  expect(screen.getByText("The AI couldn't connect", { selector: 'p' })).toBeTruthy();
-  const row = screen.getByText('Connect the AI', { selector: 'li b' }).closest('li')!;
+  // The page keeps the stage's name; the saved connection's recovery is the AI card beside the steps.
+  expect(screen.getByText('Connect the AI', { selector: '.workspace-heading p' })).toBeTruthy();
+  const row = screen.getByRole('region', { name: 'Saved AI connection' });
+  expect(row.closest('.setup-side')).toBeTruthy();
   expect(within(row).getByRole('button', { name: 'Reset AI connection' })).toBeTruthy();
   expect(screen.getByText('Your workspace is ready on this computer.')).toBeTruthy();
   await user.click(within(row).getByRole('button', { name: 'Show details' }));

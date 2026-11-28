@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { useState, type ComponentProps } from 'react';
@@ -75,11 +75,10 @@ test('a failed local open keeps saved Send history accessible without the source
   });
   render(<Example />);
   await screen.findByRole('button', { name: 'Try opening again' });
-  const history = await screen.findByRole('button', { name: 'Past Sends' });
-  expect(history.getAttribute('aria-expanded')).toBe('false');
-  fireEvent.click(history);
-  expect(await screen.findByText('No saved Sends yet.')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Send to a cluster' }).hasAttribute('disabled')).toBe(true);
+  // Past Sends is an always-open card; with no agent open there is no Send card to act from.
+  const history = await screen.findByRole('region', { name: 'Past Sends' });
+  expect(await within(history).findByText('No saved Sends yet.')).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Send and cluster tests' })).toBeNull();
 });
 test('opening keeps a form-shaped skeleton until the owned document arrives', async () => {
   vi.stubGlobal('isTauri', true); let finish!: (value: unknown) => void;
@@ -96,22 +95,29 @@ test('opens the owned pair without a VM and exposes a keyboard File switch', asy
   native(); const user = userEvent.setup(); render(<Example />);
   expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
   expect(screen.getByText('Reads a page you name.', { selector: 'p' })).toBeTruthy();
-  expect(screen.getByText('Checks from disk')).toBeTruthy();
-  const chat = screen.getByRole('button', { name: 'Chat' });
+  // The read-only test file sits with the files, in File view's tests card.
+  expect(screen.queryByText('Checks from disk')).toBeNull();
+  const chat = screen.getByRole('button', { name: 'Try a task' });
   expect(chat.hasAttribute('disabled')).toBe(false);
   screen.getByRole('button', { name: 'File' }).focus(); await user.keyboard('{Enter}');
   expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).value).toBe(pair.agent);
+  await user.click(within(screen.getByRole('region', { name: 'This computer' })).getByText('Details'));
+  expect(screen.getByText('Checks from disk')).toBeTruthy();
+  // The file name keeps its real case; only the plain section labels are uppercased.
+  expect(screen.getByRole('heading', { name: 'web-reader.agent.md', level: 2 }).className).toBe('section-label file-name');
+  await user.click(screen.getByRole('button', { name: 'Agent' }));
+  expect(screen.getByRole('heading', { name: 'Instructions and settings', level: 2 }).className).toBe('section-label');
 });
-test('the editor leads and local tests sit above the Team cluster Send card, with history inside it', async () => {
+test('the editor leads and local tests sit above the Team cluster Send card, and Past Sends waits for a saved Send', async () => {
   native(); const user = userEvent.setup(); const { container } = render(<Example />);
   const run = await screen.findByRole('region', { name: 'Tests on this computer' });
   const editor = container.querySelector('.designer-file')!;
-  const history = screen.getByRole('region', { name: 'Past Sends' });
+  const send = screen.getByRole('region', { name: 'Send and cluster tests' });
   expect(editor.compareDocumentPosition(run) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(run.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(run.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(run.closest('.designer-tests')).toBeTruthy();
-  expect(history.closest('.designer-tests')).toBeNull();
-  expect(history.closest('.designer-checks')).toBeTruthy();
+  expect(send.closest('.designer-checks')).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Past Sends' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'File' }));
   expect(screen.getByRole('textbox', { name: 'Agent file' })).toBeTruthy();
   expect(screen.getByRole('region', { name: 'Tests on this computer' })).toBe(run);
@@ -126,8 +132,9 @@ test('setup-pending local tests stay disabled, and a selected cluster keeps both
   rerender(<Example remote />);
   expect(await screen.findByRole('region', { name: 'Tests on this computer' })).toBeTruthy();
   expect(screen.getByRole('region', { name: 'Team cluster' })).toBeTruthy();
-  expect(screen.getByRole('region', { name: 'Past Sends' }).closest('.designer-checks')).toBeTruthy();
-  expect(screen.getByText('Checks from disk').closest('.designer-tests')).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Past Sends' })).toBeNull();
+  // Ready to run, the tests card shows its rows; the read-only test file moves to File view.
+  expect(screen.queryByText('Checks from disk')).toBeNull();
 });
 test('does not claim Saved or allow Run before the commit reply', async () => {
   let finish!: (value: unknown) => void; let saved = '';
@@ -137,11 +144,11 @@ test('does not claim Saved or allow Run before the commit reply', async () => {
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'New instructions' } });
   fireEvent.blur(screen.getByRole('textbox'));
   await screen.findByText('Saving…');
-  expect(screen.queryByText('Saved')).toBeNull();
+  expect(screen.queryByText('Saved', { selector: 'output' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(true);
   expect(saved).toBe('New instructions');
   await act(async () => finish({ ...pair, agent: saved }));
-  await screen.findByText('Saved');
+  await screen.findByText('Saved', { selector: 'output' });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(false));
 });
 test('a newer draft survives a late save reply and is committed next', async () => {
@@ -154,7 +161,7 @@ test('a newer draft survives a late save reply and is committed next', async () 
   await screen.findByText('Saving…');
   fireEvent.change(editor, { target: { value: 'Latest draft' } });
   await act(async () => finish({ ...pair, agent: 'First draft' }));
-  await screen.findByText('Saved');
+  await screen.findByText('Saved', { selector: 'output' });
   expect(editor.value).toBe('Latest draft'); expect(writes).toEqual(['First draft', 'Latest draft']);
 });
 test('a failed commit retains the draft and retry saves the latest content', async () => {
@@ -164,10 +171,10 @@ test('a failed commit retains the draft and retry saves the latest content', asy
   await user.click(await screen.findByRole('button', { name: 'File' }));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Keep my draft' } }); fireEvent.blur(screen.getByRole('textbox'));
   expect(await screen.findByRole('alert')).toBeTruthy();
-  expect(document.body.textContent).not.toContain('private path'); expect(screen.queryByText('Saved')).toBeNull();
+  expect(document.body.textContent).not.toContain('private path'); expect(screen.queryByText('Saved', { selector: 'output' })).toBeNull();
   expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Keep my draft');
   fail = false; await user.click(screen.getByRole('button', { name: 'Try saving again' }));
-  await screen.findByText('Saved');
+  await screen.findByText('Saved', { selector: 'output' });
 });
 test('preserves CRLF files while editing and does not commit switching views', async () => {
   const crlf = { ...pair, agent: pair.agent.replaceAll('\n', '\r\n') }; const saves: string[] = [];
@@ -178,7 +185,7 @@ test('preserves CRLF files while editing and does not commit switching views', a
   await user.click(screen.getByRole('button', { name: 'Agent' })); expect(saves).toEqual([]);
   await user.click(screen.getByRole('button', { name: 'File' }));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Changed\ntext\n' } }); fireEvent.blur(screen.getByRole('textbox'));
-  await screen.findByText('Saved'); expect(saves).toEqual(['Changed\r\ntext\r\n']);
+  await screen.findByText('Saved', { selector: 'output' }); expect(saves).toEqual(['Changed\r\ntext\r\n']);
 });
 test('returning to the saved bytes clears dirty state without another commit', async () => {
   const writes: string[] = []; native(content => { writes.push(content); return { ...pair, agent: content }; });
@@ -186,7 +193,7 @@ test('returning to the saved bytes clears dirty state without another commit', a
   await user.click(await screen.findByRole('button', { name: 'File' }));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Temporary draft' } });
   fireEvent.change(screen.getByRole('textbox'), { target: { value: pair.agent } }); fireEvent.blur(screen.getByRole('textbox'));
-  await screen.findByText('Saved'); expect(writes).toEqual([]);
+  await screen.findByText('Saved', { selector: 'output' }); expect(writes).toEqual([]);
 });
 test.each([
   { older: false, autosave: false }, { older: true, autosave: false },
@@ -207,9 +214,9 @@ test.each([
   fireEvent.change(editor, { target: { value: 'Temporary draft' } });
   expect(screen.getByText('Not run since your edit')).toBeTruthy();
   expect(onStale).toHaveBeenLastCalledWith(true, pair.documentId);
-  if (autosave) { fireEvent.blur(editor); await screen.findByText('Saved'); }
+  if (autosave) { fireEvent.blur(editor); await screen.findByText('Saved', { selector: 'output' }); }
   fireEvent.change(editor, { target: { value: pair.agent } }); fireEvent.blur(editor);
-  await screen.findByText('Saved');
+  await screen.findByText('Saved', { selector: 'output' });
   await waitFor(() => expect(onStale).toHaveBeenLastCalledWith(false, pair.documentId));
   expect(screen.getByText(older ? 'Not run since your edit' : '1 of 1 passed')).toBeTruthy();
   expect(!!screen.queryByText(/Not run since your edit/)).toBe(older);
@@ -224,10 +231,10 @@ test('source-less replies keep an older verdict stale after undo to a newer save
   await screen.findByText('1 of 1 passed');
   const editor = screen.getByRole('textbox');
   fireEvent.change(editor, { target: { value: 'Saved newer file' } }); fireEvent.blur(editor);
-  await screen.findByText('Saved');
+  await screen.findByText('Saved', { selector: 'output' });
   fireEvent.change(editor, { target: { value: 'Temporary draft' } });
   fireEvent.change(editor, { target: { value: 'Saved newer file' } }); fireEvent.blur(editor);
-  await screen.findByText('Saved');
+  await screen.findByText('Saved', { selector: 'output' });
   expect(screen.getByText('Not run since your edit')).toBeTruthy();
   expect(screen.queryByText('1 of 1 passed')).toBeNull();
 });
@@ -243,7 +250,7 @@ test('a failed Run request does not make an earlier verdict current after editin
   const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: 'File' }));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'New draft' } }); fireEvent.blur(screen.getByRole('textbox'));
-  await screen.findByText('Saved');
+  await screen.findByText('Saved', { selector: 'output' });
   await user.click(screen.getByRole('button', { name: 'Run tests' }));
   // Status polling may replace the transient IPC error; the verdict must stay stale.
   expect(attempted).toBe(true);
@@ -259,7 +266,7 @@ test('an edit during a delayed Run reply keeps the earlier result stale', async 
   await user.click(await screen.findByRole('button', { name: 'File' }));
   await user.click(screen.getByRole('button', { name: 'Run tests' }));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Edited while submitting' } }); fireEvent.blur(screen.getByRole('textbox'));
-  await screen.findByText('Saved');
+  await screen.findByText('Saved', { selector: 'output' });
   await act(async () => finish(idle));
   expect(screen.getByText(/Not run since your edit/)).toBeTruthy();
 });
@@ -274,7 +281,7 @@ test('typing autosaves without leaving the field', async () => {
   native(); const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: 'File' }));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Autosaved instructions' } });
-  await screen.findByText('Saved');
+  await screen.findByText('Saved', { selector: 'output' });
   await user.click(screen.getByRole('button', { name: 'Agent' }));
   expect(screen.getByText('Autosaved instructions')).toBeTruthy();
 });

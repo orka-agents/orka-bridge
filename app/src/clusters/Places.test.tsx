@@ -20,7 +20,7 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 function native() {
   vi.stubGlobal('isTauri', true);
   const sim = { status: { selected: null as 'localVm' | null, localVm: 'idle', model: 'locked', modelSupported: true },
-    snapshot: { places: [primary, secondary] as Place[], selectedKey: primary.key as string | null, persistenceState: 'complete' }, unavailable: false };
+    snapshot: { places: [primary, secondary] as Place[], selectedKey: primary.key as string | null, persistenceState: 'complete', accessLost: false }, unavailable: false };
   const ipc = vi.fn((command: string): unknown => {
     if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return sim.status;
@@ -46,6 +46,14 @@ const row = (name: string) => screen.getByRole('region', { name });
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
+test('the place in use whose access can no longer authenticate needs reconnecting, not Ready', async () => {
+  const { sim } = native(); sim.snapshot = { ...sim.snapshot, places: [{ ...primary, stale: false }, secondary], accessLost: true };
+  render(<Host initial={connected} />);
+  const lost = await screen.findByRole('region', { name: 'team-dev' });
+  expect(within(lost).getByText('Needs reconnecting')).toBeTruthy();
+  expect(within(lost).queryByText('Ready')).toBeNull();
+  expect(within(lost).getByRole('button', { name: 'Reconnect' }).className).toContain('button-primary');
+});
 test('Places passively lists this computer and retained identities with truthful historical status', async () => {
   const { ipc } = native(); render(<Host initial={connected} />);
   await screen.findByRole('heading', { name: 'Clusters' });
@@ -81,9 +89,12 @@ test('a build without local VM integration explains unavailability rather than a
   const { sim } = native(); sim.status = { ...sim.status, selected: null, localVm: 'notIntegrated' };
   render(<Host />);
   const local = await screen.findByRole('region', { name: 'This computer' });
-  await within(local).findByText('Workspace unavailable');
+  await within(local).findByText('Not available on this build');
   expect(within(local).queryByText('The workspace runs here')).toBeNull();
-  expect(local.querySelector('.pill.status-needs-you')).toBeTruthy();
+  // Nothing waits on the creator here: not amber, and no setup to start.
+  expect(local.querySelector('.pill.status-not-started')?.textContent).toBe('Unavailable');
+  expect(within(local).queryByRole('button', { name: 'Set up' })).toBeNull();
+  expect(within(local).getByRole('button', { name: 'Details' }).classList.contains('button-primary')).toBe(false);
 });
 
 test('an unreadable workspace status stays unknown while retained places remain readable', async () => {
@@ -137,13 +148,14 @@ test('Add stays blank while remembered Connect resolves a fresh target without c
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_discover');
   await chooseContext(user, context.name);
   await screen.findByText('Cluster found');
-  expect(observe).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  // Browsing a context never replaces the place in use.
+  expect(observe).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Use' }));
-  await screen.findByRole('button', { name: 'Use this cluster' });
+  // The place in use is still in use, so its row manages it rather than connecting it again.
+  await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Manage' }));
+  expect(await screen.findByText('Access confirmed')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'kubectl context' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Change context' })).toBeTruthy();
-  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_reconnect')).toEqual([['cluster_reconnect', { key: primary.key }]]);
+  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_reconnect');
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_discover')).toHaveLength(1);
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
 });
@@ -161,6 +173,9 @@ test('Manage Change context focuses its selector after a delayed kubeconfig read
   const remove = screen.getByRole('button', { name: 'Remove' });
   remove.focus(); await user.keyboard('{Enter}');
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep cluster' }));
+  // Keeping is the safe, primary choice and comes first; removal is the outlined danger action after it.
+  const confirmActions = [...screen.getByRole('group', { name: 'Remove cluster confirmation' }).querySelectorAll('button')];
+  expect(confirmActions.map(button => [button.textContent, button.className])).toEqual([['Keep cluster', 'button button-primary'], ['Remove cluster', 'button button-secondary button-danger']]);
   await user.keyboard('{Enter}');
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove' }));
   await act(async () => contexts.resolve([context]));
@@ -252,7 +267,7 @@ test('a Use recheck clears the frontend target before native replies and Back ca
   await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Manage' }));
   await user.click(await screen.findByRole('button', { name: 'Show details' }));
   await user.click(await screen.findByRole('button', { name: 'Check access again' }));
-  expect(observe).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  expect(observe).toHaveBeenLastCalledWith({ kind: 'cluster', pending: { name: 'team-dev', key: primary.key } });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.queryByText('In use')).toBeNull();
   const calls = observe.mock.calls.length;
@@ -267,7 +282,6 @@ test('Back preserves a queued local Model and its one eventual connection while 
   await user.click(await screen.findByRole('button', { name: 'Clusters' }));
   await user.click(within(row('This computer')).getByRole('button', { name: 'Continue setup' }));
   expect(observe).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Change' }));
   await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect(observe).toHaveBeenLastCalledWith({ kind: 'thisComputer' });
   expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
@@ -291,7 +305,7 @@ test('hidden snapshot replies are fenced and returning to Clusters reads a new p
   const view = render(<Setup onOpenExample={() => {}} />);
   await waitFor(() => expect(reads).toBe(1));
   view.rerender(<Setup active={false} onOpenExample={() => {}} />);
-  await act(async () => pending.resolve({ places: [primary], selectedKey: primary.key, persistenceState: 'complete' }));
+  await act(async () => pending.resolve({ places: [primary], selectedKey: primary.key, persistenceState: 'complete', accessLost: false }));
   expect(screen.queryByRole('region', { name: 'team-dev' })).toBeNull();
   expect(reads).toBe(1);
   view.rerender(<Setup active onOpenExample={() => {}} />);
@@ -303,6 +317,8 @@ test('hidden snapshot replies are fenced and returning to Clusters reads a new p
 test('a known empty list promotes Set up, but a metadata failure does not imply emptiness', async () => {
   const { sim } = native(); sim.snapshot.places = []; sim.snapshot.selectedKey = null;
   const user = userEvent.setup(); render(<Host />);
+  // Nothing is set up, so Welcome comes first even though it was dismissed before.
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
   const setup = await screen.findByRole('button', { name: 'Set up' });
   await screen.findByText(/No other clusters added/);
   expect(setup.className).toContain('button-primary');
@@ -342,7 +358,8 @@ test('Manage refreshes confirmed agents and offers cancellable removal, finite f
   await user.click(await screen.findByRole('button', { name: 'Show details' }));
   await screen.findByRole('heading', { name: 'Agents on this cluster' });
   expect(await screen.findByText('reader')).toBeTruthy();
-  expect(screen.getByTitle(new Date(fresh.observedAt).toLocaleString())).toBeTruthy();
+  // The exact time is the timestamp's one hover tip.
+  expect(screen.getByText(new Date(fresh.observedAt).toLocaleString(), { selector: '.control-tip' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Change context' }));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'kubectl context' })));
   await user.click(screen.getByRole('button', { name: 'Remove' }));
@@ -355,7 +372,8 @@ test('Manage refreshes confirmed agents and offers cancellable removal, finite f
   await user.click(screen.getByRole('button', { name: 'Remove' }));
   await user.click(screen.getByRole('button', { name: 'Remove cluster' }));
   expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm removal");
-  expect(confirmation.contains(document.activeElement)).toBe(true);
+  // The confirmation reopens as a new group below Details.
+  expect(screen.getByRole('group', { name: 'Remove cluster confirmation' }).contains(document.activeElement)).toBe(true);
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep cluster' }));
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
   expect(observe).not.toHaveBeenCalled();
@@ -491,12 +509,12 @@ test('a remembered Manage entry remains removable when its passive metadata read
   expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy();
 });
 
-test('remembered reconnect revokes the old frontend target before native replies and Back fences its late result', async () => {
+test('checking another remembered cluster keeps the place in use and Back fences its late result', async () => {
   const { ipc } = native(); const old = ipc.getMockImplementation()!; const pending = deferred<unknown>();
   mockIPC(command => command === 'cluster_reconnect' ? pending.promise : old(command));
   const observe = vi.fn(); const user = userEvent.setup(); render(<Host initial={connected} observe={observe} />);
   await user.click(within(await screen.findByRole('region', { name: 'team-other' })).getByRole('button', { name: 'Check' }));
-  expect(observe).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  expect(observe).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await act(async () => pending.resolve(target));
   expect(screen.getByRole('heading', { name: 'Clusters' })).toBeTruthy();
@@ -573,4 +591,13 @@ test('observed row metadata states the agent count once without repeating the ch
   const remote = await screen.findByRole('region', { name: 'team-dev' });
   expect(within(remote).getByText('0 agents')).toBeTruthy();
   expect(within(remote).getByText(/^Checked/)).toBeTruthy();
+});
+
+test('one Orka added through two contexts is two places that say they are the same installation', async () => {
+  const { sim } = native();
+  sim.snapshot = { ...sim.snapshot, places: [{ ...primary, installation: 'one-orka' }, { ...secondary, installation: 'one-orka' }, { ...primary, key: 'third', context: 'elsewhere', installation: 'another-orka' }] };
+  render(<Host />);
+  expect(within(await screen.findByRole('region', { name: 'team-dev' })).getByText('Same Orka as', { exact: false }).textContent).toBe('Same Orka as team-other');
+  expect(within(row('team-other')).getByText('Same Orka as', { exact: false }).textContent).toBe('Same Orka as team-dev');
+  expect(within(row('elsewhere')).queryByText('Same Orka as', { exact: false })).toBeNull();
 });

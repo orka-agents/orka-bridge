@@ -27,15 +27,15 @@ function native(select: () => unknown = () => null, save: () => unknown = () => 
 }
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 
-test('Overview Chat and Open select the requested Designer view after guarded selection', async () => {
+test('Overview Try a task and Open select the requested Designer view after guarded selection', async () => {
   native(); const handled = vi.fn();
   const view = render(<Example documentId={a} actionRequest={{ id: 1, documentId: a, action: 'chat' }} onActionHandled={handled} />);
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Chat', pressed: true })).toBeTruthy());
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Try a task', pressed: true })).toBeTruthy());
   expect(handled).toHaveBeenCalledWith(1);
   view.rerender(<Example documentId={a} setupPending actionRequest={{ id: 2, documentId: a, action: 'open' }} onActionHandled={handled} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Agent', pressed: true })).toBeTruthy());
 });
-test.each(['Chat', 'File'])('Overview Run selects Agent view before starting from %s', async previous => {
+test.each(['Try a task', 'File'])('Overview Run selects Agent view before starting from %s', async previous => {
   const visibleViews: string[] = [];
   const ipc = native(undefined, undefined, () => { visibleViews.push(screen.getByRole('button', { name: 'Agent' }).getAttribute('aria-pressed') ?? ''); });
   const view = render(<Example documentId={a} />);

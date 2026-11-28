@@ -1,0 +1,172 @@
+.example-source { font-family: var(--font-mono); font-size: var(--size-small); line-height: 16px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+
+/* Page head: the agent's name in the object display style, its description under it, then the actions. */
+.designer-heading { gap: var(--space-4); align-items: flex-start; }
+.designer-heading .heading-actions { padding-top: var(--space-1); }
+.agent-heading-copy { min-width: 0; }
+.agent-heading-copy h1, .agent-heading-copy p { overflow-wrap: anywhere; }
+.agent-heading-copy h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
+.agent-heading-copy h1.agent-name { font: var(--type-display-object); letter-spacing: var(--tracking-display-section); }
+.agent-heading-copy p { margin-top: var(--space-2); max-width: 65ch; }
+.agent-selector { width: 170px; max-width: 100%; }
+/* Mono selects use the 500 13px mono of the boards' select, so a long model name still fits its 300px. */
+.agent-selector select { width: 100%; font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
+
+/* New agent: one 560px card under a page title. */
+.new-agent h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
+.new-agent-form { display: grid; gap: var(--space-2); max-width: 560px; margin-top: var(--space-5); padding: 20px 22px; }
+.new-agent-form > label, .new-agent-form legend { font: var(--type-part); }
+.new-agent-form > label { margin-bottom: calc(-1 * var(--space-1)); }
+.new-agent-form > input { width: 100%; height: 40px; padding-inline: var(--space-3); font: 500 15px/20px var(--font-mono); font-variant-ligatures: none; }
+.new-agent-form p { margin: 0; }
+/* One caption line is held for the name's error, so it appearing doesn't move the form. */
+.new-agent-error-slot { min-height: 16px; margin-top: calc(-1 * var(--space-1)); }
+.new-agent-form > .muted, .new-agent-form > p { font: var(--type-caption); color: var(--color-text-secondary); }
+.new-agent-form > [role="alert"] { font: var(--type-body); color: var(--color-status-failed); }
+.new-agent-form fieldset { border: 0; padding: 0; margin: var(--space-2) 0 0; }
+.new-agent-form fieldset label { display: flex; align-items: center; gap: var(--space-2-5); padding-top: var(--space-2); font-size: 15px; }
+.new-agent-form fieldset input[type="radio"] { width: 17px; height: 17px; margin: 0; accent-color: var(--color-text); }
+.new-agent-path { padding: var(--space-3); border-radius: var(--radius-control); background: var(--color-chrome); font-family: var(--font-mono); font-size: 0.92em; font-variant-ligatures: none; overflow-wrap: anywhere; }
+.new-agent-path ul { padding-left: var(--space-4); margin: var(--space-1) 0 0; list-style: none; }
+.new-agent-form .heading-actions { margin-top: var(--space-2); }
+
+/* Designer cards keep the boards' 16px inset, so a line of instructions wraps where the board does. */
+.designer-work .card { padding-inline: var(--space-4); }
+/* Two columns: the editor on the left, This computer above Team cluster on the right, each under its section label. */
+.designer-file, .designer-checks, .designer-tests { margin-top: var(--space-4); display: grid; gap: var(--space-3); }
+.designer > :is(.designer-file, .designer-checks) { max-width: 640px; }
+.designer-work { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); gap: var(--space-5); align-items: start; margin-top: var(--space-6); }
+/* One right-hand stack: This computer above Team cluster. Neither moves when the other's card grows. */
+.designer-side { grid-column: 2; grid-row: 1; min-width: 0; display: grid; gap: var(--space-4); }
+.designer-side > section > h2 { margin-bottom: var(--space-2); }
+.designer-work[hidden] { display: none; }
+/* Try a task takes the right-hand column; the instructions stay on the left so a change can be tried at once. */
+.designer-try { grid-column: 2; grid-row: 1; min-width: 0; display: grid; gap: var(--space-2); align-content: start; }
+.designer-side[hidden], .designer-try[hidden] { display: none; }
+.designer-work :is(.designer-file, .designer-tests, .designer-checks) { margin-top: 0; }
+.designer-editing { grid-column: 1; grid-row: 1; min-width: 0; display: grid; gap: var(--space-2); }
+.file-toolbar { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); min-height: 16px; }
+.file-toolbar h2 { overflow-wrap: anywhere; }
+/* A file name keeps its real case: it names a file on disk. */
+.section-label.file-name { text-transform: none; letter-spacing: normal; font-family: var(--font-mono); font-variant-ligatures: none; }
+.file-toolbar [role="status"] { font: var(--type-caption); }
+.designer-file p { max-width: 70ch; }
+.designer-file > .muted, .designer-file > div > .muted { font: var(--type-caption); }
+
+/* File view: the path in a well with its actions, the hint, then the editor. */
+.file-editor { position: relative; min-width: 0; background: var(--color-card); border-radius: var(--radius-control); }
+.agent-editor, .file-highlight { width: 100%; min-height: 23rem; padding: var(--space-3) var(--space-4) var(--space-3) 52px; border: var(--border-control) solid transparent; margin: 0; font: 400 12.5px/21px var(--font-mono); font-variant-ligatures: none; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-editor { position: relative; display: block; resize: none; overflow: hidden; border-color: var(--color-text); border-radius: var(--radius-control); background: transparent; color: transparent; caret-color: var(--color-text); }
+.agent-editor.file-plain { color: var(--color-text); }
+/* The file editor is an ink-edged field: focus recolours its edge as for .field (controls.css). */
+.agent-editor:focus-visible { outline: calc(var(--border-control) + 1px) solid var(--color-focus); outline-offset: calc(-1 * var(--border-control)); }
+:root[data-focus="pointer"] .agent-editor:focus-visible { outline: var(--border-editing) solid var(--color-text); outline-offset: calc(-1 * var(--border-control)); }
+.file-highlight { position: absolute; inset: 0; pointer-events: none; color: var(--color-text); }
+.file-line { display: block; position: relative; min-height: 21px; }
+.file-line::before { content: attr(data-line); position: absolute; right: calc(100% + 12px); width: 28px; text-align: right; color: var(--color-text-secondary); }
+.file-key { color: var(--color-text); }
+.file-delimiter { color: var(--color-text-secondary); }
+.file-comment { color: var(--color-text-secondary); }
+/* The path takes the line beside its actions down to 14rem, then the actions move under it; it never narrows to a
+   column of single characters. Feedback has its own full-width line, so its length moves nothing. */
+.file-location { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-width: 0; }
+.file-location > .agent-path, .file-location > p:first-child { flex: 1 1 14rem; min-width: 0; margin: 0; }
+.file-location > .agent-tool-row { flex: 0 0 auto; flex-wrap: nowrap; }
+.file-location > .file-location-feedback { flex: 1 0 100%; margin: 0; font: var(--type-caption); overflow-wrap: anywhere; }
+.file-location > .file-location-feedback:empty { display: none; }
+.skeleton-field { height: 40px; margin-block: 16px; border-radius: var(--radius-control); background: var(--color-hover); }
+.skeleton-prompt { height: 140px; }
+@media (forced-colors: active) { .file-highlight { display: none; } .agent-editor { color: CanvasText; background: Canvas; caret-color: auto; } }
+
+/* Agent view: each part is a bold label, an optional hint and its control. */
+.agent-parts { display: grid; gap: var(--space-4); }
+.agent-part { display: grid; gap: var(--space-2); min-width: 0; }
+.agent-part label, .agent-part h3 { font: var(--type-part); color: var(--color-text); margin: 0; }
+.agent-part p { margin: 0; }
+.agent-part > .muted, .agent-part > .agent-tool-row > .muted { font: var(--type-caption); }
+.instructions-editor, .description-editor, .tool-picker input { width: 100%; }
+.instructions-editor.field, .description-editor.field { padding: var(--space-3); line-height: 1.7; }
+.instructions-heading { display: grid; gap: var(--space-1); }
+.instructions-heading p { font: var(--type-caption); }
+.instructions-editor.field { min-height: 178px; resize: none; overflow: hidden; font: 400 14.5px/1.6 var(--font-ui); padding: var(--space-2-5) var(--space-3); }
+.description-editor.field { min-height: 5rem; resize: vertical; }
+.description-line.field { width: 100%; height: var(--height-control); }
+.agent-part > .alert { max-width: none; }
+.agent-tool-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.agent-part .model-select { width: 360px; max-width: 100%; font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
+/* Add a tool matches the 32px tool chips beside it. */
+.agent-tool-row > .button-small, .agent-tool-row > .coming-control > .button-small { min-height: 32px; height: 32px; }
+/* A tool is a well chip: its label, its id in mono and a remove button. */
+.tool-pill.chip { overflow-wrap: anywhere; min-width: 0; min-height: 32px; padding: 0 var(--space-1-5) 0 11px; gap: var(--space-2); border-radius: var(--radius-control); color: var(--color-text); font: var(--type-body); }
+.tool-pill > span:first-child { font-weight: 500; color: var(--color-text); }
+.tool-pill > .muted { font: var(--type-caption); }
+.tool-pill > .button-icon { width: 22px; height: 22px; min-height: 22px; }
+.tool-pill > .button-icon .icon { width: 12px; height: 12px; }
+.tool-pill.chip:not(:has(> .button-icon)) { padding-right: var(--space-2-5); }
+.tool-pill code { color: var(--color-text-secondary); font: 400 12px/16px var(--font-mono); font-variant-ligatures: none; overflow-wrap: anywhere; }
+.tool-picker code { color: var(--color-text-secondary); font-family: var(--font-mono); font-size: .92em; overflow-wrap: anywhere; }
+
+/* Tool picker: a card in the page under the tools, closed with its X, Escape, a choice or a press outside it. */
+.tool-picker { display: grid; gap: var(--space-1-5); max-height: min(440px, calc(100vh - 120px)); overflow: auto; border: var(--border-editing) solid var(--color-text); border-radius: var(--radius-control); padding: var(--space-3); background: var(--color-card); color: var(--color-text); box-shadow: var(--shadow-popover); }
+.tool-picker-title { font-weight: 700; }
+.tool-picker-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.tool-picker-head > .picker-close { margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-1)) calc(-1 * var(--space-1)) 0; }
+.tool-picker input { height: var(--height-control); }
+.tool-picker ul { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-0-5); }
+.tool-picker li button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); text-align: left; overflow-wrap: anywhere; padding: var(--space-2) var(--space-2-5); border: 0; border-radius: var(--radius-row); background: transparent; color: var(--color-text); font: inherit; }
+.tool-picker li button:not(:disabled):hover { background: var(--color-hover); }
+.tool-picker li button:disabled { background: var(--color-chrome); color: var(--color-text-tertiary); cursor: not-allowed; }
+.tool-picker li button:disabled :is(.muted, code, .tool-description) { color: inherit; }
+.tool-picker .tool-unavailable-reason { margin: var(--space-2) 0 var(--space-3); padding: var(--space-2-5) var(--space-3); border-radius: var(--radius-control); background: var(--color-tint-pending); color: var(--color-status-pending); font: var(--type-body); font-weight: 600; }
+.tool-option-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.tool-option-heading > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.tool-option-name { font-weight: 600; }
+.tool-option-heading > .muted { font: var(--type-label); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.tool-picker .tool-description { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+
+.soul-reference-field { display: grid; gap: var(--space-2); }
+.soul-reference-field input { width: 100%; font: 400 13px/18px var(--font-mono); }
+.agent-parts .control-tip { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; }
+.agent-settings .agent-part { margin-top: var(--space-4); }
+.agent-settings .coming-control { display: block; }
+.agent-path { display: block; min-width: 0; padding: var(--space-1-5) var(--space-2); border-radius: var(--radius-small); background: var(--color-chrome); overflow-wrap: anywhere; font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
+.save-error { display: grid; justify-items: start; gap: var(--space-2); }
+.save-error-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.save-error-actions > .save-state { font: 500 12px/16px var(--font-mono); color: var(--color-text-secondary); }
+.save-error > .alert { justify-self: stretch; max-width: none; }
+
+/* This computer: the tests card is the strong card while it holds the next action. */
+.designer-tests > .card:has(.button-primary) { border: var(--border-control) solid var(--color-text); }
+.designer-tests > .card > div:not(.test-results) { display: grid; gap: var(--space-3); }
+.designer-tests > .card > div:not(.test-results) > .heading-actions { margin: 0; }
+.check-source { border-top: 1px solid var(--color-border); padding-top: var(--space-3); }
+.check-source pre { margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-control); background: var(--color-chrome); }
+.designer-tests h3 { font: var(--type-card); margin: 0; }
+/* Tests on this computer: the head, the model line, then one row per test. */
+.designer-tests .example-run .long-card-summary { margin-top: var(--space-2); }
+.designer-tests .run-body { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+.designer-tests .run-body > :is(p, .alert) { margin: 0; }
+.designer-tests .run-body .test-results { border-top: 1px solid var(--color-border-strong); }
+.designer-tests .run-body .card-details { margin-top: 0; padding-top: var(--space-2); }
+.designer-tests .example-run .test-result:first-child { border-top: 0; }
+/* After an edit: what changed, then Run tests with the save state beside it. */
+.designer-tests .run-body > .workspace-step-actions { margin: 0; align-items: center; }
+.designer-tests .workspace-step-actions > .save-state { font: 500 12px/16px var(--font-mono); color: var(--color-text-secondary); }
+.designer-tests .long-card-action > .workspace-step-actions { margin-top: 0; }
+.designer-tests .example-run > p { margin-top: var(--space-2); max-width: 70ch; }
+.designer-tests .example-run .alert { margin-block: var(--space-2); }
+.designer-tests .test-file-source { display: grid; gap: var(--space-2); }
+.designer-tests .test-file-source pre { padding: var(--space-2-5) var(--space-3); border-radius: var(--radius-control); background: var(--color-chrome); font: 400 12px/1.6 var(--font-mono); }
+.designer-tests .test-next-step { display: grid; justify-items: start; gap: var(--space-2); padding-block: var(--space-2); }
+.designer-tests .test-next-step p { margin: 0; }
+
+@media (max-width: 820px) {
+  .designer-work { grid-template-columns: minmax(0, 1fr); }
+  .designer-side, .designer-editing, .designer-try { grid-column: auto; grid-row: auto; }
+  /* The composer holds the next action, so it comes first in one column. */
+  .designer-try { order: -1; }
+}
+@media (max-width: 1000px) {
+  .designer-heading { flex-wrap: wrap; }
+  .designer-heading .heading-actions { margin-left: 0; flex-wrap: wrap; padding-top: 0; }
+}

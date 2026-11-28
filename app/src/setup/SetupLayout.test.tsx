@@ -8,27 +8,56 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri }));
 beforeEach(() => { invoke.mockReset(); isTauri.mockReturnValue(true); localStorage.setItem('bridge.welcomeSeen.v1', '1'); });
 afterEach(() => { cleanup(); localStorage.clear(); });
 
-test('download shows Meet beside progress and the AI choice inside step 3, with one Cancel', async () => {
+test('a downloading workspace shows the AI card beside its one card, with one Cancel and no Meet outside the guided run', async () => {
   invoke.mockImplementation(async (command: string) => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'installing', model: 'locked', modelSupported: true };
     if (command === 'setup_example') return { agent: '---\nname: web-reader\ndescription: Reads a page\n---\nFetch a page.', tests: '' };
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [], persistenceState: 'complete', selectedKey: null };
+    if (command === 'cluster_places') return { places: [], persistenceState: 'complete', accessLost: false, selectedKey: null };
     throw Error(command);
   });
-  render(<Setup onOpenExample={() => {}} />);
-  const steps = await screen.findByRole('list', { name: 'Setup steps' });
-  const ai = within(steps).getByRole('button', { name: 'Change' });
-  expect(ai.closest('li')?.textContent).toContain('Connect the AI');
-  expect(screen.getByText('Meet your first agent').closest('.setup-side')?.querySelectorAll('section.card')).toHaveLength(1);
+  const openExample = vi.fn();
+  render(<Setup onOpenExample={openExample} />);
+  const workspace = await screen.findByRole('region', { name: 'Workspace setup' });
+  expect(screen.queryByRole('list', { name: 'Setup steps' })).toBeNull();
+  // Without Meet, the example's introduction is one quiet click away in the Workspace card.
+  const see = within(workspace).getByRole('button', { name: 'See your first agent' });
+  expect(see.className).toContain('button-quiet');
+  fireEvent.click(see);
+  expect(openExample).toHaveBeenCalledTimes(1);
+  const ai = (await screen.findByRole('heading', { name: 'Connect the AI' })).closest('section')!;
+  expect(ai.closest('.setup-side')).toBeTruthy();
+  expect(workspace.closest('.setup-main')).toBeTruthy();
+  expect(screen.queryByText('Meet your first agent')).toBeNull();
   expect(screen.getAllByRole('button', { name: /^Cancel$/ })).toHaveLength(1);
-  expect(screen.queryByRole('radio')).toBeNull();
-  fireEvent.click(ai);
-  expect(within(steps).getByRole('radio', { name: 'GitHub Copilot' })).toBeTruthy();
-  fireEvent.click(within(steps).getByRole('button', { name: 'Connect the AI' }));
-  expect(screen.queryByRole('radio')).toBeNull();
-  expect(screen.getAllByRole('button', { name: /^Cancel$/ })).toHaveLength(1);
+  expect(within(ai).getByRole('radio', { name: 'GitHub Copilot' })).toBeTruthy();
+  fireEvent.click(within(ai).getByRole('button', { name: 'Connect the AI' }));
+  expect(within(ai).queryByRole('radio')).toBeNull();
+  expect(within(ai).getByText('Queued', { selector: '.pill' })).toBeTruthy();
+  expect(within(ai).getByRole('button', { name: 'Cancel queued connection' })).toBeTruthy();
   expect(invoke.mock.calls.some(([cmd]) => cmd === 'setup_connect_model')).toBe(false);
+});
+
+test('in the guided first run, the download shows the compact AI card above Meet beside the steps, with one Cancel', async () => {
+  invoke.mockImplementation(async (command: string) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'installing', model: 'locked', modelSupported: true };
+    if (command === 'setup_example') return { agent: '---\nname: web-reader\ndescription: Reads a page\n---\nFetch a page.', tests: '' };
+    if (command === 'setup_requirements') return null;
+    if (command === 'cluster_places') return { places: [], persistenceState: 'complete', accessLost: false, selectedKey: null };
+    throw Error(command);
+  });
+  render(<Setup guided onOpenExample={() => {}} />);
+  const steps = await screen.findByRole('list', { name: 'Setup steps' });
+  const change = await screen.findByRole('button', { name: 'Change' });
+  const card = change.closest('.setup-model')!;
+  expect(card.closest('.setup-side')).toBeTruthy();
+  expect(steps.contains(change)).toBe(false);
+  const meet = screen.getByText('Meet your first agent').closest('section')!;
+  expect(card.compareDocumentPosition(meet) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getAllByRole('button', { name: /^Cancel$/ })).toHaveLength(1);
+  expect(screen.queryByRole('radio')).toBeNull();
+  fireEvent.click(change);
+  expect(within(card as HTMLElement).getByRole('radio', { name: 'GitHub Copilot' })).toBeTruthy();
 });
 
 test('connected card exposes only Change, and Escape closes its panel without removing sign-in', async () => {
@@ -59,7 +88,7 @@ test('readiness keeps keyboard focus with a queued choice when its card moves ou
   view.rerender(<Model enabled inline={false} choiceTarget={target} />);
   await act(async () => {});
   expect(document.activeElement?.closest('.setup-model')).toBeTruthy();
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([['setup_connect_model']]);
   await act(async () => finish({ ready: true }));
   expect(document.activeElement).toBe(screen.getByText('Connected').closest('[role="status"]'));
   view.unmount(); target.remove();
@@ -75,14 +104,14 @@ test('a queued inline choice can be revoked without stopping the workspace or co
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Change' }));
   view.rerender(<Model enabled />);
   await act(async () => {});
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([]);
 });
 
 test('the collapsed queued summary is a persistent live acknowledgement', () => {
   render(<Model enabled={false} queueable inline />);
   fireEvent.click(screen.getByRole('button', { name: 'Change' }));
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
-  const summary = screen.getByText('GitHub Copilot, connects when the workspace is ready');
+  const summary = screen.getByText((_, node) => node?.getAttribute('role') === 'status' && node.textContent === 'GitHub Copilot, connects when the workspace is ready');
   expect(summary.getAttribute('role')).toBe('status');
   expect(summary.closest('[hidden]')).toBeNull();
 });

@@ -154,7 +154,8 @@ test('CLI recovery puts retry before copy and quiet help in one action row', asy
   const buttons = [...row.querySelectorAll('button')];
   expect(buttons.map(button => button.textContent)).toEqual(['Check again', 'Copy details for help', 'Install GitHub CLI', 'Sign-in help']);
   expect(row.querySelectorAll('.button-primary')).toHaveLength(1);
-  expect(row.querySelectorAll('.button-secondary')).toHaveLength(1);
+  expect(row.querySelectorAll('.button-secondary')).toHaveLength(0);
+  expect(screen.getByRole('button', { name: 'Copy details for help' }).classList.contains('button-quiet')).toBe(true);
   expect(screen.getByRole('button', { name: 'Install GitHub CLI' }).classList.contains('button-quiet')).toBe(true);
   expect(screen.getByRole('button', { name: 'Sign-in help' }).classList.contains('button-quiet')).toBe(true);
 });
@@ -225,7 +226,10 @@ test('failed CLI recovery offers install and sign-in help and explicitly reconne
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   const alert = await screen.findByRole('alert');
   expect(alert.textContent).toContain('gh auth login --hostname github.com --web');
-  expect(alert.textContent).toContain('Your workspace and agent files are kept');
+  expect(alert.textContent).toContain("Bridge couldn't find GitHub CLI on this computer.");
+  // No sign-in was read, so none can have been saved.
+  expect(alert.textContent).toContain('Nothing was sent to your workspace.');
+  expect(alert.textContent).not.toContain('A sign-in may already have been saved.');
   expect(screen.getByRole('button', { name: 'Install GitHub CLI' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Sign-in help' })).toBeTruthy();
   expect(alert.textContent).not.toContain('SECRET');
@@ -236,8 +240,20 @@ test('failed CLI recovery offers install and sign-in help and explicitly reconne
   await screen.findByText(/^Connected$/);
   expect(invoke.mock.calls.filter(([command]) => command === 'setup_connect_model')).toHaveLength(2);
 });
-test('reading sign-in errors show the status command without copying diagnostics', async () => {
-  invoke.mockRejectedValue({ kind: 'modelCaptureFailed', message: 'SECRET', diagnostic: 'SECRET' });
+test('GitHub CLI that is installed but signed out is told apart from GitHub CLI not found', async () => {
+  invoke.mockRejectedValue({ kind: 'modelCaptureFailed', message: 'SECRET' });
+  render(<Model enabled />); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain("GitHub CLI isn't signed in to github.com, or Bridge couldn't read its sign-in.");
+  expect(alert.textContent).toContain('Sign in to github.com with GitHub CLI in your terminal, then press Check again:');
+  expect(alert.textContent).toContain('gh auth login --hostname github.com --web');
+  expect(alert.textContent).not.toMatch(/Install GitHub CLI|couldn't find GitHub CLI/);
+  expect(screen.queryByRole('button', { name: 'Install GitHub CLI' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Sign-in help' })).toBeTruthy();
+  expect(alert.textContent).toContain('Nothing was sent to your workspace.');
+});
+test('a sign-in Bridge read but could not use shows the status command without copying diagnostics', async () => {
+  invoke.mockRejectedValue({ kind: 'modelCaptureInvalid', message: 'SECRET', diagnostic: 'SECRET' });
   render(<Model enabled />); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect((await screen.findByRole('alert')).textContent).toContain('gh auth status --hostname github.com');
   expect(screen.getByRole('button', { name: 'Copy details for help' })).toBeTruthy();
@@ -290,17 +306,18 @@ test('preview and malformed responses cannot claim ready', async () => {
 });
 
 // Queued intent: in-memory consent to connect once Orka is ready. Credentials are untouched before then.
-test('a choice while the workspace is starting is queued without any credential command', () => {
+test('a choice while the workspace is starting is queued after a check on this computer only', async () => {
   const onState = vi.fn();
   render(<Model enabled={false} queueable onState={onState} />);
   expect(screen.getByRole('heading', { name: 'Connect the AI' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
-  expect(invoke).not.toHaveBeenCalled();
+  // Only the host-side check: no connect, delivery or other credential command reaches the workspace.
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(['setup_check_model']);
   expect(screen.getByText('Queued').closest('button')).toBeNull();
   expect(screen.getByText(/connects when the workspace is ready/i)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
-  expect(onState).toHaveBeenLastCalledWith('queued');
+  await waitFor(() => expect(onState).toHaveBeenLastCalledWith('queued'));
 });
 
 test('queued intent connects exactly once when the model becomes available, without another click', async () => {
@@ -320,14 +337,15 @@ test('queued intent survives the readiness transition and fires only once unpaus
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   // Ready but locked (not yet available): hold, neither fire nor clear.
   view.rerender(<Model enabled={false} queueable={false} />);
-  expect(invoke).not.toHaveBeenCalled();
+  // Only the host-side check ran while waiting.
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([]);
   expect(screen.getByText('Queued')).toBeTruthy();
   // Available but an unreadable observation or mutation pauses: hold.
   view.rerender(<Model enabled paused />);
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([]);
   view.rerender(<Model enabled paused={false} />);
   await screen.findByText(/^Connected$/);
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([['setup_connect_model']]);
 });
 
 test('a locked model that is not queueable offers no queue', () => {
@@ -342,14 +360,14 @@ test('cluster selection and cancelling clear intent so readiness needs fresh con
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   view.rerender(<Model enabled={false} queueable away />);
   view.rerender(<Model enabled queueable={false} away={false} />);
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([]);
   expect(screen.getByRole('button', { name: 'Connect the AI' })).toBeTruthy();
   view.rerender(<Model enabled={false} queueable />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   fireEvent.click(screen.getByRole('button', { name: 'Cancel queued connection' }));
   expect(screen.queryByText('Queued')).toBeNull();
   view.rerender(<Model enabled />);
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.filter(([command]) => command !== 'setup_check_model')).toEqual([]);
 });
 
 test('a failed queued connection is not retried automatically', async () => {
@@ -482,4 +500,29 @@ test('a hidden Model never takes focus when its queued connection starts', async
   view.rerender(withNeighbour({ enabled: true, queueable: true }, true));
   await screen.findByText('Connecting the AI…');
   expect(focus).not.toHaveBeenCalled();
+});
+
+test('a route keeps its own errors: changing route clears the help notice and the Copilot failure', async () => {
+  invoke.mockImplementation(async (command: string) => { if (command === 'setup_open_help') throw Error('no browser'); throw { kind: 'modelCaptureFailed' }; });
+  const user = userEvent.setup();
+  render(<Model enabled />);
+  await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Sign-in help' }));
+  expect(screen.getByText("Couldn't open help. Go to cli.github.com for installation and sign-in instructions.")).toBeTruthy();
+  await user.click(screen.getByRole('radio', { name: /Your own API key/ }));
+  expect(screen.queryByText(/Couldn't open help/)).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+test('on the setup card, Choose another provider leaves the Copilot failure behind', async () => {
+  invoke.mockImplementation(async (command: string) => { if (command === 'setup_open_help') throw Error('no browser'); throw { kind: 'modelCaptureFailed' }; });
+  const user = userEvent.setup();
+  render(<Model enabled setupCard />);
+  await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Sign-in help' }));
+  expect(screen.getByText(/Couldn't open help/)).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Choose another provider' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByText(/Couldn't open help/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+  expect(screen.getByRole('radio', { name: /Your own API key/ })).toBeTruthy();
 });

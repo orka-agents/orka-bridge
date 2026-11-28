@@ -1,0 +1,86 @@
+/* Guided first run: the title bar holds the setup steps, and the page is the whole window under it, edge to edge.
+   There is no sidebar until guidance ends: the first test's payoff, a cluster, opening Designer from the agent's
+   instructions, or Set up later on a screen where setup has stopped. The status card leaves
+   the screen but stays in the accessibility tree, so its live status lines are still announced; only its place
+   button, which opens a menu of places, is taken out. */
+.app-shell.guided { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "title" "main"; }
+.app-shell.guided > .title-bar { border-bottom: 1px solid var(--color-border-strong); }
+.app-shell.guided > .page-nav { display: none; }
+.app-shell.guided > .status-bar { grid-area: auto; position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; box-shadow: none; }
+.app-shell.guided > .status-bar > :not(.status-lines, [role="status"]) { display: none; }
+
+/* The page: one column, centred across the window. Step pages sit at the boards' height under the title bar; Welcome
+   is balanced between the title bar and the sea. The sea is the page's last box, so it never covers text. */
+.app-shell.guided > .page-content { --page-pad: var(--space-6); display: flex; flex-direction: column; margin: 0; padding: 0 var(--page-pad); border-radius: 0; box-shadow: none; scrollbar-gutter: auto; }
+.app-shell.guided > .page-content > :not([hidden]) { flex: 1 0 auto; display: flex; flex-direction: column; width: 100%; max-width: clamp(1040px, calc(1040 * var(--u)), 1240px); margin-inline: auto; }
+/* The boards put a step page's title 30px under their 52px title bar; this bar is 44px, so the gap is 38px. */
+.app-shell.guided > .page-content > :not([hidden])::before { content: ''; flex: 0 0 38px; }
+.app-shell.guided > .page-content > :not([hidden])::after { content: ''; flex: 1 0 var(--space-6); }
+.app-shell.guided > .page-content > :has(> .welcome-screen) { max-width: none; }
+.app-shell.guided > .page-content > :has(> .welcome-screen)::before { flex-grow: 1; }
+
+/* Numbered pills joined by a line: done steps keep an outline with a check, the current one is filled. */
+.guided-steps { display: flex; align-items: center; margin: 0 auto; padding: 0; list-style: none; color: var(--color-text); font: 500 12px/16px var(--font-mono); font-variant-ligatures: none; }
+.guided-steps li { position: relative; display: flex; align-items: center; gap: var(--space-2); height: var(--height-control-small); box-sizing: border-box; padding: 0 var(--space-3) 0 var(--space-1); border: var(--border-control) solid var(--color-text); border-radius: var(--radius-round); background: var(--color-card); white-space: nowrap; }
+.guided-steps li + li { margin-left: 64px; }
+.guided-steps li + li::before { content: ''; position: absolute; top: 50%; right: calc(100% + var(--space-2-5)); width: 44px; height: var(--border-control); background: var(--color-text); }
+.guided-steps li.current { background: var(--color-action); border-color: var(--color-action); color: var(--color-action-text); }
+.guided-step-dot { display: inline-grid; place-items: center; width: 20px; font: 700 13px/1 var(--font-ui); }
+.guided-step-dot svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 820px) {
+  .guided-steps li + li { margin-left: 32px; }
+  .guided-steps li + li::before { right: calc(100% + 6px); width: 20px; }
+}
+@media (max-width: 600px) {
+  .app-shell.guided > .page-content { --page-pad: var(--space-4); }
+  .guided-steps li:not(.current) { font-size: 0; gap: 0; padding-inline: var(--space-1); }
+  .guided-steps li + li { margin-left: 16px; }
+  .guided-steps li + li::before { width: 10px; right: calc(100% + 3px); }
+}
+
+/* First-run screens follow the boards, which are drawn at 1200 by 820: display type and the larger sizes grow a
+   little with the window, by one board pixel (--u) at a time. */
+.app-shell.guided > .page-content { --u: clamp(.8px, min(100vw / 1200, 100vh / 820), 1.4px); }
+.app-shell.guided .workspace-heading { gap: var(--space-1); margin-bottom: var(--space-4); }
+.app-shell.guided .workspace-heading h1 { font-size: clamp(30px, calc(40 * var(--u)), 56px); line-height: 1; }
+.app-shell.guided .workspace-heading > p { font-size: 13px; letter-spacing: .04em; }
+.app-shell.guided .places-workspace:has(> div:not([hidden]) > .local-preflight) .workspace-heading h1 { font-size: clamp(30px, calc(46 * var(--u)), 64px); letter-spacing: var(--tracking-display); }
+.app-shell.guided .places-workspace:is(:has(> div:not([hidden]) > .local-preflight), :has(> div:not([hidden]) > .workspace-setup-failed)) { max-width: clamp(700px, calc(700 * var(--u)), 840px); }
+.app-shell.guided .places-workspace:has(> .first-pass) { max-width: clamp(760px, calc(760 * var(--u)), 900px); }
+.app-shell.guided .first-pass h1 { font-size: clamp(28px, calc(40 * var(--u)), 56px); line-height: 1; }
+.app-shell.guided .first-pass > .status-icon { width: 52px; height: 52px; }
+
+/* Cards: rows and their result words at the boards' sizes. */
+.app-shell.guided .steps-four b { font-size: 16px; line-height: 22px; }
+.app-shell.guided .steps-four > li[aria-current="step"] b { font-weight: 700; }
+.app-shell.guided .step-result { font-size: 13px; line-height: 18px; }
+.app-shell.guided .step-more p { font-size: 14px; line-height: 20px; }
+.app-shell.guided .step-more p.step-paused { font-size: 15px; line-height: 21px; }
+/* The download bar is drawn in ink on these screens, and a callout's headline at the boards' 16px. */
+.app-shell.guided .infra-bar > span { background: var(--color-text); }
+.app-shell.guided .workspace-failure .failure-summary { font-size: 16px; line-height: 22px; }
+.app-shell.guided .workspace-meet .workspace-kicker { font-size: 12px; }
+.app-shell.guided .workspace-meet h2 { font-size: 20px; font-weight: 700; }
+.app-shell.guided .workspace-meet :is(.meet-description, dt, dd) { font-size: 14px; line-height: 20px; }
+
+/* Every card on these screens has the ink edge, and every action that isn't a link is a large button. */
+.app-shell.guided .setup .card, .app-shell.guided .first-pass-stories > .test-answer { border: var(--border-control) solid var(--color-text); }
+.app-shell.guided .places-workspace .button:is(.button-primary, .button-secondary):not(.button-small) { min-height: var(--height-control-large); padding-inline: 18px; font: var(--type-control-large); }
+@media (min-width: 821px) { .app-shell.guided .setup.workspace-setup-grid:has(.setup-side .model-connect) { grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); } }
+.app-shell.guided .setup.workspace-setup-grid:has(.setup-side .model-connect) .setup-model .workspace-step-actions > .button-primary { min-width: 220px; }
+.app-shell.guided .setup.workspace-setup-grid:has(.setup-side .model-connect .workspace-failure) .setup-model .workspace-step-actions > .button-primary { min-width: 0; }
+
+/* The first passed test tells its story on ruled rows, each numbered in a ring. */
+.app-shell.guided .first-pass .test-story { gap: 0; }
+.app-shell.guided .first-pass-stories > .test-answer { padding: var(--space-2) var(--space-5) var(--space-4); }
+.app-shell.guided .first-pass .test-story > li { grid-template-columns: 24px minmax(0, 1fr); gap: var(--space-1) 14px; max-width: none; padding: 11px 0; }
+.app-shell.guided .first-pass .test-story > li:has(> .status-passed) > div > p:first-child { color: var(--color-status-succeeded); font-weight: 600; }
+.app-shell.guided .first-pass .test-story > li + li { border-top: 1px solid var(--color-border-strong); }
+.app-shell.guided .first-pass .story-number { display: inline-grid; place-items: center; width: 24px; height: 24px; box-sizing: border-box; border: var(--border-control) solid var(--color-text); border-radius: 50%; background: none; font: 600 12px/1 var(--font-mono); }
+.app-shell.guided .first-pass .test-story h5 { font-size: 12px; }
+.app-shell.guided .first-pass .test-story .reading { font-size: 14px; line-height: 20px; }
+.app-shell.guided .setup.workspace-setup-failed { max-width: none; }
+
+/* Set up later sits in the row of the recovery actions it follows, without the row's usual gap above. */
+.workspace-failure > .guided-later-row { margin-top: 0; }
+.steps-four .step-more.guided-later-row { display: flex; justify-content: flex-start; margin-top: 0; }

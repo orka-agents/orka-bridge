@@ -6,6 +6,8 @@ pub mod agent_folder;
 pub mod agent_reveal;
 #[path = "../../../app/src-tauri/src/agents.rs"]
 pub mod agents;
+#[path = "../../../app/src-tauri/src/copilot_preflight.rs"]
+pub mod copilot_preflight;
 #[path = "../../../app/src-tauri/src/runtime/image_cache.rs"]
 pub mod image_cache;
 #[path = "../../../app/src-tauri/src/runtime/image_types.rs"]

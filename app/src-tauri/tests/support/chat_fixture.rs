@@ -38,6 +38,8 @@ pub struct Guest {
     pub boot: Uuid,
     pub session_reads: usize,
     pub result_reads: usize,
+    /// The serving hello advertises the Navigator's family, as a newer image does.
+    pub navigator: bool,
 }
 impl Guest {
     fn new() -> Self {
@@ -67,6 +69,7 @@ impl Guest {
             boot: Uuid::new_v4(),
             session_reads: 0,
             result_reads: 0,
+            navigator: true,
         }
     }
     pub fn posts(&self, path: &str) -> Vec<Value> {
@@ -325,14 +328,26 @@ impl LocalFactory for Factory {
         _: Arc<dyn Fn(bridge_engine::local_vm::LocalProgress) + Send + Sync>,
     ) -> StartFuture<'_> {
         Box::pin(async {
-            let nonce = self.0.lock().unwrap().boot;
-            let client = VmClient::established(
+            let (nonce, navigator) = {
+                let guest = self.0.lock().unwrap();
+                (guest.boot, guest.navigator)
+            };
+            let hello = StageHello {
+                version: VERSION,
+                stage: Stage::Serve,
+                guest_nonce: Uuid::new_v4(),
+                accepted_boot_nonce: Some(nonce),
+                run_cleanup: false,
+                navigator_chat: navigator,
+            };
+            let client = VmClient::established_with_hello(
                 Box::new(Channel {
                     guest: self.0.clone(),
                     input: io::Cursor::new(vec![]),
                     output: vec![],
                 }),
                 nonce,
+                &hello,
             )
             .unwrap();
             Ok(Box::new(Session(client, self.1)) as Box<dyn LocalSession>)
@@ -347,7 +362,18 @@ pub struct Fixture {
 }
 impl Fixture {
     pub async fn new() -> Self {
-        let guest = Arc::new(Mutex::new(Guest::new()));
+        Self::with_image(true).await
+    }
+    /// A workspace whose image predates the Navigator's names: its hello does not offer them.
+    #[allow(dead_code)] // Only the cluster and place tests use it.
+    pub async fn older_image() -> Self {
+        Self::with_image(false).await
+    }
+    async fn with_image(navigator: bool) -> Self {
+        let guest = Arc::new(Mutex::new(Guest {
+            navigator,
+            ..Guest::new()
+        }));
         let vm = LocalVm::new(Arc::new(Factory(guest.clone(), Uuid::new_v4())));
         vm.start();
         for _ in 0..500 {

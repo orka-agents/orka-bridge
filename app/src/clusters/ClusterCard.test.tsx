@@ -25,7 +25,8 @@ function native(status: object = { selected: null, localVm: 'idle', model: 'lock
 }
 async function open() {
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'I already run Orka on a cluster' }));
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
   await screen.findByRole('button', { name: 'kubectl context' });
   return user;
 }
@@ -89,7 +90,7 @@ test('single-target discovery keeps This computer selected and successful Use se
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('agent_run');
 });
 
-test('failed context discovery leaves local Run and Chat usable without reselecting This computer', async () => {
+test('failed context discovery leaves local Run and Try a task usable without reselecting This computer', async () => {
   const ipc = native();
   const documentId = '9b2b93c4-375c-4815-9717-39852a96e411';
   ipc.mockImplementation(command => {
@@ -99,7 +100,7 @@ test('failed context discovery leaves local Run and Chat usable without reselect
     if (command === 'cluster_discover') return Promise.reject({ check: 'clusterApi', result: 'connectionFailed' });
     if (command === 'agent_open') return { documentId, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks' };
     if (command === 'agent_run_status' || command === 'agent_run') return { documentId, busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
-    if (command === 'agent_chat_status' || command === 'agent_chat_send') return { documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+    if (command === 'agent_chat_status' || command === 'agent_chat_send' || command === 'agent_chat_new') return { documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false, readOnly: false };
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
@@ -113,9 +114,9 @@ test('failed context discovery leaves local Run and Chat usable without reselect
   await waitFor(() => expect(run.matches(':disabled')).toBe(false));
   await user.click(run);
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId }]]));
-  await user.click(screen.getByRole('button', { name: 'Chat' }));
-  await user.type(await screen.findByRole('textbox', { name: 'Message' }), 'Still local');
-  const send = screen.getByRole('button', { name: 'Send message' });
+  await user.click(screen.getByRole('button', { name: 'Try a task' }));
+  await user.type(await screen.findByRole('textbox', { name: /one task$/ }), 'Still local');
+  const send = screen.getByRole('button', { name: 'Run task' });
   await waitFor(() => expect(send.matches(':disabled')).toBe(false));
   await user.click(send);
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_chat_send')).toEqual([['agent_chat_send', { documentId, message: 'Still local' }]]));
@@ -123,24 +124,27 @@ test('failed context discovery leaves local Run and Chat usable without reselect
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
 });
 
-test('changing a selected remote context revokes its capability before failed discovery returns', async () => {
+test('browsing another context keeps the place in use, even when its discovery fails', async () => {
   const ipc = native(); const pending = deferred<unknown>();
   const selection = { kind: 'cluster' as const, target, providers: [provider], providerId: provider.id };
   ipc.mockImplementation(command => command === 'cluster_contexts' ? [context] : command === 'cluster_discover' ? pending.promise : Promise.reject('Unsupported'));
   const onPlace = vi.fn(); const user = userEvent.setup();
   render(<ClusterCard selection={selection} onPlace={onPlace} onOpenAgent={vi.fn()} />);
   await chooseContext(user, context.name);
-  expect(onPlace).toHaveBeenCalledExactlyOnceWith({ kind: 'cluster' });
+  expect(onPlace).not.toHaveBeenCalled();
   await act(async () => pending.resolve(Promise.reject({ check: 'clusterApi', result: 'connectionFailed' })));
   await screen.findByRole('alert');
-  expect(onPlace).toHaveBeenCalledExactlyOnceWith({ kind: 'cluster' });
+  expect(onPlace).not.toHaveBeenCalled();
   expect(screen.queryByRole('button', { name: 'Open your agent' })).toBeNull();
 });
 
 test('a selected unavailable workspace can choose a cluster without resetting it', async () => {
   const ipc = native({ selected: 'localVm', localVm: 'notIntegrated', model: 'locked' });
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use a cluster you already have instead' }));
+  // The earlier choice chooses nothing on this build, so Bridge opens as nothing is set up, and Clusters on its list.
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
   expect(await screen.findByRole('button', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_change_local');
 });
@@ -246,7 +250,7 @@ test('v6_cluster_card_keyboard and Use confirms access only after discovery', as
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toEqual([['cluster_use', { targetId: target.id, saName: null }]]);
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.getByText('ghcr.io/orka:0.9.4')).toBeTruthy();
-  expect(screen.getByText('control / orka', { selector: 'dd' })).toBeTruthy(); expect(screen.getByText('agents', { selector: 'dd' })).toBeTruthy();
+  expect(screen.getByText('control / orka', { selector: 'dd code' })).toBeTruthy(); expect(screen.getByText('agents', { selector: 'dd code' })).toBeTruthy();
   expect(screen.getByText('team-model')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Open your agent' }).matches(':disabled')).toBe(false);
 });
@@ -263,7 +267,10 @@ test.each(['unsupportedCredential', 'denied', 'unavailable'])('unsupported_acces
   native(undefined, { status, providers: [], failure: { check: status === 'unsupportedCredential' ? 'credentials' : 'providers', result: status === 'denied' ? 'permissionDenied' : status === 'unsupportedCredential' ? 'unsupportedCredential' : 'unknown' } }); const user = await open(); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   const alert = await screen.findByRole('alert');
-  expect(alert).toBeTruthy(); expect(screen.getByText('Cluster found')).toBeTruthy();
+  expect(alert).toBeTruthy();
+  // The found installation is kept in Details, which a denied check opens.
+  if (status !== 'denied') await user.click(screen.getByRole('button', { name: 'Details' }));
+  expect(document.querySelector('.cluster-found-line')?.textContent).toBe('Cluster found: agents · control / orka');
   if (status === 'unsupportedCredential') expect(alert.textContent).toMatch(/credential plugin outside Bridge/);
   if (status === 'unavailable') {
     expect(alert.textContent).toMatch(/read AI connections/);
@@ -274,7 +281,11 @@ test.each(['unsupportedCredential', 'denied', 'unavailable'])('unsupported_acces
 test('failure alternative does not stop or reset a local VM', async () => {
   const ipc = native({ selected: 'localVm', localVm: 'failed', localVmError: 'vmStart: unavailable', model: 'locked' });
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use a cluster you already have instead' }));
+  // A launch that finds a workspace leaves the guided first run, which redraws the recovery row; press the settled button.
+  await waitFor(() => expect(document.querySelector('.app-shell')?.classList.contains('guided')).toBe(false));
+  const fallback = await screen.findByRole('button', { name: 'Use a cluster you already have instead' });
+  await waitFor(() => expect(fallback.matches(':disabled')).toBe(false));
+  await user.click(fallback);
   await screen.findByRole('button', { name: 'kubectl context' });
   await waitFor(() => expect(ipc.mock.calls.some(([c]) => c === 'setup_status')).toBe(true));
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_change_local');
@@ -448,7 +459,8 @@ test.each(['interrupted reload', 'failed initial read', 'failed reload'])('retur
   expect(await contextChoice(userEvent.setup(), context.name)).toBeTruthy();
   expect(screen.queryByText(/No kubectl contexts were found/)).toBeNull();
   expect(screen.queryByRole('alert')).toBeNull();
-  expect(onPlace).toHaveBeenCalledTimes(operation === 'failed initial read' ? 0 : 1);
+  // Reading and reloading kubeconfig only browse; they never replace the place in use.
+  expect(onPlace).not.toHaveBeenCalled();
   const completedReads = reads;
   view.rerender(<ClusterCard active entry={{ revision: 3 }} onPlace={onPlace} onOpenAgent={vi.fn()} />);
   expect(reads).toBe(completedReads);

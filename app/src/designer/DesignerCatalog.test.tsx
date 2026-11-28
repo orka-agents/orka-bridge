@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Example from './Example';
@@ -76,9 +76,10 @@ test.each(['target', 'provider'])('remote catalog is scoped to the selected %s a
   view.rerender(<Example remote place={changed === 'target' ? place('39dc68be-f597-4535-8ebd-7759f544b27a') : place(undefined, '49dc68be-f597-4535-8ebd-7759f544b27a')} catalogKey={1} />);
   await waitFor(() => expect(pending).toHaveLength(2));
   await act(async () => pending[0](catalog('old-model')));
-  expect(screen.queryByRole('option', { name: 'old-model' })).toBeNull();
+  expect(screen.queryByRole('option', { name: 'AI connection default: old-model' })).toBeNull();
   await act(async () => pending[1](catalog('new-model')));
-  expect(screen.getByRole('option', { name: 'new-model' })).toBeTruthy();
+  // Each entry says what it is: the AI connection's default, and the model saved in the file.
+  expect(within(screen.getByRole('combobox', { name: 'It thinks with' })).getAllByRole('option').map(option => option.textContent)).toEqual(['saved-model (in your file)', 'AI connection default: new-model']);
   expect((screen.getByRole('combobox', { name: 'It thinks with' }) as HTMLSelectElement).value).toBe('saved-model');
   expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(false);
   expect(Object.keys(args[0] as object).sort()).toEqual(['providerId', 'targetId']);
@@ -141,7 +142,7 @@ test.each(['different-model', null])('remote defaults do not claim that a saved 
   vi.stubGlobal('isTauri', true); mockIPC(command => command === 'agent_open' ? pair : command === 'cluster_catalog' ? { ...catalog('different-model'), defaultModel, models: { state: 'ready', items: defaultModel ? [{ id: defaultModel }] : [] } } : null);
   render(<Example remote place={place()} catalogKey={1} />);
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'It thinks with' }).matches(':disabled')).toBe(false));
-  expect(screen.getByRole('option', { name: 'saved-model' })).toBeTruthy();
+  expect(screen.getByRole('option', { name: 'saved-model (in your file)' })).toBeTruthy();
   expect(screen.queryByText(/not listed by the connected AI/)).toBeNull();
   if (defaultModel === null) expect(screen.getByText(/No default model is configured for this AI connection/)).toBeTruthy();
 });
@@ -155,7 +156,7 @@ test('a restored active Send keeps its completed result and unconfirmed recovery
   state = 'complete';
   await waitFor(() => expect(panel.textContent).toContain('Saved completed answer'));
   expect(screen.getByRole('region', { name: 'Send and cluster tests' })).toBe(panel);
-  expect(screen.getByRole('region', { name: 'Past Sends' }).closest('[hidden]')).toBeNull();
+  expect(panel.closest('[hidden]')).toBeNull();
   state = 'unknown';
   await waitFor(() => expect(panel.textContent).toContain('Cancellation not confirmed'));
   expect(screen.getByRole('region', { name: 'Send and cluster tests' })).toBe(panel);
@@ -168,4 +169,19 @@ test('Personality offers an example without inserting it in the agent file', asy
   await user.click(screen.getByRole('button', { name: 'More settings' }));
   const field = screen.getByRole('textbox', { name: 'Personality' }) as HTMLTextAreaElement;
   expect(field.placeholder).toContain('Be concise'); expect(field.value).toBe('');
+});
+
+test.each([
+  ['the workspace is not ready', { localCatalogBlocker: 'workspace' as const }, 'Tools and models load once the workspace on this computer is ready. Check it in Clusters.'],
+  ['no AI is connected', { localCatalogBlocker: 'ai' as const }, 'Connect the AI in Clusters to load tools and models on this computer.'],
+])('when %s, the hint names that blocker, with one tooltip on Add a tool', async (_, props, reason) => {
+  vi.stubGlobal('isTauri', true); const ipc = vi.fn(command => command === 'agent_open' ? pair : null); mockIPC(ipc);
+  render(<Example place={{ kind: 'thisComputer' }} {...props} />);
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  expect(screen.getAllByText(reason).length).toBeGreaterThan(0);
+  expect(screen.queryByText('Open Clusters to load tools and models on This computer.')).toBeNull();
+  const add = screen.getByRole('group', { name: `Add a tool: ${reason}` });
+  expect(add.hasAttribute('title')).toBe(false);
+  expect(add.querySelector('button')!.hasAttribute('title')).toBe(false);
+  expect(add.querySelector('.control-tip')?.textContent).toBe(reason);
 });

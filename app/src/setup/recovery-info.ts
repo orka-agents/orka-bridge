@@ -1,7 +1,7 @@
 export type HelpTopic = 'virtualization' | 'hypervisor' | 'workspace' | 'githubCliInstall' | 'githubSignIn' | 'openaiKey' | 'anthropicKey';
 export type RecoveryInfo = { summary: string; action: string; topic?: HelpTopic; stage: string; retryBlocked?: boolean; heading?: string; preservation?: string; category?: string };
-const operations = ['requirements', 'download', 'verify', 'prepare', 'start', 'services', 'stop'] as const;
-const causes = ['permission', 'noSpace', 'integrity', 'workspaceUpdateRequired', 'workspaceVersionUnsupported', 'inUse', 'network', 'preparation', 'guestConnection', 'services', 'stopUnconfirmed', 'forcedStop', 'unknown'] as const;
+const operations = ['requirements', 'download', 'verify', 'prepare', 'start', 'services', 'stop', 'serve'] as const;
+const causes = ['permission', 'noSpace', 'integrity', 'workspaceUpdateRequired', 'workspaceVersionUnsupported', 'inUse', 'network', 'preparation', 'guestConnection', 'services', 'stopUnconfirmed', 'forcedStop', 'exited', 'unknown'] as const;
 export type WorkspaceFailure = { operation: typeof operations[number]; cause: typeof causes[number]; codes: number[] };
 export const isOsCode = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
 export function isWorkspaceFailure(value: unknown): value is WorkspaceFailure {
@@ -13,6 +13,7 @@ export function isWorkspaceFailure(value: unknown): value is WorkspaceFailure {
 const operationLabels: Record<WorkspaceFailure['operation'], string> = {
   requirements: 'Checking requirements', download: 'Downloading the workspace', verify: 'Checking cluster files',
   prepare: 'Preparing the workspace', start: 'Starting the workspace', services: 'Starting cluster services', stop: 'Stopping the workspace',
+  serve: 'Running the workspace',
 };
 // Only native finite metadata selects a cause. Private diagnostics are never input.
 export function workspaceRecovery(failure?: WorkspaceFailure): RecoveryInfo {
@@ -37,14 +38,16 @@ export function workspaceRecovery(failure?: WorkspaceFailure): RecoveryInfo {
     case 'guestConnection': return { ...common, summary: "The workspace didn't finish starting.", action: 'Press Try again to restart it. If it happens again, copy the details for help.' };
     case 'services': return { ...common, summary: "The workspace's services couldn't start.", action: 'Press Try again to restart the workspace. If it happens again, copy the details for help.' };
     case 'forcedStop': return { ...common, heading: 'The workspace was forcibly stopped', summary: 'The workspace was forcibly stopped without a clean shutdown.', action: 'Quit Bridge and reopen it before trying again.', preservation: 'Changes that had not reached disk may be lost.', topic: 'workspace', retryBlocked: true };
+    case 'exited': return { ...common, heading: 'The workspace stopped', summary: 'The workspace on this computer stopped.', action: 'Press Try again to start it again. If it happens again, copy the details for help.' };
     case 'stopUnconfirmed': return { ...common, summary: "The workspace couldn't be stopped safely.", action: 'Quit Bridge and reopen it before trying again. The workspace may still be stopping.', topic: 'workspace', retryBlocked: true };
     default: return { ...common, summary: "Your workspace didn't start. Your agents are safe.", action: '', preservation: '' };
   }
 }
 
-export function helpDetails(info: RecoveryInfo, codes: number[] = []): string {
+// `extra` are further finite lines, such as a fresh workspace's outcome.
+export function helpDetails(info: RecoveryInfo, codes: number[] = [], extra: string[] = []): string {
   return ['Bridge workspace setup', `Operation: ${info.stage}`, `Category: ${info.category ?? 'requirements'}`,
-    ...[...new Set(codes.filter(isOsCode))].slice(0, 4).map(code => `OS code: ${code}`), 'Private diagnostic text is not included.'].join('\n');
+    ...[...new Set(codes.filter(isOsCode))].slice(0, 4).map(code => `OS code: ${code}`), ...extra, 'Private diagnostic text is not included.'].join('\n');
 }
 
 export function modelDetails(detail: string): string {

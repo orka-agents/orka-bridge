@@ -361,6 +361,7 @@ async fn fixture_with(script: Arc<Script>, connected: bool) -> Fixture {
             guest_nonce: Uuid::new_v4(),
             accepted_boot_nonce: Some(id),
             run_cleanup: true,
+            navigator_chat: false,
         },
     )
     .unwrap();

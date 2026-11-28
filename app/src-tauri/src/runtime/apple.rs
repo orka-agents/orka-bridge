@@ -223,6 +223,11 @@ impl AppleHelperOwner {
     /// G is preparation only; its ACK never proves termination or a guest flush.
     pub fn prepare_shutdown(&mut self, end: Instant) -> Result<(), HelperError> {
         self.available()?;
+        if self.graceful_end.is_none() && self.exited() {
+            // The helper exited by itself: no guest can power off and nothing is left to arm.
+            // Its stop observes the exit as a hard stop instead of failing an exchange with it.
+            return Ok(());
+        }
         if let Some(previous) = self.graceful_end {
             let end = previous.min(end);
             self.graceful_end = Some(end);
@@ -258,10 +263,24 @@ impl AppleHelperOwner {
     pub fn stop_outcome(&self) -> Option<AppleStopOutcome> {
         self.stop_outcome
     }
+    /// Whether the helper process has exited, observed without waiting.
+    pub(crate) fn exited(&mut self) -> bool {
+        self.session
+            .as_mut()
+            .is_some_and(|session| matches!(session.child.try_wait(), Ok(Some(_))))
+    }
     /// Prepared shutdown waits for natural native disposal and child exit first.
     /// Only timeout sends S. K is forced; N proves native stop won the race.
     /// Both receipts still require an observed successful helper exit.
     pub fn stop(&mut self) -> Result<(), HelperError> {
+        if !self.unobserved && !self.poisoned && self.graceful_end.is_none() && self.exited() {
+            // The helper already exited before any stop was prepared: its VM and the ownership
+            // it held are gone, and there is nothing left to ask. That is a hard stop, never a
+            // clean one. A prepared shutdown keeps judging its own expected exit below.
+            self.session = None;
+            self.stop_outcome = Some(AppleStopOutcome::HardStopped);
+            return Ok(());
+        }
         self.available()?;
         if self.session.is_none() {
             return Ok(());

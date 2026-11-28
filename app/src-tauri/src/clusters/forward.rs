@@ -11,7 +11,7 @@ mod peer;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -112,7 +112,8 @@ pub struct OrkaStreamTransport {
     connection: Connection,
     namespace: String,
     provider: String,
-    bearer: String,
+    /// The access's own bearer: a renewal during a long Send or conversation reaches it.
+    bearer: Arc<super::bearer::Bearer>,
     creator_bearer: String,
     current: ClusterClient,
     creator: Client,
@@ -123,6 +124,31 @@ pub struct OrkaStreamTransport {
 impl OrkaStreamTransport {
     pub fn peer(&self) -> &ForwardPeer {
         &self.connection.peer
+    }
+    /// Sends with the current bearer. Orka authenticates a request before acting on it, so a
+    /// rejected bearer means nothing was done: it is renewed once and the request sent once
+    /// more, never again. An impossible renewal is reported as the rejection.
+    async fn authorized<T, F, Fut>(&self, send: F) -> Result<T, ErrorKind>
+    where
+        F: Fn(String) -> Fut,
+        Fut: Future<Output = Result<T, ErrorKind>>,
+    {
+        let bearer = self
+            .bearer
+            .token()
+            .await
+            .map_err(|_| ErrorKind::Authentication)?;
+        match send(bearer.clone()).await {
+            Err(ErrorKind::Authentication) => {
+                let renewed = self
+                    .bearer
+                    .rejected(&bearer)
+                    .await
+                    .map_err(|_| ErrorKind::Authentication)?;
+                send(renewed).await
+            }
+            other => other,
+        }
     }
 }
 impl RemoteAccess {
@@ -219,18 +245,26 @@ impl RunTransport for OrkaStreamTransport {
                     _ => ErrorKind::Identity,
                 });
             }
-            self.connection
-                .request(
-                    &format!("tasks/{name}/cancel"),
-                    &self.namespace,
-                    &self.bearer,
-                    &[&self.bearer, &self.creator_bearer],
-                    None,
-                    Some(&serde_json::json!({"uid":uid})),
-                    deadline,
-                    false,
-                )
-                .await
+            let path = format!("tasks/{name}/cancel");
+            let body = serde_json::json!({"uid":uid});
+            self.authorized(|bearer| {
+                let (path, body) = (&path, &body);
+                async move {
+                    self.connection
+                        .request(
+                            path,
+                            &self.namespace,
+                            &bearer,
+                            &[&bearer, &self.creator_bearer],
+                            None,
+                            Some(body),
+                            deadline,
+                            false,
+                        )
+                        .await
+                }
+            })
+            .await
         })
     }
     fn update_agent<'a>(
@@ -283,19 +317,81 @@ impl RunTransport for OrkaStreamTransport {
                 }
             }
             let after = after.map(|a| a.to_string());
-            self.connection
-                .request(
-                    path,
-                    &self.namespace,
-                    &self.bearer,
-                    &[&self.bearer, &self.creator_bearer],
-                    after.as_deref(),
-                    body,
-                    deadline,
-                    false,
-                )
-                .await
+            self.authorized(|bearer| {
+                let after = after.as_deref();
+                async move {
+                    self.connection
+                        .request(
+                            path,
+                            &self.namespace,
+                            &bearer,
+                            &[&bearer, &self.creator_bearer],
+                            after,
+                            body,
+                            deadline,
+                            false,
+                        )
+                        .await
+                }
+            })
+            .await
         })
+    }
+}
+
+impl OrkaStreamTransport {
+    /// A conversation's raw round trip: the exact checked request line from `chat_cluster`,
+    /// with this access's bearer. Writes recheck the frozen destination first, as Send's do.
+    /// Returns the status and the whole bounded body; a reply echoing a credential is refused.
+    pub(crate) async fn exchange(
+        &self,
+        method: bridge_runtime_protocol::ChatMethod,
+        uri: &str,
+        body: Option<&[u8]>,
+    ) -> Result<(u16, Vec<u8>), ErrorKind> {
+        use bridge_runtime_protocol::ChatMethod;
+        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        if self.read_only || !uri.starts_with("/api/v1/") {
+            return Err(ErrorKind::Configuration);
+        }
+        if method != ChatMethod::Get {
+            let validation = timeout_at(
+                deadline,
+                self.current
+                    .revalidate_binding(&self.binding, &self.creator),
+            )
+            .await;
+            if !matches!(validation, Ok(Ok(()))) {
+                self.connection.close().await;
+                return Err(match validation {
+                    Ok(Err(ClusterError::Denied)) => ErrorKind::Permission,
+                    _ => ErrorKind::Identity,
+                });
+            }
+        }
+        let method = match method {
+            ChatMethod::Get => "GET",
+            ChatMethod::Post => "POST",
+            ChatMethod::Delete => "DELETE",
+        };
+        self.authorized(|bearer| async move {
+            let deadline = Instant::now() + REQUEST_TIMEOUT;
+            let (status, bytes) = self
+                .connection
+                .exchange(method, uri, &bearer, body, deadline)
+                .await?;
+            if [&bearer, &self.creator_bearer].iter().any(|secret| {
+                !secret.is_empty() && bytes.windows(secret.len()).any(|w| w == secret.as_bytes())
+            }) {
+                return Err(ErrorKind::Response);
+            }
+            // A rejected credential is the access's to renew, not a reply to judge.
+            if status == 401 {
+                return Err(ErrorKind::Authentication);
+            }
+            Ok((status, bytes))
+        })
+        .await
     }
 }
 
@@ -466,10 +562,9 @@ impl Connection {
                 .map_err(|_| ErrorKind::Transport)?;
             let status = response.status().as_u16();
             let cancel = body.is_some() && path.ends_with("/cancel");
-            match status {
-                401 if !cancel => return Err(ErrorKind::Authentication),
-                403 if !cancel => return Err(ErrorKind::Permission),
-                _ => {}
+            // A 401's bounded body is read so the lease survives for one renewed retry.
+            if status == 403 && !cancel {
+                return Err(ErrorKind::Permission);
             }
             if response
                 .headers()
@@ -540,6 +635,75 @@ impl Connection {
                         | ErrorKind::Authentication)
                 ))
         {
+            self.close().await;
+        }
+        result
+    }
+}
+impl Connection {
+    /// One request whose status the caller judges. Never retried; an incomplete response
+    /// closes the lease, as for every other request on it.
+    async fn exchange(
+        &self,
+        method: &str,
+        uri: &str,
+        bearer: &str,
+        body: Option<&[u8]>,
+        deadline: Instant,
+    ) -> Result<(u16, Vec<u8>), ErrorKind> {
+        let deadline = deadline.min(Instant::now() + REQUEST_TIMEOUT);
+        let result = timeout_at(deadline, async {
+            if self.closed.load(Ordering::SeqCst) {
+                return Err(ErrorKind::Transport);
+            }
+            let mut authorization = HeaderValue::from_str(&format!("Bearer {bearer}"))
+                .map_err(|_| ErrorKind::Configuration)?;
+            authorization.set_sensitive(true);
+            let mut request = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header(header::HOST, "orka")
+                .header(header::AUTHORIZATION, authorization)
+                .header(header::ACCEPT_ENCODING, "identity");
+            if body.is_some() {
+                request = request.header(header::CONTENT_TYPE, "application/json");
+            }
+            let request = request
+                .body(Full::new(Bytes::from(body.unwrap_or_default().to_vec())))
+                .map_err(|_| ErrorKind::Configuration)?;
+            let mut sender = self.sender.lock().await;
+            let sender = sender.as_mut().ok_or(ErrorKind::Transport)?;
+            sender.ready().await.map_err(|_| ErrorKind::Transport)?;
+            let response = sender
+                .send_request(request)
+                .await
+                .map_err(|_| ErrorKind::Transport)?;
+            let status = response.status().as_u16();
+            if response
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .is_some_and(|n| n > CAP as u64)
+            {
+                return Err(ErrorKind::Response);
+            }
+            let mut incoming = response.into_body();
+            let mut bytes = Vec::new();
+            while let Some(frame) = incoming.frame().await {
+                let frame = frame.map_err(|_| ErrorKind::Transport)?;
+                if let Ok(data) = frame.into_data() {
+                    if data.len() > CAP - bytes.len() {
+                        return Err(ErrorKind::Response);
+                    }
+                    bytes.extend_from_slice(&data);
+                }
+            }
+            Ok((status, bytes))
+        })
+        .await
+        .unwrap_or(Err(ErrorKind::Deadline));
+        if result.is_err() {
             self.close().await;
         }
         result

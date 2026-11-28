@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button, CloseIcon } from '../components/Button';
+import { useAnchoredPopover } from '../components/anchored-popover';
 import { StatusIcon } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
 import { clusterRecovery } from './recovery';
@@ -16,6 +17,7 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
   const [attempt, setAttempt] = useState(0); const [open, setOpen] = useState(false); const [query, setQuery] = useState('');
   const [preview, setPreview] = useState<{ name: string; reply?: AccountPreview; checking?: boolean }>();
   const [details, setDetails] = useState(false);
+  useAnchoredPopover(open && active && !disabled, trigger, popover);
   function close(focus = true) { setOpen(false); setQuery(''); if (focus) trigger.current?.focus(); }
   useEffect(() => {
     if (!active || disabled || accounts || reason) return;
@@ -68,7 +70,7 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
     </> : <>
       <label htmlFor={`${id}-trigger`}>ServiceAccount</label>
       <Button ref={trigger} id={`${id}-trigger`} type="button" kind="secondary" className="context-trigger" aria-label={value ? `ServiceAccount: ${value}` : 'ServiceAccount'} aria-describedby={value ? undefined : `${id}-value`} aria-haspopup="dialog" aria-expanded={open} aria-controls={`${id}-picker`} disabled={disabled} onClick={() => { if (open) close(); else setOpen(true); }}>
-        <span id={`${id}-value`}>{value ? <code>{value}</code> : 'Choose a ServiceAccount'}</span><span aria-hidden="true">⌄</span>
+        <span id={`${id}-value`}>{value ? <code>{value}</code> : 'Choose a ServiceAccount'}</span><svg className="icon context-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
       </Button>
       {accounts?.truncated && <p className="muted">Showing up to 1,000 accounts. More may exist.</p>}
     </>}

@@ -7,7 +7,15 @@ import { changedFiles, resultAnnouncement, resultLabel, TestProgress } from '../
 import { SAMPLE_DOCUMENT_ID, type SourceId, sameSource } from './agent-api';
 import { errors, type RunSnapshot, runCall } from './run-api';
 import { testDefinitions } from './test-definitions';
-export default function Run({ tests, documentId = SAMPLE_DOCUMENT_ID, onSnapshot, blocked = false, workspaceReady = true, stale = false, onStart, source, onChooseCluster, onEditInstructions, startRequest, onStartRequestHandled }: { tests?: string; documentId?: string; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; workspaceReady?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId; onChooseCluster?: () => void; onEditInstructions?: () => void; startRequest?: number; onStartRequestHandled?: () => void }) {
+export default function Run({ tests, documentId = SAMPLE_DOCUMENT_ID, onSnapshot, blocked = false, workspaceReady = true, stale = false, onStart, source, onChooseCluster, onEditInstructions, startRequest, onStartRequestHandled, collapsed = false, details = true, saveLabel, unavailable }: { tests?: string; documentId?: string; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; workspaceReady?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId; onChooseCluster?: () => void; onEditInstructions?: () => void; startRequest?: number; onStartRequestHandled?: () => void;
+  /** Why this computer can't run tests on this build; said instead of waiting for the workspace. */
+  unavailable?: string;
+  /** Folds the card to its head line and closed test rows, so the Send card beside it leads. */
+  collapsed?: boolean;
+  /** Shows the read-only test file and file hashes. */
+  details?: boolean;
+  /** The editor's save state, shown beside Run tests once the files changed since the last run. */
+  saveLabel?: string }) {
   const definitions = useMemo(() => tests === undefined ? undefined : testDefinitions(tests), [tests]);
   const [received, setSnapshot] = useState<RunSnapshot>();
   const snapshot = received?.documentId === documentId ? received : undefined;
@@ -64,47 +72,56 @@ export default function Run({ tests, documentId = SAMPLE_DOCUMENT_ID, onSnapshot
   const outdated = stale || (sourceCurrent === false && !!snapshot?.report);
   const uncertain = snapshot?.state === 'unknown' || snapshot?.report?.verdict === 'unknown';
   const failed = snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected);
-  const state: Status = outdated ? 'stale' : running ? 'running' : unconfirmed ? 'needs-you' : confirmed || beforeStart ? 'not-started' : uncertain ? 'stale' : failed ? 'failed' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' ? 'failed' : 'not-started';
+  const state: Status = outdated ? 'needs-you' : running ? 'running' : unconfirmed ? 'needs-you' : confirmed || beforeStart ? 'not-started' : uncertain ? 'needs-you' : failed ? 'failed' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' ? 'failed' : 'not-started';
   const counts = snapshot?.report?.cases;
   const unknownCount = counts?.filter(c => c.verdict === 'unknown').length ?? 0;
   const countLine = counts ? `${counts.filter(c => c.verdict === 'passed').length} passed, ${counts.filter(c => c.verdict === 'failed').length} failed, ${counts.filter(c => c.verdict === 'cancelled').length} cancelled${unknownCount ? `, ${unknownCount} unknown` : ''}.` : '';
   const cancellationLine = beforeStart ? 'Cancelled before any test started.' : unconfirmed ? 'Cancellation not confirmed. Work may still be running on this computer.'
     : confirmed ? `${counts?.some(c => c.verdict === 'cancelled') ? 'Tests cancelled.' : 'Tests finished before cancellation.'} The test worker on this computer has stopped. ${countLine}` : undefined;
   const stage = { capture: 'Reading your saved files', model: 'Checking the local model', submit: 'Starting your tests', observe: 'Waiting for answers and evaluating tests', cancel: 'Cancelling tests', done: 'Tests finished' };
-  return <section className="example-run" aria-label="Tests on this computer">
-    <LongCard title="Tests on this computer" status={<><StatusPill state={state}>{outdated ? undefined : cancelling ? 'Cancelling' : unconfirmed ? 'Not confirmed' : confirmed || beforeStart ? 'Cancelled' : undefined}</StatusPill><span className="status-description">{outdated ? 'Not run since your edit' : running || cancellationLine ? undefined : uncertain ? 'Result unknown' : resultLabel(snapshot?.report)}</span></>} summary={<>On this computer{snapshot?.model && <> · <code>{snapshot.model}</code></>}.{snapshot?.modelConnected === false && ' Connect the AI in Clusters first.'}</>}
+  const pillWord = outdated ? 'Not run since your edit' : cancelling ? 'Cancelling' : unconfirmed ? 'Not confirmed' : confirmed || beforeStart ? 'Cancelled' : !running && uncertain ? 'Result unknown' : undefined;
+  const content = <>
+    {snapshot?.busy && snapshot.busy.documentId !== documentId && <p role="status">{snapshot.busy.name} is running a test.</p>}
+    {outdated && <p role="status">{changedFiles(source, snapshot?.source, stale)}</p>}
+    {running && <TestProgress stage={cancelling ? 'Cancelling tests · waiting for the test worker to stop' : snapshot?.stage && snapshot.stage !== 'done' ? stage[snapshot.stage] : 'Starting your tests'} />}
+    {running && !cancelling && snapshot?.canCancel && <p className="muted">Stop ends the tests on this computer and keeps answers that already finished.</p>}
+    {!running && cancellationLine && <p>{cancellationLine}</p>}
+    {!running && unconfirmed && <><p>Quit Bridge to stop all work on this computer. Actions already taken are not undone.</p>
+      <div className="workspace-step-actions">
+        {snapshot?.canRetryCancellation && <Button type="button" kind="primary" onClick={() => { void act('agent_run_cancel'); }}>Retry cancellation</Button>}
+        {snapshot?.canCheckCancellation && <Button type="button" kind="quiet" onClick={() => { void act('agent_run_check_cancellation'); }}>Check again</Button>}
+        <Button type="button" kind="quiet" onClick={() => { void invoke('quit_bridge').catch(() => setActionMessage("Couldn't quit Bridge. Use Quit Bridge from the Bridge icon in the tray or menu bar.")); }}>Quit Bridge</Button>
+      </div>
+    </>}
+    {actionMessage && <p role="status">{actionMessage}</p>}
+    {message && <p role="status">{message}</p>}
+    {snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected) && <div className="alert alert-needs-you"><p role="alert" className="alert-title">{errors[snapshot.error]}</p></div>}
+    {!collapsed && !running && !outdated && !uncertain && !cancellationLine && snapshot?.report?.verdict === 'failed' && <div className="test-next-step">
+      <p>{snapshot.report.cases.some(c => c.verdict === 'failed' && c.phase !== 'Succeeded') ? 'The task did not finish successfully. Review its answer and tool activity below before trying again.' : 'The agent answered, but its checks failed. Compare the answer with the test, then adjust the instructions or test file.'}</p>
+      {onEditInstructions && <Button type="button" kind="secondary" size="small" onClick={onEditInstructions}>Edit instructions</Button>}
+    </div>}
+  </>;
+  const list = <DesignerTests definitions={running && sourceCurrent === false ? undefined : definitions} report={snapshot?.report} stale={outdated} running={running} vendor={snapshot?.vendor} closed={collapsed} />;
+  const fileDetails = details && (tests !== undefined || !!snapshot?.acknowledged.length || snapshot?.pending || snapshot?.source) && <Details hint="Test file, resources and file hashes">
+    {tests !== undefined && <section className="test-file-source" aria-label="Test file, read-only"><h5 className="section-label">Test file, read-only</h5><pre className="example-source">{tests}</pre></section>}
+    {snapshot?.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Test file hash" value={snapshot.source.tests} /></>}
+    {snapshot?.acknowledged.map(r => <GeneratedValue key={r.uid} label={r.kind} value={r.name} />)}
+    {snapshot?.pending && <GeneratedValue label={`Possibly created ${snapshot.pending.kind}`} value={snapshot.pending.name} />}
+  </Details>;
+  const waiting = unavailable ?? 'Waiting for the workspace to start.';
+  const runActions = (!unconfirmed || !snapshot?.canCheckCancellation) && <div className="workspace-step-actions" role={!workspaceReady ? 'group' : undefined} aria-label={!workspaceReady ? `Run tests: ${waiting}` : undefined}>{workspaceReady && snapshot?.modelConnected === false && onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Connect the AI</Button>}<Button type="button" kind={canRun && !blocked && !collapsed ? 'primary' : 'secondary'} disabled={!!action || blocked || !canRun} title={!workspaceReady ? waiting : blocked ? 'Save your changes before running the test' : !canRun ? snapshot?.modelConnected === false ? 'Connect the AI in Clusters first.' : "Tests can't run on this computer yet." : undefined} onClick={() => { void act('agent_run'); }}>Run tests</Button>{/* Saved files are what a run reads; while an edit is still saving, the editor's own status says so. */}{outdated && !collapsed && saveLabel === '' && <span className="save-state">Saved</span>}</div>;
+  // After an edit the card leads with what changed, and Run tests follows it rather than sitting in the head.
+  const actionBelow = outdated && !running && !collapsed;
+  return <section className={collapsed ? 'example-run example-run-collapsed' : 'example-run'} aria-label="Tests on this computer">
+    <LongCard title="Tests on this computer" status={<><StatusPill state={state}>{pillWord}</StatusPill><span className="status-description">{outdated || running || cancellationLine || uncertain ? undefined : resultLabel(snapshot?.report)}</span></>} summary={!collapsed && !outdated && <>On this computer{snapshot?.model && <> · <code className="code-chip">{snapshot.model}</code></>}.{snapshot?.modelConnected === false && !unavailable && ' Connect the AI in Clusters first.'}</>}
       action={running ? !cancelling && snapshot?.canCancel && <Button type="button" kind="secondary" onClick={() => { void act('agent_run_cancel'); }}>Stop</Button>
-        : (!unconfirmed || !snapshot?.canCheckCancellation) && <div className="workspace-step-actions" role={!workspaceReady ? 'group' : undefined} aria-label={!workspaceReady ? 'Run tests: Waiting for the workspace to start.' : undefined}>{workspaceReady && snapshot?.modelConnected === false && onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Connect the AI</Button>}<Button type="button" kind={canRun && !blocked ? 'primary' : 'secondary'} disabled={!!action || blocked || !canRun} title={!workspaceReady ? 'Waiting for the workspace to start.' : blocked ? 'Save your changes before running the test' : !canRun ? 'Start the workspace and connect the AI in Clusters first' : undefined} onClick={() => { void act('agent_run'); }}>Run tests</Button></div>}>
-      {!workspaceReady && <p className="muted">Waiting for the workspace to start.</p>}
+        : !actionBelow && runActions}>
+      {!workspaceReady && <p className="muted">{waiting}</p>}
       <p className="sr-only test-announcement" role="status" aria-live="polite" aria-atomic="true">{!running ? cancellationLine ?? (!outdated ? uncertain ? 'Test result unknown.' : resultAnnouncement(snapshot?.report) : undefined) : undefined}</p>
-      <CardSection title={snapshot?.report || running ? "What happened" : "Tests"}>
-        {snapshot?.busy && snapshot.busy.documentId !== documentId && <p role="status">{snapshot.busy.name} is running a test.</p>}
-        {outdated && <p role="status">{changedFiles(source, snapshot?.source, stale)}</p>}
-        {running && <TestProgress stage={cancelling ? 'Cancelling tests · waiting for the test worker to stop' : snapshot?.stage && snapshot.stage !== 'done' ? stage[snapshot.stage] : 'Starting your tests'} />}
-        {running && !cancelling && snapshot?.canCancel && <p>Stop ends the tests on this computer and keeps answers that already finished.</p>}
-        {!running && cancellationLine && <p>{cancellationLine}</p>}
-        {!running && unconfirmed && <><p>Quit Bridge to stop all work on this computer. Actions already taken are not undone.</p>
-          <div className="workspace-step-actions">
-            {snapshot?.canRetryCancellation && <Button type="button" kind="primary" onClick={() => { void act('agent_run_cancel'); }}>Retry cancellation</Button>}
-            {snapshot?.canCheckCancellation && <Button type="button" kind="quiet" onClick={() => { void act('agent_run_check_cancellation'); }}>Check again</Button>}
-            <Button type="button" kind="quiet" onClick={() => { void invoke('quit_bridge').catch(() => setActionMessage("Couldn't quit Bridge. Use Quit Bridge from its menu.")); }}>Quit Bridge</Button>
-          </div>
-        </>}
-        {actionMessage && <p role="status">{actionMessage}</p>}
-        {message && <p role="status">{message}</p>}
-        {snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected) && <p role="alert">{errors[snapshot.error]}</p>}
-        {!running && !outdated && !uncertain && !cancellationLine && snapshot?.report?.verdict === 'failed' && <div className="test-next-step">
-          <p>{snapshot.report.cases.some(c => c.verdict === 'failed' && c.phase !== 'Succeeded') ? 'The task did not finish successfully. Review its answer and tool activity below before trying again.' : 'The agent answered, but its checks failed. Compare the answer with the test, then adjust the instructions or test file.'}</p>
-          {onEditInstructions && <Button type="button" kind="secondary" onClick={onEditInstructions}>Edit instructions</Button>}
-        </div>}
-        <DesignerTests definitions={running && sourceCurrent === false ? undefined : definitions} report={snapshot?.report} stale={outdated} running={running} vendor={snapshot?.vendor} />
-      </CardSection>
-      {(tests !== undefined || !!snapshot?.acknowledged.length || snapshot?.pending || snapshot?.source) && <Details hint="Test file, resources and file hashes">
-        {tests !== undefined && <section className="test-file-source" aria-label="Test file, read-only"><h5 className="section-label">Test file, read-only</h5><pre className="example-source">{tests}</pre></section>}
-        {snapshot?.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Test file hash" value={snapshot.source.tests} /></>}
-        {snapshot?.acknowledged.map(r => <GeneratedValue key={r.uid} label={r.kind} value={r.name} />)}
-        {snapshot?.pending && <GeneratedValue label={`Possibly created ${snapshot.pending.kind}`} value={snapshot.pending.name} />}
-      </Details>}
+      {/* Folded, the card still keeps the test file, hashes and resources in File view: nowhere else shows them. */}
+      {collapsed ? <div className="run-body">{content}{list}{fileDetails}</div>
+        // The running stage is the one place the card names what is happening; results are their own rows.
+        : running ? <><CardSection title="What happened">{content}</CardSection>{list}{fileDetails}</> : <div className="run-body">{content}{actionBelow && runActions}{list}{fileDetails}</div>}
     </LongCard>
   </section>;
 }

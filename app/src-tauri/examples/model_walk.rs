@@ -3,6 +3,17 @@
 #[cfg(not(all(target_os = "macos", feature = "custom-protocol")))]
 fn main() {}
 
+#[cfg(all(target_os = "macos", feature = "custom-protocol"))]
+fn fixture_millis() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
+
 // Stages are advanced only by explicit UI actions and status reads. The final
 // turn waits for Stop so the driver cannot miss that control on a fast runner.
 #[cfg(all(target_os = "macos", feature = "custom-protocol"))]
@@ -24,6 +35,9 @@ impl ChatFixture {
                 can_send: true,
                 versions: vec![],
                 error: None,
+                denied: None,
+                kept_on_cluster: false,
+                read_only: false,
             },
             started: None,
             fresh: true,
@@ -63,6 +77,7 @@ impl ChatFixture {
                     turn.termination_unconfirmed = true;
                 } else {
                     turn.phase = "Succeeded".into();
+                    turn.finished_at = Some(fixture_millis());
                     turn.answer = Some(if first {
                         "The checksum is ALPHA. <script>fixture</script>".into()
                     } else {
@@ -127,6 +142,7 @@ impl ChatFixture {
                         call_id: "fixture-tool".into(),
                         phase: "running".into(),
                     }],
+                    started_at: fixture_millis(),
                     ..ChatTurn::default()
                 });
                 let held = self.phase_file.as_ref().is_some_and(|path| path.exists());
@@ -556,7 +572,9 @@ fn main() {
                 "cluster_places" => json!({"places":[{
                     "key":"team-observed", "context":"team-dev", "service":"control/orka", "namespace":"agents",
                     "stale":false, "observedAt":1234567890000_u64, "agents":[]
-                }], "selectedKey":cluster_selected.load(std::sync::atomic::Ordering::SeqCst).then_some("team-observed"), "persistenceState":"complete"}),
+                }], "selectedKey":cluster_selected.load(std::sync::atomic::Ordering::SeqCst).then_some("team-observed"), "persistenceState":"complete",
+                    // Required since places report lost access; this synthetic place never loses it.
+                    "accessLost":false}),
                 "cluster_reconnect" => target.clone(),
                 "cluster_use" => {
                     if account_scene {
@@ -884,11 +902,17 @@ fn main() {
                     connected.store(true, std::sync::atomic::Ordering::SeqCst);
                     key_connected.store(false, std::sync::atomic::Ordering::SeqCst);
                     // A synthetic login only; no GitHub CLI or credential is read.
-                    let vendor = matches!(invoke.message.payload(), tauri::ipc::InvokeBody::Json(args) if !args["vendor"].is_null());
+                    let (vendor, model) = match invoke.message.payload() {
+                        tauri::ipc::InvokeBody::Json(args) => (!args["vendor"].is_null(), args["model"].as_str().map(String::from)),
+                        _ => (false, None),
+                    };
+                    // No model yet stands for a saved choice of the fixed catalog's first model.
                     if vendor { json!({"ready":true}) } else {
-                        json!({"ready":true, "connection":{"kind":"copilot", "model":"gpt-5.6-terra", "account":"synthetic-user"}})
+                        json!({"ready":true, "connection":{"kind":"copilot", "model":model.unwrap_or_else(|| "gpt-5.6-terra".into()), "account":"synthetic-user"}})
                     }
                 }
+                // A fixed Copilot catalog: the walk never asks GitHub or reads GitHub CLI.
+                "setup_check_model" => json!({"account":"synthetic-user", "models":[{"id":"gpt-5.6-terra"}, {"id":"gpt-6.1-terra"}], "preselected":"gpt-5.6-terra"}),
                 "setup_connect_key" => {
                     let tauri::ipc::InvokeBody::Json(args) = invoke.message.payload() else { return false; };
                     let vendor = args["vendor"].as_str().unwrap_or("");

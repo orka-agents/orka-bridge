@@ -137,7 +137,9 @@ test('a failed reopened key connection uses the saved company rather than Copilo
   invoke.mockRejectedValue({ kind: 'modelCredentialRejected', vendor: 'anthropic', message: key });
   render(<Model enabled />); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect((await screen.findByRole('alert')).textContent).toContain("Anthropic didn't accept this key");
-  expect(screen.getByRole('status').textContent).toBe('Key removed.');
+  // The refusal is said under the field; the cleared key needs no second notice.
+  expect(screen.getByLabelText('API key').getAttribute('aria-invalid')).toBe('true');
+  expect(screen.queryByText('Key removed.')).toBeNull();
   expect(document.body.textContent).not.toContain('GitHub CLI stays signed in');
 });
 test('reopened connection uses native company metadata, not the initial Copilot choice', async () => {
@@ -172,4 +174,29 @@ test.each([
   { ready: true, connection: { ...anthropic, key } },
 ])('unknown connection metadata cannot establish readiness', async reply => {
   invoke.mockResolvedValue(reply); expect(await connectModel()).toMatchObject({ ok: false });
+});
+
+test('a workspace that cannot use API keys leads to GitHub Copilot, with nothing saved to remove or check again', async () => {
+  invoke.mockRejectedValue({ kind: 'modelKeyUnsupported', vendor: 'openai', message: 'SECRET' });
+  const states: string[] = [];
+  render(<Model enabled onState={state => states.push(state)} />); keyChoice();
+  fireEvent.click(screen.getByRole('button', { name: 'OpenAI' }));
+  fireEvent.change(field(), { target: { value: 'sk-synthetic-only' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain("The workspace on this computer can't use your own API key yet. Choose GitHub Copilot instead.");
+  expect(document.body.textContent).not.toContain('SECRET');
+  expect(screen.queryByText('Remove the saved sign-in or key before choosing another provider.')).toBeNull();
+  expect(screen.queryByRole('button', { name: /Remove key|Remove sign-in|Check again/ })).toBeNull();
+  expect(screen.getByRole('group', { name: 'AI connection' }).getAttribute('title')).toBeNull();
+  const copilot = screen.getByRole('button', { name: 'Use GitHub Copilot' });
+  expect(copilot.classList.contains('button-primary')).toBe(true);
+  fireEvent.click(copilot);
+  expect((screen.getByRole('radio', { name: 'GitHub Copilot' }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.queryByRole('alert')).toBeNull();
+  // Back on the key route, the card says so before another key is typed, and offers Copilot instead of Connect.
+  keyChoice();
+  expect(screen.getByText("The workspace on this computer can't use your own API key yet. Choose GitHub Copilot instead.")).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
+  expect(invoke).toHaveBeenCalledTimes(1);
 });

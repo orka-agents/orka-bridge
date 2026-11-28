@@ -5,13 +5,14 @@ import './design-system.css';
 
 export type Status = 'passed' | 'failed' | 'running' | 'stale' | 'needs-you' | 'not-started';
 const labels: Record<Status, string> = { passed: 'Passed', failed: 'Failed', running: 'Running', stale: 'Stale', 'needs-you': 'Needs you', 'not-started': 'Not started' };
+// Status icons are 18px rings on a 16px grid, drawn in the status colour.
 export function StatusIcon({ state }: { state: Status }) {
-  return <svg className={`icon status-icon status-${state}`} viewBox="0 0 24 24" aria-hidden="true">
-    <circle cx="12" cy="12" r="9" strokeDasharray={state === 'stale' ? '2 3' : undefined} />
-    {state === 'passed' && <path d="m7 12 3 3 7-7" />}
-    {state === 'failed' && <path d="m9 9 6 6m0-6-6 6" />}
-    {state === 'running' && <path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none" />}
-    {state === 'needs-you' && <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />}
+  return <svg className={`icon status-icon status-${state}`} viewBox="0 0 16 16" aria-hidden="true">
+    <circle cx="8" cy="8" r="6.5" strokeDasharray={state === 'stale' ? '1.6 2.2' : undefined} />
+    {state === 'passed' && <path d="m5 8.3 2.1 2.1L11 6" />}
+    {state === 'failed' && <path d="m5.6 5.6 4.8 4.8m0-4.8-4.8 4.8" />}
+    {state === 'running' && <path d="M8 1.5a6.5 6.5 0 0 1 0 13Z" fill="currentColor" stroke="none" />}
+    {state === 'needs-you' && <path d="M8 4.5v4.2M8 11v.4" />}
   </svg>;
 }
 export function Elapsed() {
@@ -39,8 +40,8 @@ export function GeneratedValue({ label, value }: { label: string; value: string 
   }
   return <div className="generated-value"><span>{label}</span><code title={value}>{short === value ? value : <><span className="sr-only">{value}</span><span aria-hidden="true">{short}</span></>}</code><Button type="button" kind="icon" aria-label={`Copy ${label}`} title={`Copy ${label}`} onClick={() => { void copy(); }}><CopyIcon /></Button><span role="status">{feedback?.value === value ? feedback.text : ''}</span></div>;
 }
-export function Details({ children, hint }: { children: ReactNode; hint?: string }) {
-  return <Disclosure className="card-details" label="Details" hint={hint}><div>{children}</div></Disclosure>;
+export function Details({ children, hint, defaultOpen }: { children: ReactNode; hint?: string; defaultOpen?: boolean }) {
+  return <Disclosure className="card-details" label="Details" hint={hint} defaultOpen={defaultOpen}><div>{children}</div></Disclosure>;
 }
 export function CardSection({ title, children }: { title: string; children: ReactNode }) {
   return <section className="card-section" aria-label={title}><h4 className="section-label">{title}</h4>{children}</section>;

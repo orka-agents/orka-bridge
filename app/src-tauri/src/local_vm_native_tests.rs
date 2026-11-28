@@ -414,7 +414,7 @@ mod infrastructure_tests {
             .with_client(|_, _| panic!("credential capture must not be admitted"))
             .await
             .is_err());
-        assert!(vm.connect_model(store).await.is_err());
+        assert!(vm.connect_model(store, None).await.is_err());
         assert_eq!(vm.status(), LocalVmStatus::Starting);
         probe.state.store(1, Ordering::SeqCst);
         phase(&vm, LocalVmStatus::Ready).await;
@@ -1429,6 +1429,7 @@ mod retry_custody_tests {
                                 stage: Stage::Early,
                                 guest_nonce: Uuid::new_v4(),
                                 run_cleanup: false,
+                                navigator_chat: false,
                                 accepted_boot_nonce: None,
                             },
                             0,

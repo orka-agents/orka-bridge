@@ -87,7 +87,7 @@ async fn select_connected_place_preserves_existing_target_and_provider_without_r
     assert!(api_b.calls.lock().unwrap().is_empty());
     assert!(orka.calls.lock().unwrap().is_empty());
     assert_eq!(reads.load(Ordering::SeqCst), 0);
-    // Reconnect replaces the client/TargetId map, even though A's inventory is still fresh.
+    // Rechecking B rereads kubeconfig; A's unchanged context keeps its target and access.
     session.reconnect(&key_b).await.unwrap();
     assert!(
         !session
@@ -98,6 +98,16 @@ async fn select_connected_place_preserves_existing_target_and_provider_without_r
             .unwrap()
             .stale
     );
+    let selected = reply(session.select(&key_a).await.unwrap());
+    assert_eq!(selected["target"], reply(&target_a));
+    // A real change to the context's entry replaces the TargetId map.
+    {
+        let mut changed = fresh.lock().unwrap();
+        for context in &mut changed.contexts {
+            context.context.as_mut().unwrap().namespace = Some("changed".into());
+        }
+    }
+    session.reconnect(&key_b).await.unwrap();
     assert!(session.select(&key_a).await.is_err());
     assert!(session.places().selected_key.is_none());
 }
@@ -107,7 +117,7 @@ async fn select_place_fails_closed_for_invalid_stale_reloaded_and_forgotten_keys
     for revoke in ["invalid", "stale", "reload", "forget"] {
         let api = Arc::new(ApiFixture::default());
         let orka = Arc::new(OrkaFixture::default());
-        let (session, _) = reading_session(
+        let (session, fresh) = reading_session(
             config(&api.start(), json!({"token":"static-fixture"})),
             &orka,
         );
@@ -127,6 +137,7 @@ async fn select_place_fails_closed_for_invalid_stale_reloaded_and_forgotten_keys
                 assert!(session.overview_one(&key).await[0].stale);
             }
             "reload" => {
+                change_contexts(&fresh);
                 session.reload().await.unwrap();
             }
             "forget" => {
@@ -153,7 +164,7 @@ async fn select_place_fails_closed_for_invalid_stale_reloaded_and_forgotten_keys
 async fn places_snapshot_is_passive_and_selection_is_exact_and_revocable() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());
-    let (session, _) = reading_session(
+    let (session, fresh) = reading_session(
         config(&api.start(), json!({"token":"static-fixture"})),
         &orka,
     );
@@ -193,9 +204,14 @@ async fn places_snapshot_is_passive_and_selection_is_exact_and_revocable() {
     assert!(places
         .iter()
         .any(|place| place["key"] == both["selectedKey"]));
+    // Browsing and an unchanged reload keep the place in use.
     session.discover(&context).await.unwrap();
-    assert_eq!(reply(session.places())["selectedKey"], Value::Null);
+    assert_eq!(reply(session.places())["selectedKey"], both["selectedKey"]);
     assert_eq!(reply(session.places())["places"], both["places"]);
+    session.reload().await.unwrap();
+    assert_eq!(reply(session.places())["selectedKey"], both["selectedKey"]);
+    assert_eq!(reply(session.places())["accessLost"], false);
+    change_contexts(&fresh);
     session.reload().await.unwrap();
     assert_eq!(reply(session.places())["selectedKey"], Value::Null);
     assert_eq!(reply(session.places())["places"], both["places"]);
@@ -260,10 +276,20 @@ async fn overview_expired_access_never_sends_or_refreshes_a_credential() {
     let orka = Arc::new(OrkaFixture::default());
     let mut client = client(&api, &orka, json!({"token":"static-fixture"}));
     let id = target(&mut client).await;
-    let mut access = client.connect(id, None).await.unwrap();
-    access.expiry = Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
-        "2020-01-01T00:00:00Z".parse().unwrap(),
+    let access = client.connect(id, None).await.unwrap();
+    // Orka rejects the kubeconfig credential, which Bridge cannot renew: the access is lost.
+    orka.rejected.lock().unwrap().push("static-fixture".into());
+    assert!(matches!(
+        access.inventory().await,
+        Err(ClusterError::Denied)
     ));
+    assert!(access.lost());
+    assert!(!api
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|c| c.1.ends_with("/token")));
     api.calls.lock().unwrap().clear();
     orka.calls.lock().unwrap().clear();
     assert!(matches!(
@@ -272,6 +298,37 @@ async fn overview_expired_access_never_sends_or_refreshes_a_credential() {
     ));
     assert!(api.calls.lock().unwrap().is_empty());
     assert!(orka.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn overview_never_lists_bridge_conversation_agents_as_the_persons() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let (session, _) = reading_session(
+        config(&api.start(), json!({"token":"static-fixture"})),
+        &orka,
+    );
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    session.use_target(&target, None).await;
+    let id = "0123456789abcdef0123456789abcdef";
+    *orka.agents.lock().unwrap() = Some(json!({"items":[
+        {"metadata":{"name":"web-reader","namespace":"agents","uid":"one"}},
+        {"metadata":{"name":format!("bridge-chat-agent-{id}"),"namespace":"agents","uid":"two"}},
+        {"metadata":{"name":format!("bridge-nav-agent-{id}"),"namespace":"agents","uid":"three"}},
+        {"metadata":{"name":format!("bridge-run-{id}"),"namespace":"agents","uid":"four"}}
+    ],"metadata":{}}));
+    let places = reply(session.overview().await);
+    let names: Vec<_> = places[0]["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["web-reader".to_string(), format!("bridge-run-{id}")]
+    );
 }
 
 #[tokio::test]
@@ -321,7 +378,7 @@ async fn overview_pagination_failure_keeps_the_last_complete_inventory() {
 async fn overview_coalesces_refresh_preserves_selectable_access_and_fences_reload() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());
-    let (session, _) = reading_session(
+    let (session, fresh) = reading_session(
         config(&api.start(), json!({"token":"static-fixture"})),
         &orka,
     );
@@ -351,6 +408,7 @@ async fn overview_coalesces_refresh_preserves_selectable_access_and_fences_reloa
         "a pending refresh must preserve previously observed selectable access"
     );
     assert!(!session.places().places[0].stale);
+    change_contexts(&fresh);
     session.reload().await.unwrap();
     gate.notify_waiters();
     let first = reply(first.await.unwrap());
@@ -480,7 +538,7 @@ async fn overview_scoped_refresh_fences_reload_and_remove() {
     for remove in [false, true] {
         let api = Arc::new(ApiFixture::default());
         let orka = Arc::new(OrkaFixture::default());
-        let (session, _) = reading_session(
+        let (session, fresh) = reading_session(
             config(&api.start(), json!({"token":"static-fixture"})),
             &orka,
         );
@@ -500,6 +558,7 @@ async fn overview_scoped_refresh_fences_reload_and_remove() {
         if remove {
             session.forget(&key).await.unwrap();
         } else {
+            change_contexts(&fresh);
             session.reload().await.unwrap();
         }
         gate.notify_one();
@@ -518,7 +577,7 @@ async fn overview_inventory_is_get_only_and_keeps_stale_after_reload_without_rec
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());
     let cfg = config(&api.start(), json!({"token":"static-fixture"}));
-    let (session, _) = reading_session(cfg, &orka);
+    let (session, fresh) = reading_session(cfg, &orka);
     let context = id_of(&session.contexts().await.unwrap()[0]);
     let target = id_of(&session.discover(&context).await.unwrap()[0]);
     assert_eq!(
@@ -567,6 +626,7 @@ async fn overview_inventory_is_get_only_and_keeps_stale_after_reload_without_rec
     *orka.fail.lock().unwrap() = None;
     let latest = reply(session.overview().await);
     assert_eq!(latest[0]["stale"], false);
+    change_contexts(&fresh);
     session.reload().await.unwrap();
     let calls = orka.calls.lock().unwrap().len();
     assert_eq!(reply(session.overview().await)[0]["stale"], true);
@@ -695,6 +755,108 @@ async fn command_no_tokenrequest_before_use_and_conditional_account() {
     );
 }
 
+/// A minted ServiceAccount access in use, its token then rejected by Orka as expired.
+async fn minted_then_rejected() -> (
+    Arc<ApiFixture>,
+    Arc<OrkaFixture>,
+    bridge_engine::clusters::commands::ClusterSession,
+) {
+    use bridge_engine::clusters::commands::ClusterSession;
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    *orka.identity.lock().unwrap() =
+        json!({"authenticated":true,"authType":"tokenReview","namespace":""});
+    let session = ClusterSession::new(client(&api, &orka, json!({"token":"static-fixture"})));
+    let contexts = session.contexts().await.unwrap();
+    let id = serde_json::to_value(&contexts[0]).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let found = session.discover(&id).await.unwrap();
+    let target = serde_json::to_value(&found[0]).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let view = session.use_target(&target, Some("existing".into())).await;
+    assert_eq!(serde_json::to_value(view).unwrap()["status"], "connected");
+    orka.rejected.lock().unwrap().push("issued-fixture".into());
+    *api.override_response.lock().unwrap() = Some((
+        "/token".into(),
+        200,
+        json!({"apiVersion":"authentication.k8s.io/v1","kind":"TokenRequest","spec":{"audiences":[]},"status":{"token":"issued-fixture-2","expirationTimestamp":"2099-01-01T00:00:00Z"}}),
+    ));
+    orka.calls.lock().unwrap().clear();
+    (api, orka, session)
+}
+fn token_requests(api: &ApiFixture) -> Vec<(String, Value)> {
+    api.calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c.1.ends_with("/token"))
+        .map(|c| (c.1.clone(), c.3.clone()))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_rejected_minted_token_is_renewed_for_the_same_account_and_the_read_retried_once() {
+    let (api, orka, session) = minted_then_rejected().await;
+    let places = session.overview().await;
+    assert!(!places[0].stale, "the read succeeds after one renewal");
+    let sent: Vec<_> = orka
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|c| (c.0, c.1.clone()))
+        .collect();
+    assert_eq!(
+        sent,
+        vec![
+            (OrkaResource::AgentInventory, "issued-fixture".into()),
+            (OrkaResource::WhoAmI, "issued-fixture-2".into()),
+            (OrkaResource::AgentInventory, "issued-fixture-2".into()),
+        ]
+    );
+    let requests = token_requests(&api);
+    assert_eq!(requests.len(), 2, "one TokenRequest at Use, one renewal");
+    assert!(requests[1]
+        .0
+        .ends_with("/namespaces/agents/serviceaccounts/existing/token"));
+    assert_eq!(requests[1].1["spec"]["expirationSeconds"], 600);
+    assert!(!session.places().access_lost);
+    // Later reads use the renewed token without minting again.
+    assert!(!session.overview().await[0].stale);
+    assert_eq!(token_requests(&api).len(), 2);
+}
+
+#[tokio::test]
+async fn renewal_never_switches_accounts_and_a_refused_renewal_needs_reconnecting() {
+    let (api, orka, session) = minted_then_rejected().await;
+    // The account was replaced by another of the same name: Orka names a different UID.
+    orka.subjects.lock().unwrap().insert(
+        "issued-fixture-2".into(),
+        json!({"authenticated":true,"authType":"tokenReview","namespace":"agents","username":"system:serviceaccount:agents:existing","uid":"another-uid"}),
+    );
+    assert!(session.overview().await[0].stale);
+    assert!(
+        !orka
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.0 == OrkaResource::AgentInventory && c.1 == "issued-fixture-2"),
+        "the other account's token is never used"
+    );
+    assert!(session.places().access_lost);
+    assert!(session.places().places[0].stale);
+    // Lost stays lost: no further TokenRequest or Orka read, never a 401 loop.
+    let (requests, reads) = (token_requests(&api).len(), orka.calls.lock().unwrap().len());
+    assert!(session.overview().await[0].stale);
+    assert_eq!(token_requests(&api).len(), requests);
+    assert_eq!(orka.calls.lock().unwrap().len(), reads);
+}
+
 #[tokio::test]
 async fn command_unknown_ids_never_reach_cluster() {
     use bridge_engine::clusters::commands::ClusterSession;
@@ -794,6 +956,11 @@ async fn remembered_reconnect_is_exact_uid_discovery_not_admission() {
     let key = session.places().places[0].key.clone();
     orka.calls.lock().unwrap().clear();
     api.calls.lock().unwrap().clear();
+    // Rechecking the place in use with unchanged kubeconfig keeps its handle and selection.
+    let reconnected = session.reconnect(&key).await.unwrap();
+    assert_eq!(id_of(&reconnected), target);
+    assert_eq!(reply(session.places())["selectedKey"], json!(key));
+    change_contexts(&fresh);
     let reconnected = session.reconnect(&key).await.unwrap();
     assert_ne!(id_of(&reconnected), target);
     assert_eq!(reconnected.service_name, "orka");
@@ -1179,6 +1346,10 @@ struct OrkaFixture {
     inventory_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
     inventory_gate_context: Mutex<Option<String>>,
     identity: Mutex<Value>,
+    /// Bearers Orka answers with 401, as for an expired token.
+    rejected: Mutex<Vec<String>>,
+    /// Who Orka says a minted token is, by token.
+    subjects: Mutex<std::collections::HashMap<String, Value>>,
     fail: Mutex<Option<AccessOutcome>>,
     fail_at: Mutex<Option<(OrkaResource, AccessOutcome)>>,
     // Endless Provider pages, each slower than a third of the operation budget.
@@ -1198,6 +1369,8 @@ impl Default for OrkaFixture {
             identity: Mutex::new(
                 json!({"authenticated":true,"authType":"tokenReview","namespace":"agents"}),
             ),
+            rejected: Mutex::default(),
+            subjects: Mutex::default(),
             fail: Mutex::new(None),
             fail_at: Mutex::new(None),
             slow_pages: Mutex::new(false),
@@ -1225,6 +1398,9 @@ impl OrkaRead for OrkaFixture {
             ));
             if let Some(error) = *self.fail.lock().unwrap() {
                 return Err(error);
+            }
+            if self.rejected.lock().unwrap().iter().any(|b| b == bearer) {
+                return Err(failed(Check::Agents, CheckResult::AuthenticationRejected));
             }
             if let Some((at, error)) = *self.fail_at.lock().unwrap() {
                 if at == resource {
@@ -1264,7 +1440,7 @@ impl OrkaRead for OrkaFixture {
                 }
             }
             Ok(match resource {
-                OrkaResource::WhoAmI if bearer == "issued-fixture" => json!({"authenticated":true,"authType":"tokenReview","namespace":"agents"}),
+                OrkaResource::WhoAmI if bearer.starts_with("issued-fixture") => self.subjects.lock().unwrap().get(bearer).cloned().unwrap_or_else(|| json!({"authenticated":true,"authType":"tokenReview","namespace":"agents","username":"system:serviceaccount:agents:existing","uid":"sa-uid"})),
                 OrkaResource::WhoAmI => self.identity.lock().unwrap().clone(),
                 OrkaResource::Providers => self.providers.lock().unwrap().clone().unwrap_or_else(|| {
                     json!({"items":[{"apiVersion":"core.orka.ai/v1alpha1","kind":"Provider","metadata":{"name":"model","namespace":"agents"},"spec":{"type":"openai","defaultModel":"fixture-model"},"status":{"ready":true}}],"metadata":{}})
@@ -1639,7 +1815,7 @@ async fn exec_certificate_creator_uses_existing_account_without_export_or_tls_re
         .connect(target, Some("existing".into()))
         .await
         .unwrap();
-    assert!(access.expiry.is_some());
+    assert!(access.renewable());
     let calls = api.calls.lock().unwrap();
     let peers = tls.peers.lock().unwrap();
     for (i, call) in calls.iter().enumerate() {
@@ -1735,7 +1911,7 @@ async fn certificate_creator_existing_sa_and_issued_ssar_has_no_creator_tls_cert
         .connect(id, Some("existing.account".into()))
         .await
         .unwrap();
-    assert!(access.expiry.is_some());
+    assert!(access.renewable());
     let calls = api.calls.lock().unwrap();
     let requests: Vec<_> = calls.iter().filter(|c| c.1.ends_with("/token")).collect();
     assert_eq!(requests.len(), 1);
@@ -1968,6 +2144,14 @@ async fn binding_changed_before_access_and_missing_builtin_cannot_pass() {
 }
 
 type Fresh = Arc<Mutex<Option<Kubeconfig>>>;
+/// A real change to every context's own kubeconfig entry, which retires its ids and access.
+/// An unchanged reload keeps them.
+fn change_contexts(fresh: &Fresh) {
+    let mut fresh = fresh.lock().unwrap();
+    for context in &mut fresh.as_mut().unwrap().contexts {
+        context.context.as_mut().unwrap().namespace = Some("changed".into());
+    }
+}
 fn reading_session(
     cfg: Kubeconfig,
     orka: &Arc<OrkaFixture>,
@@ -2139,7 +2323,7 @@ async fn timed_out_reload_does_not_accumulate_blocked_readers() {
 async fn reload_waits_for_discovery_and_use_and_late_replies_are_stale() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());
-    let (session, _fresh) = reading_session(
+    let (session, fresh) = reading_session(
         config(&api.start(), json!({"token":"static-fixture"})),
         &orka,
     );
@@ -2155,6 +2339,7 @@ async fn reload_waits_for_discovery_and_use_and_late_replies_are_stale() {
         async move { session.discover(&context).await }
     });
     until(|| services() == 1).await;
+    change_contexts(&fresh);
     let reload = tokio::spawn({
         let session = session.clone();
         async move { session.reload().await }
@@ -2179,6 +2364,12 @@ async fn reload_waits_for_discovery_and_use_and_late_replies_are_stale() {
         async move { reply(session.use_target(&target, None).await) }
     });
     until(|| services() > before).await;
+    {
+        let mut changed = fresh.lock().unwrap();
+        for context in &mut changed.as_mut().unwrap().contexts {
+            context.context.as_mut().unwrap().namespace = Some("changed-again".into());
+        }
+    }
     let reload = tokio::spawn({
         let session = session.clone();
         async move { session.reload().await }

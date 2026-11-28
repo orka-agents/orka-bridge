@@ -3,8 +3,10 @@ pub mod agent_reveal;
 pub mod agents;
 pub mod catalog;
 pub mod chat;
+pub mod chat_cluster;
 pub mod clusters;
 pub mod copilot_environment;
+pub mod copilot_preflight;
 #[cfg(debug_assertions)]
 pub mod dev_image;
 pub mod engine;
@@ -12,6 +14,7 @@ pub mod example_run;
 pub mod job_run;
 pub mod local_results;
 pub mod local_vm;
+pub mod navigator;
 pub mod overview;
 #[path = "overview/places.rs"]
 pub mod overview_places;
@@ -21,4 +24,5 @@ pub mod send;
 pub mod send_summary;
 pub mod setup;
 pub mod shutdown;
+pub mod workspace_fresh;
 pub mod workspace_upgrade;

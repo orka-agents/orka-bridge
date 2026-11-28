@@ -19,6 +19,8 @@ struct Probe {
     order: Mutex<Vec<&'static str>>,
     fail_stop: bool,
     fail_launch: bool,
+    /// What a fresh workspace's download check answers.
+    fresh_check: Option<(bridge_engine::workspace_fresh::Refusal, Option<u64>)>,
 }
 struct Factory(Arc<Probe>);
 struct Session(Arc<Probe>);
@@ -48,6 +50,10 @@ impl LocalFactory for Factory {
             }
             Ok(Box::new(Session(p)) as Box<dyn LocalSession>)
         })
+    }
+    fn fresh_download_check(&self) -> bridge_engine::local_vm::FreshCheck<'_> {
+        let check = self.0.fresh_check;
+        Box::pin(async move { check.map_or(Ok(()), Err) })
     }
 }
 impl LocalSession for Session {
@@ -792,5 +798,267 @@ async fn engine_shutdown_bars_transport_calls() {
     engine.shutdown();
     assert!(engine.call(request()).await.is_err());
     assert!(p.order.lock().unwrap().is_empty());
+    vm.shutdown().await.unwrap();
+}
+
+/// A local data folder with one workspace and the local workspace chosen in setup.
+fn fresh_scene() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    Arc<bridge_engine::setup::SetupStore>,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let (data, local) = (temp.path().join("roaming"), temp.path().join("local"));
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&local).unwrap();
+    drop(
+        bridge_engine::runtime::journal::Journal::create(
+            &local.join("local-vm-v1"),
+            bridge_engine::runtime::types::BackendKind::Apple,
+            vec![1],
+        )
+        .unwrap(),
+    );
+    let store = Arc::new(bridge_engine::setup::SetupStore::with_upgrade_root(
+        Some(data.clone()),
+        Some(local.clone()),
+    ));
+    (temp, data, local, store)
+}
+#[tokio::test]
+async fn fresh_workspace_stops_through_the_ordinary_path_then_starts_first_install() {
+    use bridge_engine::{local_vm, workspace_fresh::FreshStatusDto};
+    let (_temp, data, local, store) = fresh_scene();
+    let record = std::fs::read(local.join("local-vm-v1/record.json")).unwrap();
+    let p = Arc::new(Probe::default());
+    let vm = owner(p.clone());
+    let retired = Arc::new(AtomicUsize::new(0));
+    vm.on_workspace_replaced({
+        let retired = retired.clone();
+        Arc::new(move || {
+            retired.fetch_add(1, Ordering::SeqCst);
+        })
+    });
+    local_vm::select_local(store.clone(), &vm).await.unwrap();
+    phase(&vm, LocalVmStatus::Installing).await;
+    p.launch.notify_one();
+    phase(&vm, LocalVmStatus::Ready).await;
+    let reply = vm
+        .start_fresh_workspace(data.clone(), local.clone(), store.clone())
+        .await;
+    let FreshStatusDto::Replaced {
+        reclaimable,
+        transaction,
+        ..
+    } = &reply
+    else {
+        panic!("{reply:?}")
+    };
+    // The running VM was stopped first, then first install started again.
+    assert_eq!(p.stops.load(Ordering::SeqCst), 1);
+    phase(&vm, LocalVmStatus::Installing).await;
+    assert_eq!(p.starts.load(Ordering::SeqCst), 2);
+    assert_eq!(retired.load(Ordering::SeqCst), 1);
+    assert!(!local.join("local-vm-v1").exists());
+    let name = format!("discarded-{transaction}");
+    assert_eq!(*reclaimable, vec![local.join(&name).display().to_string()]);
+    let snapshot =
+        serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap()).unwrap();
+    assert_eq!(snapshot["workspaceFresh"]["state"], "replaced");
+    assert_eq!(snapshot["workspaceFresh"]["ai"], "absent");
+    assert_eq!(snapshot["selected"], "localVm");
+    // Deletion runs in the background and reports when it is done.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let s = serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap())
+                .unwrap();
+            if s["workspaceFresh"]["cleaning"] == false {
+                assert_eq!(s["workspaceFresh"]["reclaimable"], serde_json::json!([]));
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!local.join(&name).exists());
+    assert!(!record.is_empty());
+    assert!(store.status().unwrap().selected.is_some());
+    p.launch.notify_one();
+    phase(&vm, LocalVmStatus::Ready).await;
+    vm.shutdown().await.unwrap();
+}
+#[tokio::test]
+async fn fresh_workspace_refuses_without_moving_anything_when_the_stop_is_unconfirmed() {
+    use bridge_engine::{
+        local_vm,
+        workspace_fresh::{FreshStatusDto, Refusal},
+    };
+    let (_temp, data, local, store) = fresh_scene();
+    let record = std::fs::read(local.join("local-vm-v1/record.json")).unwrap();
+    let p = Arc::new(Probe {
+        fail_stop: true,
+        ..Probe::default()
+    });
+    let vm = owner(p.clone());
+    local_vm::select_local(store.clone(), &vm).await.unwrap();
+    phase(&vm, LocalVmStatus::Installing).await;
+    p.launch.notify_one();
+    phase(&vm, LocalVmStatus::Ready).await;
+    let reply = vm
+        .start_fresh_workspace(data.clone(), local.clone(), store.clone())
+        .await;
+    assert_eq!(reply, FreshStatusDto::refused(Refusal::StopUnconfirmed));
+    assert_eq!(
+        std::fs::read(local.join("local-vm-v1/record.json")).unwrap(),
+        record
+    );
+    assert!(!local.join("workspace-fresh-v1/intent.json").exists());
+    // Nothing starts again over a workspace whose stop is unconfirmed.
+    vm.start();
+    assert_eq!(p.starts.load(Ordering::SeqCst), 1);
+    let snapshot =
+        serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap()).unwrap();
+    assert_eq!(
+        snapshot["workspaceFresh"],
+        serde_json::json!({"state": "refused", "reason": "stopUnconfirmed", "restarted": false})
+    );
+    assert_eq!(snapshot["workspaceFailure"]["cause"], "stopUnconfirmed");
+}
+#[tokio::test]
+async fn fresh_workspace_waits_for_setup_already_under_way() {
+    use bridge_engine::{
+        local_vm,
+        workspace_fresh::{FreshStatusDto, Refusal},
+    };
+    let (_temp, data, local, store) = fresh_scene();
+    let p = Arc::new(Probe::default());
+    let vm = owner(p.clone());
+    local_vm::select_local(store.clone(), &vm).await.unwrap();
+    phase(&vm, LocalVmStatus::Installing).await;
+    assert_eq!(
+        vm.start_fresh_workspace(data, local.clone(), store).await,
+        FreshStatusDto::refused(Refusal::Busy)
+    );
+    assert_eq!(p.stops.load(Ordering::SeqCst), 0);
+    assert!(local.join("local-vm-v1/record.json").exists());
+    p.launch.notify_one();
+    phase(&vm, LocalVmStatus::Ready).await;
+    vm.shutdown().await.unwrap();
+}
+
+async fn ready(p: Arc<Probe>, store: &Arc<bridge_engine::setup::SetupStore>) -> Arc<LocalVm> {
+    let vm = owner(p.clone());
+    bridge_engine::local_vm::select_local(store.clone(), &vm)
+        .await
+        .unwrap();
+    phase(&vm, LocalVmStatus::Installing).await;
+    p.launch.notify_one();
+    phase(&vm, LocalVmStatus::Ready).await;
+    vm
+}
+#[tokio::test]
+async fn fresh_workspace_refuses_a_download_it_cannot_make_before_stopping_anything() {
+    use bridge_engine::workspace_fresh::{FreshStatusDto, Refusal};
+    let (_temp, data, local, store) = fresh_scene();
+    let p = Arc::new(Probe {
+        fresh_check: Some((Refusal::NoSpace, Some(42))),
+        ..Probe::default()
+    });
+    let vm = ready(p.clone(), &store).await;
+    assert_eq!(
+        vm.start_fresh_workspace(data, local.clone(), store).await,
+        FreshStatusDto::Refused {
+            reason: Refusal::NoSpace,
+            restarted: false,
+            needed_bytes: Some(42),
+            reclaimable: vec![],
+        }
+    );
+    assert_eq!(p.stops.load(Ordering::SeqCst), 0);
+    assert_eq!(vm.status(), LocalVmStatus::Ready);
+    assert!(local.join("local-vm-v1/record.json").exists());
+    assert!(!local.join("workspace-fresh-v1/intent.json").exists());
+    vm.shutdown().await.unwrap();
+}
+#[tokio::test]
+async fn fresh_workspace_answers_a_second_press_as_busy_without_replacing_the_status() {
+    use bridge_engine::workspace_fresh::{FreshStatusDto, Refusal};
+    let (_temp, data, local, store) = fresh_scene();
+    let p = Arc::new(Probe::default());
+    let vm = ready(p.clone(), &store).await;
+    let (first, second) = tokio::join!(
+        vm.start_fresh_workspace(data.clone(), local.clone(), store.clone()),
+        vm.start_fresh_workspace(data.clone(), local.clone(), store.clone())
+    );
+    assert!(
+        matches!(first, FreshStatusDto::Replaced { .. }),
+        "{first:?}"
+    );
+    assert_eq!(second, FreshStatusDto::refused(Refusal::Busy));
+    let snapshot = serde_json::to_value(
+        bridge_engine::local_vm::setup_status(store.clone(), &vm)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(snapshot["workspaceFresh"]["state"], "replaced");
+    assert_eq!(p.stops.load(Ordering::SeqCst), 1);
+    p.launch.notify_one();
+    phase(&vm, LocalVmStatus::Ready).await;
+    vm.shutdown().await.unwrap();
+}
+#[tokio::test]
+async fn fresh_workspace_refuses_while_cleanup_holds_it_before_stopping_anything() {
+    use bridge_engine::workspace_fresh::{FreshStatusDto, Refusal};
+    let (_temp, data, local, store) = fresh_scene();
+    let p = Arc::new(Probe::default());
+    let vm = ready(p.clone(), &store).await;
+    std::fs::create_dir_all(local.join("workspace-fresh-v1")).unwrap();
+    let lock = std::fs::File::create(local.join("workspace-fresh-v1/owner.lock")).unwrap();
+    lock.try_lock().unwrap();
+    assert_eq!(
+        vm.start_fresh_workspace(data, local.clone(), store).await,
+        FreshStatusDto::refused(Refusal::Busy)
+    );
+    assert_eq!(p.stops.load(Ordering::SeqCst), 0);
+    assert_eq!(vm.status(), LocalVmStatus::Ready);
+    drop(lock);
+    vm.shutdown().await.unwrap();
+}
+/// On this platform the OS credential store refuses, so a saved AI sign-in's removal is
+/// unconfirmed: the record is kept for Reset and the reply says so.
+#[cfg(not(any(windows, target_os = "macos")))]
+#[tokio::test]
+async fn fresh_workspace_keeps_a_saved_sign_in_it_could_not_remove_for_reset() {
+    use bridge_engine::workspace_fresh::{AiOutcome, FreshStatusDto};
+    let (_temp, data, local, store) = fresh_scene();
+    let p = Arc::new(Probe::default());
+    let vm = ready(p.clone(), &store).await;
+    let saved = serde_json::to_vec(&serde_json::json!({"slot":bridge_runtime_protocol::Uuid::new_v4(),
+        "installation":bridge_runtime_protocol::Uuid::new_v4(),"phase":"stored","nonce":null,"connection":null}))
+    .unwrap();
+    std::fs::write(data.join("setup-v1/model-v1"), &saved).unwrap();
+    let reply = vm
+        .start_fresh_workspace(data.clone(), local.clone(), store.clone())
+        .await;
+    let FreshStatusDto::Replaced { ai, .. } = reply else {
+        panic!("{reply:?}")
+    };
+    assert_eq!(ai, AiOutcome::Kept);
+    assert_eq!(
+        std::fs::read(data.join("setup-v1/model-v1")).unwrap(),
+        saved
+    );
+    let snapshot = serde_json::to_value(
+        bridge_engine::local_vm::setup_status(store.clone(), &vm)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(snapshot["workspaceFresh"]["ai"], "kept");
+    p.launch.notify_one();
+    phase(&vm, LocalVmStatus::Ready).await;
     vm.shutdown().await.unwrap();
 }

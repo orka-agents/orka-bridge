@@ -1,4 +1,5 @@
 use super::*;
+use crate::copilot_preflight::CheckError;
 use crate::runtime::{
     client::VmClient, credential_store::CredentialStore, credentials::CapturedGithubToken,
 };
@@ -40,22 +41,35 @@ impl CredentialKind {
         *self == Self::Copilot
     }
 }
-fn default_selection(vendor: Option<KeyVendor>) -> ModelSelection {
+fn key_selection(vendor: KeyVendor) -> ModelSelection {
     ModelSelection {
-        vendor,
-        provider: if vendor.is_some() {
-            "bridge-model"
-        } else {
-            "copilot"
-        }
-        .into(),
+        vendor: Some(vendor),
+        provider: "bridge-model".into(),
         model: match vendor {
-            None => "gpt-5.6-terra",
-            Some(KeyVendor::Openai) => "gpt-4.1",
-            Some(KeyVendor::Anthropic) => "claude-sonnet-5-5",
+            KeyVendor::Openai => "gpt-4.1",
+            KeyVendor::Anthropic => "claude-sonnet-5-5",
         }
         .into(),
     }
+}
+/// The person's choice from the account's own catalog; Bridge never picks one itself.
+fn copilot_selection(model: Option<&str>) -> Result<ModelSelection, SetupError> {
+    let model = model.ok_or_else(|| SetupError::model("modelCopilotChooseModel"))?;
+    if !crate::copilot_preflight::valid_id(model) {
+        return Err(SetupError::model("modelCopilotChooseModel"));
+    }
+    Ok(ModelSelection {
+        vendor: None,
+        provider: "copilot".into(),
+        model: model.into(),
+    })
+}
+// Only the Unix-only scenarios use this.
+#[cfg(all(test, unix))]
+fn default_selection(vendor: Option<KeyVendor>) -> ModelSelection {
+    vendor.map(key_selection).unwrap_or_else(|| {
+        copilot_selection(Some(crate::copilot_preflight::PREFERRED_MODELS[0])).unwrap()
+    })
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -69,6 +83,25 @@ struct Binding {
     phase: Phase,
     nonce: Option<Uuid>,
     connection: Option<ModelConnection>,
+    /// Pending only: the attempt has handed the guest at most the credential, and no model
+    /// connect was sent. The guest keeps a delivered credential in memory only, so once that
+    /// workspace has stopped nothing of the attempt is left in it. Cleared, durably, before the
+    /// connect is sent; a record without it can have reached kmx.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    delivering: bool,
+}
+impl Binding {
+    /// Nothing but the credential can have reached the guest in this Pending attempt.
+    fn only_delivering(&self) -> bool {
+        self.phase == Phase::Pending && self.connection.is_none() && self.delivering
+    }
+    /// Back to a saved, unconnected sign-in or key.
+    fn settle_stored(&mut self) {
+        self.phase = Phase::Stored;
+        self.nonce = None;
+        self.connection = None;
+        self.delivering = false;
+    }
 }
 fn unavailable() -> SetupError {
     SetupError {
@@ -79,7 +112,67 @@ fn unavailable() -> SetupError {
         diagnostic: None,
         native: None,
         recovery: None,
+        copilot: None,
     }
+}
+/// A typed preflight refusal. Nothing has been saved or delivered when this is returned.
+fn copilot_error(error: crate::copilot_preflight::CheckError, account: Option<&str>) -> SetupError {
+    use crate::copilot_preflight::PreflightFailure;
+    let mut setup = SetupError::model(match &error {
+        CheckError::Failure(PreflightFailure::TokenType) => "modelCopilotTokenType",
+        CheckError::Failure(PreflightFailure::SignInRejected) => "modelCopilotSignInRejected",
+        CheckError::Failure(PreflightFailure::AccessDenied) => "modelCopilotAccessDenied",
+        CheckError::Failure(PreflightFailure::Unreachable) => "modelCopilotUnreachable",
+        CheckError::Failure(PreflightFailure::Malformed) => "modelCopilotMalformed",
+        CheckError::NotOffered { .. } => "modelCopilotModelNotOffered",
+    });
+    let mut detail = CopilotDetail {
+        account: account
+            .filter(|login| crate::runtime::credentials::valid_login(login))
+            .map(String::from),
+        ..CopilotDetail::default()
+    };
+    if let CheckError::NotOffered { wanted, catalog } = error {
+        detail.preselected = crate::copilot_preflight::preselect(None, &catalog);
+        detail.models = Some(catalog.models());
+        detail.wanted = Some(wanted);
+    }
+    setup.copilot = Some(Box::new(detail));
+    setup
+}
+/// Not a failure: the sign-in is good and these are the models to choose from.
+fn choose_model(account: Option<String>, check: CopilotCheck) -> SetupError {
+    SetupError {
+        copilot: Some(Box::new(CopilotDetail {
+            account: account.filter(|login| crate::runtime::credentials::valid_login(login)),
+            preselected: check.preselected,
+            models: Some(check.models),
+            wanted: None,
+        })),
+        ..SetupError::model("modelCopilotChooseModel")
+    }
+}
+fn capture_error(error: crate::runtime::credentials::CaptureError) -> SetupError {
+    use crate::runtime::credentials::CaptureError;
+    SetupError::model(match error {
+        CaptureError::Unavailable => "modelCaptureUnavailable",
+        CaptureError::Failed => "modelCaptureFailed",
+        CaptureError::InvalidOutput => "modelCaptureInvalid",
+        CaptureError::TimedOut => "modelCaptureTimedOut",
+    })
+}
+/// A Copilot sign-in and model checked on this computer, before the workspace is touched.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopilotCheck {
+    /// GitHub login read with the sign-in, when GitHub CLI reported one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    /// The account's usable models, in GitHub's order, for the AI card's picker.
+    pub models: Vec<crate::copilot_preflight::Offered>,
+    /// The row the picker starts on; the person still confirms it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preselected: Option<String>,
 }
 fn valid_saved_connection(b: &Binding) -> bool {
     b.connection
@@ -222,9 +315,7 @@ impl SetupStore {
             return Ok(None);
         }
         b.installation = destination;
-        b.phase = Phase::Stored;
-        b.nonce = None;
-        b.connection = None;
+        b.settle_stored();
         serde_json::to_vec(&b).map(Some).map_err(|_| unavailable())
     }
     /// Recovery already has exact durable snapshots; lock without interpreting a
@@ -375,6 +466,7 @@ fn finish_connect(
     b: &mut Binding,
     remote: ModelState,
 ) -> Result<ModelSetupState, SetupError> {
+    b.delivering = false;
     b.connection = remote.connection;
     if remote.phase != ModelPhase::Ready {
         write_binding(root, b).map_err(|_| SetupError::connect(remote.diagnostic.clone()))?;
@@ -406,6 +498,15 @@ fn cleanup_error_class(error: &std::io::Error) -> &'static str {
         _ => "io",
     }
 }
+/// A key attempt on a guest that refuses keys: its delivery was the first frame the guest could
+/// not read, so no key and no connection ever reached it. The record goes back to a saved key.
+fn settle_unreached_key(root: &Path, b: &mut Binding) -> Result<(), SetupError> {
+    if b.phase == Phase::Pending && b.connection.is_none() {
+        b.settle_stored();
+        write_binding(root, b)?;
+    }
+    Ok(())
+}
 // Explicit intent only, under both ownership locks. A fresh guest has no token,
 // but kmx's owned model resources survive on the state disk and must be stopped.
 fn cleanup_previous_boot(
@@ -417,12 +518,33 @@ fn cleanup_previous_boot(
         cleanup: Some((operation, class)),
         ..SetupError::model("modelReconnect")
     };
+    if b.phase == Phase::Pending && b.connection.is_none() {
+        if b.only_delivering() {
+            // That workspace was handed at most the credential, which its guest kept in memory
+            // only: nothing of the attempt survived it, and there is nothing to remove.
+            b.settle_stored();
+            return write_binding(root, b);
+        }
+        // A connect was sent and its answer never arrived: kmx may keep a connection that
+        // Bridge cannot name, and no request can remove a connection by anything else.
+        return Err(failure("connectionUnknown", "refused"));
+    }
     let connection = b.connection.as_ref().ok_or_else(unavailable)?;
     let before = client
         .model_status()
         .map_err(|error| failure("modelStatus", cleanup_error_class(&error)))?;
-    if !before.retained_cleanup
-        || before.phase != ModelPhase::Idle
+    if !before.retained_cleanup {
+        // Only an image without the retained-connection handler: a newer image fixes this.
+        return Err(SetupError {
+            cleanup: Some(("modelStatusPreconditions", "unsupported")),
+            ..SetupError::model("modelReconnectImage")
+        });
+    }
+    // A guest whose model phase is not settled yet is not refusing: checking again may work.
+    if before.phase == ModelPhase::Unknown {
+        return Err(failure("modelStatusPreconditions", "busy"));
+    }
+    if before.phase != ModelPhase::Idle
         || before.connection.is_some()
         || before.credential.installed
         || before.credential.generation.is_some()
@@ -432,10 +554,33 @@ fn cleanup_previous_boot(
     client
         .disconnect_retained_model(connection)
         .map_err(|error| failure("disconnectRetainedModel", cleanup_error_class(&error)))?;
-    b.phase = Phase::Stored;
-    b.nonce = None;
-    b.connection = None;
+    b.settle_stored();
     write_binding(root, b)
+}
+/// Why Start a fresh workspace could not confirm the saved AI connection was forgotten.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RetiredReset {
+    /// The saved record is kept intact and readable: connecting offers Reset for it.
+    Kept,
+    /// The record could not be read or forgotten as one Reset can remove.
+    Unconfirmed,
+}
+/// The login shown for a sign-in is nonsecret, but it names the slot: forget it with the slot.
+fn forget_account(root: &Path, slot: Uuid) {
+    let account = root.join(ACCOUNT_FILE);
+    if fs::symlink_metadata(&account).is_ok_and(|m| m.is_file() && m.len() <= MAX_ACCOUNT_FILE)
+        && fs::read(&account)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<AccountRecord>(&bytes).ok())
+            .is_some_and(|record| record.slot == slot)
+    {
+        let _ = fs::remove_file(account);
+    }
+}
+/// Which removal Reset could not confirm.
+enum Unconfirmed {
+    Credential(StoreError),
+    Record,
 }
 impl SetupStore {
     fn mutation_owner(
@@ -496,14 +641,70 @@ impl SetupStore {
             error.recovery = Some(recovery);
             error
         };
+        let reset =
+            self.forget_binding(root, &b, store)
+                .map_err(|unconfirmed| match unconfirmed {
+                    Unconfirmed::Credential(e) => {
+                        failure(SetupError::store(e), "credentialRemovalUnconfirmed")
+                    }
+                    Unconfirmed::Record => failure(unavailable(), "recordRemovalUnconfirmed"),
+                })?;
+        forget_account(root, b.slot);
+        Ok(reset)
+    }
+    /// Reset's removal, shared with Start a fresh workspace: the native slot first, then the
+    /// saved record. A failure names the stage that was not confirmed.
+    fn forget_binding(
+        &self,
+        root: &Path,
+        b: &Binding,
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, Unconfirmed> {
         // Both native stores treat an absent slot as success. Keep the exact record
         // until deletion is confirmed, so interrupted/failed resets can retry this slot.
-        store
-            .delete(b.slot)
-            .map_err(|e| failure(SetupError::store(e), "credentialRemovalUnconfirmed"))?;
-        fs::remove_file(root.join("model-v1"))
-            .map_err(|_| failure(unavailable(), "recordRemovalUnconfirmed"))?;
+        store.delete(b.slot).map_err(Unconfirmed::Credential)?;
+        fs::remove_file(root.join("model-v1")).map_err(|_| Unconfirmed::Record)?;
+        self.copilot.forget();
         Ok(state(root, None, false))
+    }
+    /// Start a fresh workspace, after the workspace on this computer was moved aside: no
+    /// workspace remains that this saved connection could belong to, so forget it exactly as the
+    /// installation-mismatch Reset does, including a record whose connection fields are not
+    /// valid: no workspace remains to use it. Returns whether anything was saved. On failure the
+    /// record is kept; `Kept` says connecting on the new workspace offers that same Reset.
+    pub(crate) fn reset_retired_model(
+        &self,
+        store: &impl CredentialStore,
+    ) -> Result<bool, RetiredReset> {
+        fn unconfirmed<E>(_: E) -> RetiredReset {
+            RetiredReset::Unconfirmed
+        }
+        let _access = self.access.lock().map_err(unconfirmed)?;
+        let root = self.root.as_deref().ok_or(RetiredReset::Unconfirmed)?;
+        selected(root).map_err(unconfirmed)?;
+        let local = self
+            .upgrade_root
+            .as_deref()
+            .ok_or(RetiredReset::Unconfirmed)?;
+        // Only with no workspace in place: never forget a connection a workspace may use.
+        match fs::symlink_metadata(local.join("local-vm-v1")) {
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            _ => return Err(RetiredReset::Unconfirmed),
+        }
+        let _owners = self.mutation_owner(root, true).map_err(unconfirmed)?;
+        let Some(b) = read_binding(root).map_err(unconfirmed)? else {
+            return Ok(false);
+        };
+        self.forget_binding(root, &b, store).map_err(|_| {
+            // Reset offers only a record it can name as a mismatched installation.
+            if valid_saved_connection(&b) {
+                RetiredReset::Kept
+            } else {
+                RetiredReset::Unconfirmed
+            }
+        })?;
+        forget_account(root, b.slot);
+        Ok(true)
     }
     fn recover_empty_reservation(
         &self,
@@ -533,9 +734,12 @@ impl SetupStore {
         Ok(())
     }
     /// Fixed explicit app intent. Capture is never automatic and never repeats an association.
+    /// `model` is the Copilot model the person confirmed in the AI card. A saved
+    /// connection keeps its own model; a new one refuses to start without a choice.
     pub fn connect_stored_model(
         &self,
         installation: Uuid,
+        model: Option<&str>,
         client: &mut VmClient,
         store: &impl CredentialStore,
         capture: impl FnOnce() -> Result<CapturedGithubToken, crate::runtime::credentials::CaptureError>,
@@ -552,24 +756,61 @@ impl SetupStore {
             if before.phase != ModelPhase::Idle || before.credential.installed {
                 return Err(SetupError::model("modelGuest"));
             }
-            use crate::runtime::credentials::CaptureError;
-            let token = capture().map_err(|error| {
-                SetupError::model(match error {
-                    CaptureError::Unavailable => "modelCaptureUnavailable",
-                    CaptureError::Failed => "modelCaptureFailed",
-                    CaptureError::InvalidOutput => "modelCaptureInvalid",
-                    CaptureError::TimedOut => "modelCaptureTimedOut",
-                })
-            })?;
+            let token = capture().map_err(capture_error)?;
+            let Some(model) = model else {
+                // Nothing is saved until the person confirms a model from this list.
+                let catalog = self
+                    .copilot
+                    .catalog(token.as_bytes())
+                    .map_err(|error| copilot_error(CheckError::Failure(error), token.account()))?;
+                let check = CopilotCheck {
+                    account: None,
+                    preselected: crate::copilot_preflight::preselect(None, &catalog),
+                    models: catalog.models(),
+                };
+                return Err(choose_model(token.account().map(String::from), check));
+            };
+            copilot_selection(Some(model))?;
+            // Ask GitHub before saving: a refused sign-in is never kept or delivered.
+            self.copilot
+                .require(token.as_bytes(), model)
+                .map_err(|error| copilot_error(error, token.account()))?;
             self.associate_captured(installation, &token, store)?;
         }
         let selection = {
             let _access = self.access.lock().map_err(|_| unavailable())?;
-            let b = read_binding(self.root.as_deref().ok_or_else(unavailable)?)?
-                .ok_or_else(unavailable)?;
-            b.connection
-                .map(|c| c.selection)
-                .unwrap_or_else(|| default_selection(b.vendor))
+            let root = self.root.as_deref().ok_or_else(unavailable)?;
+            let b = read_binding(root)?.ok_or_else(unavailable)?;
+            // A same-lease retry repeats the model this boot's preflight chose.
+            let attempt = self
+                .copilot_attempt
+                .lock()
+                .map_err(|_| unavailable())?
+                .clone()
+                .filter(|(nonce, _)| b.phase == Phase::Pending && *nonce == client.boot_nonce())
+                .map(|(_, selection)| selection);
+            match (b.connection.map(|c| c.selection).or(attempt), b.vendor) {
+                (Some(selection), _) => selection,
+                (None, Some(vendor)) => key_selection(vendor),
+                (None, None) => match model {
+                    Some(model) => copilot_selection(Some(model))?,
+                    None => {
+                        // A saved sign-in without a model yet: list the models, change nothing.
+                        drop(_access);
+                        // As for Connect, an older image is refused before any secret is read.
+                        let before = client
+                            .model_status()
+                            .map_err(|_| SetupError::model("modelGuest"))?;
+                        if before.phase != ModelPhase::Idle || before.credential.installed {
+                            return Err(SetupError::model("modelGuest"));
+                        }
+                        let check = self.check_copilot(store, || {
+                            Err(crate::runtime::credentials::CaptureError::Failed)
+                        })?;
+                        return Err(choose_model(check.account.clone(), check));
+                    }
+                },
+            }
         };
         let vendor = selection.vendor;
         self.connect_model(installation, selection, client, store)
@@ -578,6 +819,74 @@ impl SetupStore {
                 error.vendor = vendor;
                 error
             })
+    }
+    /// Explicit intent while the workspace is still on its way: checks the GitHub CLI
+    /// sign-in and the model with GitHub only. It writes nothing, saves nothing and
+    /// touches no workspace, so a refusal leaves no binding and nothing delivered.
+    pub fn check_copilot(
+        &self,
+        store: &impl CredentialStore,
+        capture: impl FnOnce() -> Result<CapturedGithubToken, crate::runtime::credentials::CaptureError>,
+    ) -> Result<CopilotCheck, SetupError> {
+        let saved = {
+            let _access = self.access.lock().map_err(|_| unavailable())?;
+            let root = self.root.as_deref().ok_or_else(unavailable)?;
+            if !selected(root)? {
+                return Err(unavailable());
+            }
+            match read_binding(root)? {
+                None => None,
+                Some(b) if b.kind != CredentialKind::Copilot => {
+                    return Err(SetupError::model("modelAlreadyAssociated"))
+                }
+                Some(b) if matches!(b.phase, Phase::Storing | Phase::Cleared) => {
+                    return Err(unavailable())
+                }
+                Some(b) => Some((
+                    b.slot,
+                    read_account(root, &b),
+                    b.connection.map(|c| c.selection.model),
+                )),
+            }
+        };
+        let (account, catalog, previous) = match saved {
+            None => {
+                let token = capture().map_err(capture_error)?;
+                let account = token.account().map(String::from);
+                let catalog = self.copilot.catalog(token.as_bytes()).map_err(|error| {
+                    copilot_error(CheckError::Failure(error), account.as_deref())
+                })?;
+                (account, catalog, None)
+            }
+            Some((slot, account, previous)) => {
+                let secret = store.load(slot).map_err(SetupError::store)?;
+                let catalog = self.copilot.catalog(secret.as_bytes()).map_err(|error| {
+                    copilot_error(CheckError::Failure(error), account.as_deref())
+                })?;
+                (account, catalog, previous)
+            }
+        };
+        Ok(CopilotCheck {
+            account,
+            preselected: crate::copilot_preflight::preselect(previous.as_deref(), &catalog),
+            models: catalog.models(),
+        })
+    }
+    /// Async wrapper for the renderer command: GitHub CLI and the network run on a worker.
+    pub async fn check_copilot_async(
+        self: std::sync::Arc<Self>,
+    ) -> Result<CopilotCheck, SetupError> {
+        if !crate::local_vm::MODEL_IMAGE_AVAILABLE {
+            return Err(SetupError::model("modelGuest"));
+        }
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            self.check_copilot(&crate::runtime::credential_store::OsCredentialStore, || {
+                runtime.block_on(crate::runtime::credentials::capture_stored_github_token())
+            })
+        })
+        .await
+        .map_err(|_| SetupError::model("modelSession"))?
     }
     /// Key-only retry cannot capture a GitHub token when an earlier attempt never saved.
     pub fn connect_saved_key_model(
@@ -597,7 +906,7 @@ impl SetupStore {
             }
             b.connection
                 .map(|c| c.selection)
-                .unwrap_or_else(|| default_selection(Some(vendor)))
+                .unwrap_or_else(|| key_selection(vendor))
         };
         self.connect_model(installation, selection, client, store)
             .map_err(|mut error| {
@@ -627,6 +936,14 @@ impl SetupStore {
         {
             return Err(SetupError::model("modelKeyInvalid"));
         }
+        // Before anything is saved or sent: a guest without API keys would read the key's
+        // delivery as an invalid frame and stop answering until the workspace restarts.
+        if !client.model_keys() {
+            return Err(SetupError {
+                vendor: Some(vendor),
+                ..SetupError::model("modelKeyUnsupported")
+            });
+        }
         let binding = self.model_binding_status()?;
         if binding.associated || binding.unknown {
             return Err(SetupError::model("modelAlreadyAssociated"));
@@ -638,7 +955,7 @@ impl SetupStore {
             return Err(SetupError::model("modelGuest"));
         }
         self.associate_secret_for_vendor(installation, key.as_bytes(), Some(vendor), None, store)?;
-        self.connect_model(installation, default_selection(Some(vendor)), client, store)
+        self.connect_model(installation, key_selection(vendor), client, store)
             .map_err(|mut error| {
                 error.vendor = Some(vendor);
                 error
@@ -698,6 +1015,7 @@ impl SetupStore {
             phase: Phase::Storing,
             nonce: None,
             connection: None,
+            delivering: false,
         };
         // Reserve the exact slot durably: save can apply and then report an error.
         write_binding(root, &b)?;
@@ -806,6 +1124,14 @@ impl SetupStore {
         if b.vendor != selection.vendor || matches!(b.phase, Phase::Storing | Phase::Cleared) {
             return Err(unavailable());
         }
+        if b.kind == CredentialKind::Key && !client.model_keys() {
+            // No key ever reached this guest or kmx: its channel refuses them.
+            settle_unreached_key(root, &mut b)?;
+            return Err(SetupError {
+                vendor: b.vendor,
+                ..SetupError::model("modelKeyUnsupported")
+            });
+        }
         if matches!(b.phase, Phase::Pending | Phase::Connected)
             && b.nonce != Some(client.boot_nonce())
         {
@@ -829,6 +1155,7 @@ impl SetupStore {
                 return Err(unavailable());
             }
             if remote.phase == ModelPhase::Ready {
+                b.delivering = false;
                 b.connection = remote.connection;
                 b.phase = Phase::Connected;
                 write_binding(root, &b)?;
@@ -836,6 +1163,7 @@ impl SetupStore {
             }
             if let Some(connection) = &remote.connection {
                 // Persist the acknowledged identity before cleanup, never guess one.
+                b.delivering = false;
                 b.connection = Some(connection.clone());
                 write_binding(root, &b)?;
                 let stopped = client
@@ -859,6 +1187,11 @@ impl SetupStore {
                 }
             } else if remote.credential.installed {
                 let generation = remote.credential.generation.ok_or_else(unavailable)?;
+                // From here kmx may record a connection: durably, before the connect.
+                if b.delivering {
+                    b.delivering = false;
+                    write_binding(root, &b)?;
+                }
                 // Guest admits the original attempt only; kmx's retained record refuses
                 // partial creates. Do not recapture, load or republish credentials.
                 let remote = client
@@ -868,9 +1201,7 @@ impl SetupStore {
             } else if remote.phase != ModelPhase::Idle {
                 return Err(unavailable());
             }
-            b.phase = Phase::Stored;
-            b.nonce = None;
-            b.connection = None;
+            b.settle_stored();
             write_binding(root, &b)?;
         }
         if b.phase == Phase::Connected {
@@ -900,19 +1231,46 @@ impl SetupStore {
             return Err(SetupError::model("modelGuest"));
         }
         let secret = store.load(b.slot).map_err(SetupError::store)?;
+        if b.kind == CredentialKind::Copilot {
+            // Before the Pending barrier and delivery: a refusal leaves the binding Stored,
+            // including a chosen model the account no longer offers.
+            self.copilot
+                .require(secret.as_bytes(), &selection.model)
+                .map_err(|error| copilot_error(error, read_account(root, &b).as_deref()))?;
+            *self.copilot_attempt.lock().map_err(|_| unavailable())? =
+                Some((client.boot_nonce(), selection.clone()));
+        }
         b.phase = Phase::Pending;
         b.nonce = Some(client.boot_nonce());
+        b.delivering = true;
         write_binding(root, &b)?; // durable barrier before either guest mutation
-        let delivered = client
-            .deliver_credential_for_profile(
-                selection.credential_profile(),
-                &secret,
-                before.credential.generation,
-            )
-            .map_err(|_| SetupError::model("modelDelivery"))?;
+        let delivered = match client.deliver_credential_for_profile(
+            selection.credential_profile(),
+            &secret,
+            before.credential.generation,
+        ) {
+            Ok(delivered) => delivered,
+            Err(_) => {
+                // A guest that still answers and holds no new credential never received this
+                // one: nothing is pending. Otherwise the record keeps saying that at most the
+                // credential arrived, which the workspace forgets when it stops.
+                let unchanged = !client.closed()
+                    && client.credential_status().is_ok_and(|after| {
+                        !after.installed && after.generation == before.credential.generation
+                    });
+                if unchanged {
+                    b.settle_stored();
+                    let _ = write_binding(root, &b);
+                }
+                return Err(SetupError::model("modelDelivery"));
+            }
+        };
         let generation = delivered
             .generation
             .ok_or_else(|| SetupError::model("modelDelivery"))?;
+        // From here kmx may record a connection: durably, before the connect.
+        b.delivering = false;
+        write_binding(root, &b)?;
         let remote = client
             .connect_model(generation, selection)
             .map_err(|_| SetupError::model("modelConnect"))?;
@@ -939,7 +1297,10 @@ impl SetupStore {
         }
         if matches!(b.phase, Phase::Pending | Phase::Connected) {
             let client = client.ok_or_else(unavailable)?;
-            if b.nonce != Some(client.boot_nonce()) {
+            if b.kind == CredentialKind::Key && !client.model_keys() {
+                // No key ever reached this guest or kmx: there is nothing in it to remove.
+                settle_unreached_key(root, &mut b)?;
+            } else if b.nonce != Some(client.boot_nonce()) {
                 cleanup_previous_boot(root, &mut b, client)?;
             } else {
                 if b.phase == Phase::Pending {
@@ -949,6 +1310,31 @@ impl SetupStore {
                             // Guest cleanup may precede a failed Cleared checkpoint write.
                             b.phase = Phase::Cleared;
                             write_binding(root, &b)?;
+                        }
+                    } else {
+                        // The attempt's answer never arrived. The guest knows what it holds.
+                        let remote = client.model_status().map_err(|_| unavailable())?;
+                        match remote.connection {
+                            // Removal disconnects exactly the connection the guest names.
+                            Some(connection) if connection.selection.vendor == b.vendor => {
+                                b.delivering = false;
+                                b.connection = Some(connection);
+                                write_binding(root, &b)?;
+                            }
+                            // No connect ran this boot: at most the credential arrived.
+                            None if remote.phase == ModelPhase::Idle => {
+                                if remote.credential.installed {
+                                    let generation =
+                                        remote.credential.generation.ok_or_else(unavailable)?;
+                                    client
+                                        .clear_credential_file(generation)
+                                        .map_err(|_| unavailable())?;
+                                }
+                                b.settle_stored();
+                                write_binding(root, &b)?;
+                            }
+                            // A connect is still unsettled: Check again settles it first.
+                            _ => return Err(unavailable()),
                         }
                     }
                 }
@@ -993,6 +1379,7 @@ impl SetupStore {
         fs::remove_file(root.join("model-v1")).map_err(|_| unavailable())?;
         // Only after acknowledged removal; a stale record cannot match a new slot anyway.
         let _ = fs::remove_file(root.join(ACCOUNT_FILE));
+        self.copilot.forget();
         Ok(state(root, None, false))
     }
 }
@@ -1055,6 +1442,7 @@ mod catalog_binding_tests {
                         Phase::Connected
                     },
                     connection: Some(connection),
+                    delivering: false,
                 },
             )
             .unwrap();
@@ -1133,6 +1521,7 @@ mod tests {
                     phase: Phase::Storing,
                     nonce: None,
                     connection: None,
+                    delivering: false,
                 },
             )
             .unwrap();
@@ -1140,7 +1529,7 @@ mod tests {
                 VmClient::established(Box::new(std::io::Cursor::new(Vec::new())), Uuid::new_v4())
                     .unwrap();
             let error = setup
-                .connect_stored_model(install, &mut client, &vault, || {
+                .connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
                     panic!("the empty test peer must refuse before capture")
                 })
                 .unwrap_err();
@@ -1182,10 +1571,16 @@ mod tests {
         let mut client = VmClient::established(Box::new(Closed), Uuid::new_v4()).unwrap();
         let mut captures = 0;
         let error = setup
-            .connect_stored_model(Uuid::new_v4(), &mut client, &Store, || {
-                captures += 1;
-                Err(crate::runtime::credentials::CaptureError::Failed)
-            })
+            .connect_stored_model(
+                Uuid::new_v4(),
+                Some("gpt-5.6-terra"),
+                &mut client,
+                &Store,
+                || {
+                    captures += 1;
+                    Err(crate::runtime::credentials::CaptureError::Failed)
+                },
+            )
             .unwrap_err();
         assert_eq!(
             captures, 0,
@@ -1234,9 +1629,13 @@ mod tests {
         let mut client =
             VmClient::established(Box::new(Idle(std::io::Cursor::new(response))), nonce).unwrap();
         let error = setup
-            .connect_stored_model(Uuid::new_v4(), &mut client, &Store, || {
-                Err(crate::runtime::credentials::CaptureError::Failed)
-            })
+            .connect_stored_model(
+                Uuid::new_v4(),
+                Some("gpt-5.6-terra"),
+                &mut client,
+                &Store,
+                || Err(crate::runtime::credentials::CaptureError::Failed),
+            )
             .unwrap_err();
         assert_eq!(error.kind, "modelCaptureFailed");
         assert!(!setup.model_binding_status().unwrap().associated);
@@ -1379,7 +1778,7 @@ mod tests {
         let mut client = VmClient::established(Box::new(a), Uuid::new_v4()).unwrap();
         assert!(
             setup
-                .connect_stored_model(install, &mut client, &vault, || {
+                .connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
                     events.lock().unwrap().push("capture");
                     CapturedGithubToken::try_from(b"synthetic-model-only".as_slice())
                 })
@@ -1388,7 +1787,7 @@ mod tests {
         );
         assert!(
             setup
-                .connect_stored_model(install, &mut client, &vault, || {
+                .connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
                     panic!("repeat must never capture")
                 })
                 .unwrap()
@@ -1559,9 +1958,13 @@ mod tests {
         let mut client = VmClient::established(Box::new(a), Uuid::new_v4()).unwrap();
         assert!(
             setup
-                .connect_stored_model(install, &mut client, &vault, || panic!(
-                    "stored binding must not recapture"
-                ))
+                .connect_stored_model(
+                    install,
+                    Some("gpt-5.6-terra"),
+                    &mut client,
+                    &vault,
+                    || panic!("stored binding must not recapture")
+                )
                 .unwrap()
                 .ready
         );

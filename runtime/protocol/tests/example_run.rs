@@ -5,6 +5,8 @@ pub mod agent_folder;
 pub mod agents;
 #[path = "../../../app/src-tauri/src/catalog.rs"]
 pub mod catalog;
+#[path = "../../../app/src-tauri/src/copilot_preflight.rs"]
+pub mod copilot_preflight;
 #[cfg(debug_assertions)]
 #[path = "../../../app/src-tauri/src/dev_image.rs"]
 pub mod dev_image;
@@ -28,5 +30,7 @@ pub mod runtime;
 pub mod setup;
 #[path = "../../../app/src-tauri/tests/example_run.rs"]
 mod tests;
+#[path = "../../../app/src-tauri/src/workspace_fresh.rs"]
+pub mod workspace_fresh;
 #[path = "../../../app/src-tauri/src/workspace_upgrade.rs"]
 pub mod workspace_upgrade;

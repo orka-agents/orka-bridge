@@ -56,6 +56,8 @@ assert.ok(chatStatus, 'bounded Chat snapshot producer is missing');
 for (const name of ['chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer']) {
   const snapshot = Function('name', 'documentId', chatStatus)(name, 'fixture-document');
   const turn = snapshot.versions[0].turns[0];
+  // The renderer's validator needs every native snapshot key, including a cluster's refusal and kept notice.
+  assert.equal(snapshot.denied, null, name); assert.equal(snapshot.keptOnCluster, false, name); assert.equal(snapshot.readOnly, false, name);
   const confirming = name.startsWith('chat-session-');
   assert.equal(snapshot.state, confirming ? 'waitingForSession' : name === 'chat-answer' ? 'ready' : 'working', name);
   assert.equal(turn.phase, confirming || name === 'chat-answer' ? 'Succeeded' : name === 'chat-pending' ? 'Pending' : 'Running', name);
@@ -63,6 +65,8 @@ for (const name of ['chat-pending', 'chat-running', 'chat-answer', 'chat-session
   assert.equal(turn.contextRetained, name === 'chat-answer', name);
   assert.equal(snapshot.busy, name !== 'chat-answer', name);
   assert.equal(snapshot.canSend, name === 'chat-answer', name);
+  assert.ok(Number.isSafeInteger(turn.startedAt) && turn.startedAt > 0, `${name} needs a start time`);
+  assert.equal(turn.finishedAt === null, ['chat-pending', 'chat-running'].includes(name), `${name} finishes only once settled`);
 }
 for (const name of ['chat-answer', 'chat-long']) {
   const snapshot = Function('name', 'documentId', chatStatus)(name, 'fixture-document');
@@ -94,8 +98,8 @@ assert.match(source, /if \(runCore\) for \(const name of \['designer-connected'/
 const sendGate = source.slice(source.indexOf('  function assertSendPresentation('), source.indexOf('  async function captureSendScene('));
 assert.ok(sendGate.includes('Unsupported cancellation'), 'Send capture acceptance gate is missing');
 const checkSend = Function(`${sendGate}; return assertSendPresentation;`)();
-const sendProbe = { header: [{ label: 'Fix in Designer', primary: true }, { label: 'Run cluster tests again', primary: false }],
-  buttons: ['Fix in Designer', 'Run cluster tests again'], title: 'Captured checksum from the page', id: 'page-checksum',
+const sendProbe = { header: [{ label: 'Run cluster tests again', primary: false }, { label: 'Fix in Designer', primary: true }, { label: 'See in Overview', primary: false }],
+  buttons: ['Run cluster tests again', 'Fix in Designer', 'See in Overview'], title: 'Captured checksum from the page', id: 'page-checksum',
   heading: 'To fixture-selected', summary: 'web-reader with 1 test', checks: 'Ready to send: 1 check passed Show checks', checksOpen: false,
   inlineChecks: [], changeDisabled: false, text: 'fixture-captured', detailsOpen: false, extras: [], width: 540, scrollWidth: 540 };
 checkSend('send-failed', sendProbe, false);
@@ -105,20 +109,27 @@ checkSend('send-earlier-target', { ...sendProbe, header: [{ label: 'Send and run
 checkSend('send-failed', { ...sendProbe, detailsOpen: true, extras: ['Check again', 'Send as a separate agent'] }, true);
 for (const [name, header] of [
   ['send-ready', [{ label: 'Send and run tests', primary: true }]],
-  ['send-blocked', [{ label: 'Check again', primary: true }]],
+  ['send-blocked', [{ label: 'Update agent and run tests', primary: true, disabled: true }, { label: 'Check again', primary: false }]],
   ['send-sending', [{ label: 'Cancel tests', primary: false }]],
-  ['send-passed', [{ label: 'See in Overview', primary: true }, { label: 'Run cluster tests again', primary: false }]],
+  ['send-passed', [{ label: 'Run cluster tests again', primary: false }, { label: 'See in Overview', primary: false }]],
 ]) {
   const probe = { ...sendProbe, header, title: name === 'send-passed' ? sendProbe.title : '', id: name === 'send-passed' ? sendProbe.id : '',
+    heading: ['send-ready', 'send-blocked'].includes(name) ? 'Send your agent' : sendProbe.heading,
     checks: ['send-blocked', 'send-sending'].includes(name) ? '1 check passed Show checks' : sendProbe.checks,
-    inlineChecks: name === 'send-blocked' ? ['blocked'] : [], changeDisabled: name === 'send-sending' };
+    inlineChecks: name === 'send-blocked' ? ['blocked'] : [], changeDisabled: name === 'send-sending',
+    ...name === 'send-sending' ? { detailsOpen: true, text: 'Cancel tests requests cancellation of this Send\'s unfinished tests.' } : {} };
   checkSend(name, probe, false);
   assert.throws(() => checkSend(name, { ...probe, checksOpen: true }, false));
   if (name === 'send-sending') {
     assert.throws(() => checkSend(name, { ...probe, changeDisabled: false }, false));
     assert.throws(() => checkSend(name, { ...probe, checks: sendProbe.checks }, false), 'running Send must not advertise readiness');
+    assert.throws(() => checkSend(name, { ...probe, detailsOpen: false }, false), /what Cancel keeps/);
+    assert.throws(() => checkSend(name, { ...probe, extras: ['Send as a separate agent'] }, false), /no other actions/);
+    checkSend(name, { ...probe, extras: ['Copy Planned agent', 'Copy Agent UID'] }, false);
+    assert.throws(() => checkSend(name, { ...probe, extras: [''] }, false), /no other actions/, 'an unnamed button is not a copy control');
   }
   if (name === 'send-blocked') assert.throws(() => checkSend(name, { ...probe, inlineChecks: ['allowed', 'blocked'] }, false));
+  if (name === 'send-blocked') assert.throws(() => checkSend(name, { ...probe, header: [{ ...header[0], disabled: false }, header[1]] }, false), /must stay disabled/);
 }
 for (const mutation of [{ heading: 'Send your agent' }, { summary: '' }, { checks: 'Ready to send: 2 checks passed' }]) {
   assert.throws(() => checkSend('send-failed', { ...sendProbe, ...mutation }, false));
@@ -132,35 +143,38 @@ assert.throws(() => checkDocumentScroll({ documentScrollHeight: 2105, height: 90
 assert.throws(() => checkDocumentScroll({ documentScrollHeight: 2105, height: 900 }, 'chat-long', assert.fail));
 assert.doesNotThrow(() => checkDocumentScroll({ documentScrollHeight: 640, height: 640 }, 'upgrade-consumed-restore-confirm', assert.fail));
 assert.throws(() => checkDocumentScroll({ documentScrollHeight: 720, height: 640 }, 'upgrade-consumed-restore-confirm', assert.fail));
-// The Chat subtitle can resize the heading, but not reorder or independently move its controls.
-const headerGate = source.match(/const now = await header\(\);\n([\s\S]*?)\n        if \(view === 'Chat'\)/)?.[1];
+// The Try a task subtitle can resize the heading, but not reorder or independently move its controls.
+const headerGate = source.match(/const now = await header\(\);\n([\s\S]*?)\n        if \(view === 'Try a task'\)/)?.[1];
 assert.ok(headerGate);
 const verifyDesignerHeader = Function('base', 'now', 'view', 'name', headerGate);
 const headerBase = Object.fromEntries(['switch', 'picker', 'send', 'name'].map((key, i) => [key, { x: i * 100, y: 80, w: 80, h: 32 }]));
 const chatHeader = Object.fromEntries(Object.entries(headerBase).map(([key, rect]) => [key, { ...rect, y: key === 'name' ? 75 : 88, w: key === 'name' ? 200 : rect.w }]));
-assert.doesNotThrow(() => verifyDesignerHeader(headerBase, chatHeader, 'Chat', 'fixture'));
+assert.doesNotThrow(() => verifyDesignerHeader(headerBase, chatHeader, 'Try a task', 'fixture'));
 assert.throws(() => verifyDesignerHeader(headerBase, chatHeader, 'File', 'fixture'));
-assert.throws(() => verifyDesignerHeader(headerBase, { ...chatHeader, picker: { ...chatHeader.picker, x: 120 } }, 'Chat', 'fixture'));
-assert.throws(() => verifyDesignerHeader(headerBase, { ...chatHeader, picker: { ...chatHeader.picker, y: 100 } }, 'Chat', 'fixture'));
-// Exercise the actual Chat gate, including composer geometry while reading earlier turns.
+assert.throws(() => verifyDesignerHeader(headerBase, { ...chatHeader, picker: { ...chatHeader.picker, x: 120 } }, 'Try a task', 'fixture'));
+assert.throws(() => verifyDesignerHeader(headerBase, { ...chatHeader, picker: { ...chatHeader.picker, y: 100 } }, 'Try a task', 'fixture'));
+// Exercise the actual Try a task gate, including the folded earlier tasks.
 const chatGate = source.slice(source.indexOf('  function assertChatPresentation('), source.indexOf('  async function captureActions('));
-assert.ok(chatGate.includes('earlier'), 'Chat needs a reader-position geometry gate');
+assert.ok(chatGate.includes('Earlier tasks'), 'Try a task needs an earlier-tasks gate');
 const checkChat = Function(`${chatGate}; return assertChatPresentation;`)();
-const chatProbe = { card: false, headingHidden: true, label: 'Chat on this computer', heading: 'Chat on this computer',
-  subtitle: "Chat on this computer. Chat doesn't change test results.", text: '', status: '', numbers: [], controls: [],
-  hint: 'Enter sends · Shift+Enter for a new line', sendLabel: 'Send message', sendText: 'Send', fieldLabel: 'Message', tools: [], toolDisclosure: false,
-  composer: { top: 480, bottom: 600, left: 24, right: 516 }, field: { top: 480, bottom: 528 }, send: { top: 496, bottom: 528 },
-  viewport: { top: 60, bottom: 640, left: 0, right: 540 }, nestedScroll: false, earlier: true, long: true, scrollTop: 140, scrollMax: 1800 };
+const chatProbe = { card: false, composerStrong: true, label: 'Try a task on this computer', heading: 'Try a task',
+  subtitle: 'Try a task on this computer before you rely on it.', text: 'No tasks run yet. The result shows here.', status: '', controls: [],
+  hint: 'Runs once on this computer. It does not change test results.', sendText: 'Run task', fieldLabel: 'Give web-reader one task', tools: [], toolDisclosure: false,
+  earlier: '', earlierOpen: false,
+  composer: { top: 200, bottom: 360, left: 24, right: 516 }, field: { top: 240, bottom: 312 }, send: { top: 320, bottom: 364 },
+  viewport: { top: 60, bottom: 640, left: 0, right: 540 }, nestedScroll: false, scrollTop: 0, scrollMax: 1800 };
 checkChat('chat-empty', chatProbe);
-checkChat('chat-answer', { ...chatProbe, tools: ['web_fetch · Succeeded'] });
-checkChat('chat-long', chatProbe);
-for (const mutation of [{ card: true }, { headingHidden: false }, { status: 'Ready for your message.' }, { hint: 'Enter to send' },
-  { controls: ['New conversation'] }, { text: 'Ask your agent a question to start a conversation.' },
-  { composer: { ...chatProbe.composer, bottom: 650 } }, { nestedScroll: true }]) assert.throws(() => checkChat('chat-empty', { ...chatProbe, ...mutation }));
+checkChat('chat-answer', { ...chatProbe, text: 'The page says fixture-checksum.', tools: ['Read a web page web_fetchDone'] });
+checkChat('chat-two-versions', { ...chatProbe, text: 'The page says fixture-checksum.', earlier: 'Earlier tasks: 1' });
+checkChat('chat-long', { ...chatProbe, text: 'The page says fixture-checksum.', earlier: 'Earlier tasks: 19' });
+for (const mutation of [{ card: true }, { composerStrong: false }, { status: 'Ready for a task.' }, { hint: 'Enter to run' },
+  { controls: ['Run again'] }, { text: '' }, { text: 'No tasks run yet. Conversation 1' }, { text: 'No tasks run yet. Save as a test' },
+  { fieldLabel: 'Message' }, { sendText: 'Send' }, { subtitle: "Chat on this computer. Chat doesn't change test results." },
+  { field: { top: 600, bottom: 700 } }, { nestedScroll: true }]) assert.throws(() => checkChat('chat-empty', { ...chatProbe, ...mutation }));
 assert.throws(() => checkChat('chat-answer', { ...chatProbe, tools: [] }));
-assert.throws(() => checkChat('chat-answer', { ...chatProbe, tools: ['web_fetch'], status: 'Ready for your message.' }));
-assert.throws(() => checkChat('chat-long', { ...chatProbe, earlier: false }));
-assert.throws(() => checkChat('chat-long', { ...chatProbe, scrollTop: 1790 }));
+assert.throws(() => checkChat('chat-answer', { ...chatProbe, tools: ['web_fetch'], toolDisclosure: true }));
+assert.throws(() => checkChat('chat-two-versions', { ...chatProbe, earlier: 'Earlier tasks: 1', earlierOpen: true }));
+assert.throws(() => checkChat('chat-long', { ...chatProbe, earlier: '' }));
 for (const mutation of [
   { header: [...sendProbe.header, { label: 'Send as a separate agent', primary: false }] },
   { header: sendProbe.header.map(button => ({ ...button, primary: !button.primary })) },
@@ -170,39 +184,86 @@ assert.throws(() => checkSend('send-unsupported', { ...unsupported, buttons: ['C
 assert.throws(() => checkSend('send-earlier-target', { ...sendProbe, text: 'fixture-captured fixture-selected' }, false));
 assert.throws(() => checkSend('send-failed', { ...sendProbe, detailsOpen: true, extras: ['Check again'] }, true));
 // Exercise the queued-state predicate with the rendered summary, including its workspace wording.
-const queuedGuard = source.split('\n').find(line => line.includes('if (!queued.status'));
+const queuedGuard = source.split('\n').find(line => line.includes("if (queued.pill !== 'Queued'"));
 assert.ok(queuedGuard);
 const checkQueued = Function('queued', 'name', queuedGuard);
-const queuedState = { status: true, inChoice: false, change: true, cancel: false, text: 'GitHub Copilot, connects when the workspace is ready' };
+const queuedState = { pill: 'Queued', inChoice: false, change: false, cancel: true, text: 'Connect the AI\nQueued\nGitHub Copilot · gpt-5.6-terra\nConnects when the workspace is ready.\nCancel' };
 assert.doesNotThrow(() => checkQueued(queuedState, 'setup-transfer-queued'));
-assert.throws(() => checkQueued({ ...queuedState, cancel: true }, 'setup-transfer-queued'));
+for (const mutation of [{ cancel: false }, { change: true }, { inChoice: true }, { pill: undefined }, { text: 'Connects through the local cluster.' }]) assert.throws(() => checkQueued({ ...queuedState, ...mutation }, 'setup-transfer-queued'));
+// A choice checked on this computer may offer Change for its model, beside the same Cancel.
+const checkedState = { ...queuedState, change: true, text: 'Connect the AI\nQueued\nGitHub Copilot · gpt-5.6-terra\nGitHub Copilot is ready: signed in as synthetic-user, model gpt-5.6-terra. Connects when the workspace is ready.\nChange\nCancel' };
+assert.doesNotThrow(() => checkQueued(checkedState, 'setup-transfer-queued'));
+assert.throws(() => checkQueued({ ...checkedState, cancel: false }, 'setup-transfer-queued'));
 const welcomeGuard = source.split('\n').find(line => line.includes('if (!welcome.primary'));
 assert.ok(welcomeGuard);
 const checkWelcome = Function('welcome', welcomeGuard);
-const welcomeState = { primary: true, expert: true, text: "Send it to your team's cluster (preview)." };
+const welcomeState = { primary: true, expert: false, text: "Send it to your team's cluster (preview)." };
 assert.doesNotThrow(() => checkWelcome(welcomeState));
 assert.throws(() => checkWelcome({ ...welcomeState, primary: false }));
+assert.throws(() => checkWelcome({ ...welcomeState, expert: true }), 'the cluster route lives on the screen after Welcome');
 // Exercise the real layout gate with measurements, without pretending to render a native window.
 const layoutGate = source.slice(source.indexOf('  async function checkLayout('), source.indexOf('  // Setup-progress states:'));
-assert.ok(layoutGate.includes('wide tabs must stay 180px'));
+assert.ok(layoutGate.includes('sidebar tabs must stack in one column left of the page'));
+assert.ok(layoutGate.includes('status card must sit in the sidebar below the tabs'));
+assert.ok(layoutGate.includes('narrow sidebar must be the 60px icon rail'));
+const tab = i => ({ x: 8, y: 40 + 48 * i, width: 216, right: 224, bottom: 80 + 48 * i });
+const labels = ['Home', 'Overview', 'Designer', 'Clusters'];
 const wide = { width: 1280, scrollWidth: 1000, clientWidth: 1000, scrollHeight: 700, clientHeight: 700, forms: [], rows: [], checks: [],
-  tabs: [0, 1, 2].map(i => ({ width: 180, grow: '0', right: 180 * (i + 1) })),
-  host: { x: 556 }, hostLabel: { width: 100 }, subtitles: 3, quiet: [{ start: '0px', end: '0px' }],
+  tabs: [0, 1, 2, 3].map(tab), page: { x: 232 }, guided: false, labels, described: 4, railNames: 0, brand: true,
+  titleBar: { bar: { x: 0, right: 1280 }, toggle: { x: 16, right: 44 }, back: { x: 52, right: 80 }, forward: { x: 88, right: 116 }, brand: { x: 126, right: 196 }, theme: { x: 1088, right: 1116 }, controls: { x: 1124, right: 1262 }, fileMenu: 0 },
+  host: { x: 20, y: 740, right: 220 }, hostLabel: { width: 100 }, statusLine: { width: 180 }, statusText: 'Workspace ready', names: 4, subtitles: 4, quiet: [{ start: '0px', end: '0px' }],
   scrollbar: { width: 'thin', color: 'rgb(90, 90, 90) rgb(240, 240, 240)' }, theme: { page: 'rgb(255, 255, 255)', ink: 'rgb(11, 11, 12)' }, fallback: {} };
 async function gate(layout) {
   return Function('evaluate', 'writeFile', 'join', 'output', `${layoutGate}; return checkLayout('light', 'setup-fit', 'probe');`)(
     async () => layout, async () => {}, () => '', '');
 }
 await gate(wide);
-await gate({ ...wide, width: 540, subtitles: 0 });
+// Narrow windows: the 60px icon rail, names and status lines clipped for assistive technology, the dot below the tabs.
+const compact = { ...wide, width: 540, names: 0, railNames: 4, tabs: [0, 1, 2, 3].map(i => ({ ...tab(i), width: 44, right: 52 })), page: { x: 60, bottom: 640 },
+  titleBar: { ...wide.titleBar, bar: { x: 0, right: 540 }, theme: { x: 348, right: 376 }, controls: { x: 384, right: 522 } },
+  host: { x: 8, y: 588, right: 52 }, hostLabel: { width: 1 }, statusLine: { width: 1 } };
+await gate(compact);
 for (const mutation of [
-  { tabs: wide.tabs.map(tab => ({ ...tab, width: 181.5 })) },
-  { tabs: wide.tabs.map(tab => ({ ...tab, grow: '1' })) }, { host: { x: 555 } },
-  { width: 540 }, { width: 540, subtitles: 0, hostLabel: { width: 161 } },
+  { page: { x: 76, bottom: 640 } }, { tabs: compact.tabs.map(item => ({ ...item, width: 68, right: 72 })) },
+  { host: { x: 8, y: 100, right: 52 } }, { host: { x: 70, y: 588, right: 300 } },
+  { names: 4 }, { railNames: 3 }, { described: 3 }, { labels: labels.slice(1) },
+  { hostLabel: { width: 100 } }, { hostLabel: null }, { statusLine: { width: 180 } }, { statusLine: null }, { brand: false },
+  // Back and Forward: present, after the toggle and before Bridge, the row inside the 540 window, and no File menu.
+  { titleBar: { ...compact.titleBar, back: null } }, { titleBar: { ...compact.titleBar, forward: null } },
+  { titleBar: { ...compact.titleBar, back: { x: 140, right: 168 } } }, { titleBar: { ...compact.titleBar, controls: { x: 420, right: 558 } } },
+  { titleBar: { ...compact.titleBar, fileMenu: 1 } },
+]) await assert.rejects(() => gate({ ...compact, ...mutation }));
+for (const mutation of [
+  { tabs: wide.tabs.slice(1) },
+  { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, x: 30 } : item) },
+  { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, width: 200 } : item) },
+  { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, y: 100 } : item) },
+  { page: { x: 200 } },
+  { host: { x: 20, y: 100, right: 220 } }, { host: { x: 240, y: 740, right: 400 } },
+  { names: 3 }, { hostLabel: { width: 1 } }, { statusLine: { width: 1 } },
   { quiet: [{ start: '4px', end: '0px' }] }, { scrollbar: { width: 'auto', color: 'auto' } },
   { theme: { page: 'rgb(242, 241, 237)', ink: 'rgb(27, 32, 38)' } },
   { scrollHeight: 703 },
 ]) await assert.rejects(() => gate({ ...wide, ...mutation }));
+// The guided first run spans the window with no sidebar or status card on screen and keeps the status live region.
+// It has no title-bar way out: Show all of Bridge is gone, and only a screen where setup stopped offers Set up later.
+// Any other screen is still held to the sidebar layout above.
+const guided = { ...wide, guided: true, tabs: [], names: 0, subtitles: 0, hostShown: 0, host: { x: 0, y: 0, right: 0, width: 0 }, hostLabel: { width: 0 }, page: { x: 0, right: 1280 }, statusRegion: true, exit: 0, stopped: 0, later: 0,
+  titleBar: { ...wide.titleBar, toggle: null, back: null, forward: null } };
+const stopped = { ...guided, stopped: 1, later: 1 };
+await gate(guided);
+await gate({ ...guided, width: 540, page: { x: 0, right: 540 } });
+await gate(stopped);
+await gate({ ...stopped, width: 540, page: { x: 0, right: 540 } });
+// A paused setup offers Set up later without a failure callout.
+await gate({ ...guided, later: 1 });
+for (const mutation of [
+  { tabs: wide.tabs }, { names: 4 }, { hostShown: 1 }, { page: { x: 232, right: 1280 } }, { page: { x: 0, right: 1000 } },
+  { statusRegion: false }, { exit: 1 }, { stopped: 1 }, { titleBar: wide.titleBar }, { titleBar: { ...guided.titleBar, fileMenu: 1 } },
+]) await assert.rejects(() => gate({ ...guided, ...mutation }));
+for (const mutation of [{ later: 0 }, { exit: 1 }]) await assert.rejects(() => gate({ ...stopped, ...mutation }));
+assert.ok(layoutGate.includes("node.textContent.trim() === 'Show all of Bridge'") && layoutGate.includes("node.textContent.trim() === 'Set up later'"), 'the guided gate must measure the controls by their names');
+await assert.rejects(() => gate({ ...guided, guided: false }));
 // The compact Change image must be framed before requesting its screenshot.
 const changeCapture = source.match(/if \(name\.startsWith\('ai-removal-'\)\) \{([\s\S]*?)\n      await clickAction\('Remove saved sign-in'\);/)?.[1];
 assert.ok(changeCapture);
@@ -229,7 +290,7 @@ for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clus
   assert.ok(workflow.includes(command), `CI must run ${scope} into its own artifact directory`);
   const before = workflow.slice(0, workflow.indexOf(command));
   const step = before.slice(before.lastIndexOf('      - name:'));
-  assert.match(step, /timeout-minutes: 3\n/, 'each scope keeps the existing three-minute ceiling');
+  assert.match(step, /timeout-minutes: 4\n/, 'each scope keeps its four-minute ceiling');
 }
 assert.ok(workflow.includes('node ../scripts/test-native-recovery-scopes.mjs'));
 // Effective native grants are checked through Tauri's generated runtime
@@ -388,14 +449,20 @@ const model = (await readFile(new URL('./native-model-macos.swift', import.meta.
 const captureManifest = JSON.parse(await readFile(new URL('./native-model-captures.json', import.meta.url), 'utf8'));
 assert.ok(model.includes('let upgradeText = !found && name.hasPrefix("local-upgrade-") && nativeChatTextIsVisible(value, aboveFooter: true)'), 'upgrade OCR fallback must prove the unchanged expected substring in a fully visible native node');
 assert.ok(model.includes('require(found || nativeText || upgradeText || chatText || workspaceControl || overviewControl || overviewHeading'), 'native upgrade evidence must feed the original hard capture assertion');
+// Context choices are buttons named by their context; only an exact, drawn choice in a cluster picker capture may stand in for missed OCR.
+assert.ok(model.includes('let pickerChoice = !found && (name.hasPrefix("cluster-picker-") || name.hasPrefix("cluster-account-picker-")) && nativeWorkspaceButtonIsVisible(value)'), 'picker choices must fall back only to an exact visible named button');
+// The guided title-bar row is found from the Setup progress list, which WebKit reports as a group under list-style: none.
+assert.ok(smoke.includes('["AXList", "AXGroup"].contains(attribute(element, "AXRole") as? String ?? "")') && smoke.includes('main.minY > list.maxY, main.minY - list.minY < 100'), 'the guided row must come from the labelled Setup progress list');
 assert.match(model, /theme\s*==\s*"dark"\s*\?\s*\[\s*9\s*,\s*9\s*,\s*10\s*\]\s*:\s*\[\s*255\s*,\s*255\s*,\s*255\s*\]/, 'native model captures must declare exact Orka paper in both themes');
 assert.ok(model.includes('Native fixture does not use Orka paper'), 'native model captures must reject a different rendered paper colour');
-assert.match(model, /let\s+pagePoint\s*=\s*CGPoint\(\s*x:\s*\(\s*12\s*\*\s*CGFloat\(image\.width\)\s*\/\s*windowFrame\.width\s*\)\.rounded\(\.down\)\s*,\s*y:\s*\(\s*\(\s*titlebarHeight\s*\+\s*2\s*\)\s*\*\s*CGFloat\(image\.height\)\s*\/\s*windowFrame\.height\s*\)\.rounded\(\.down\)\s*\)/, 'native theme sampling must use an integral pixel on the known page surface below the title bar');
+assert.ok(model.includes('let paper = pageGutter()') && model.includes('x: ((paper.x - windowFrame.minX) * CGFloat(image.width) / windowFrame.width).rounded(.down)') && model.includes('y: ((paper.y - windowFrame.minY) * CGFloat(image.height) / windowFrame.height).rounded(.down)'), 'native theme sampling must use an integral pixel in the page panel, below the title bar');
+const modelGutter = model.slice(model.indexOf('func sidebarButton('), model.indexOf('func setOverviewExpanded('));
+assert.ok(modelGutter.includes('.compactMap(nativeBounds).min { $0.minX < $1.minX }') && !modelGutter.includes('AXEnabled') && modelGutter.includes('CGPoint(x: nav.maxX + 16, y: y ?? home.minY + 8)') && modelGutter.includes('fail("Cannot locate the native sidebar beside the page")'), 'the page sample must sit in the panel\'s bare left padding beside the actual sidebar, also behind an inert picker, and fail rather than guess');
 assert.ok(model.includes('guard let capturedWindow = window() else') && model.includes('String(capturedWindow.0)') && model.includes('let windowFrame = capturedWindow.1'), 'native theme sampling must use the same window identity and geometry as its screenshot');
 assert.ok(model.includes('var largest: (CGWindowID, CGRect)?') && model.includes('(candidate[kCGWindowOwnerPID as String] as? Int32) == child.processIdentifier') && model.includes('(candidate[kCGWindowLayer as String] as? Int) == 0') && model.includes('let area = rect.width * rect.height') && model.includes('if area > largestArea') && model.includes('largest = (id, rect)'), 'native capture must select the largest owned layer-zero window, not a transient auxiliary window');
-assert.match(model, /let\s+pickerOpen\s*=\s*enabledButton\(\s*"Close picker"\s*\)\s*!=\s*nil/, 'native model captures must detect an open picker from its native Close control');
-assert.match(model, /opacity\s*:\s*CGFloat\s*=\s*theme\s*==\s*"dark"\s*\?\s*0\.55\s*:\s*0\.18/, 'native model captures must retain the exact picker backdrop opacities');
-assert.ok(model.includes('zip(page, backdrop).map') && model.includes('Native fixture picker backdrop does not use the Orka paper composite'), 'native model captures must strictly verify the picker backdrop composite');
+// No picker dims the page: the context and account pickers have a transparent backdrop and the tool picker is a
+// card in the page, so every model capture samples plain paper.
+assert.ok(!model.includes('zip(page, backdrop).map') && !model.includes('dimmingPicker') && model.includes('require(zip(actual, page).allSatisfy { abs($0 - $1) < 8 }, "Native fixture does not use Orka paper: \\(actual)")'), 'native model captures must strictly verify plain paper, with or without a picker open');
 assert.ok(model.includes('CGImageSourceCreateWithURL') && model.includes('CGColorSpace(name: CGColorSpace.sRGB)'), 'native model theme sampling must measure rendered sRGB bytes, not display-calibrated AppKit colours');
 assert.ok(model.includes('let overviewHeading = !found && value == "web-reader"') && model.includes('(name.hasPrefix("local-overview-") || name.hasPrefix("local-controls-overview-"))') && model.includes('["web-xeader", "WeD-reader"].contains(where: visible.contains) && nativeOverviewHeadingIsVisible(value)'), 'Overview captures must require an observed Geist OCR miss and exact web-reader native heading together');
 assert.ok(model.includes('let accountValue = !found && value == "team-runner" && name.hasPrefix("cluster-account-allowed-")') && model.includes('nativeControlShowsObservedOCRValue("ServiceAccount", value, ["team- runner", "Team- Tunne t"], rows, capturedWindow)'), 'Account captures must pair observed Geist OCR splits with the exact visible native control in the captured window');
@@ -406,16 +473,27 @@ const nativeControlValue = model.slice(model.indexOf('func nativeControl(_ label
 assert.ok(model.includes('nativeSelectedControlLabelMatches("ServiceAccount: team-runner"') && model.includes('nativeSelectedControlLabelMatches("ServiceAccount: task-reader"') && model.includes('selected control rejects wrong value'), 'the native matcher self-test must reject a correctly labelled control holding the wrong account');
 assert.ok(nativeControlValue.includes('["AXButton", "AXPopUpButton"].contains') && nativeControlValue.includes('nativeSelectedControlLabelMatches(value, label: label, expected: expected)') && nativeControlValue.includes('controls.count == 1') && nativeControlValue.includes('func nativeControlShowsObservedOCRValue') && nativeControlValue.includes('current.0 == captured.0, current.1 == captured.1') && nativeControlValue.includes('let frame = captured.1') && nativeControlValue.includes('frame.minX + box.minX * frame.width') && nativeControlValue.includes('frame.maxY - box.maxY * frame.height') && nativeControlValue.includes('box.width * frame.width, height: box.height * frame.height') && nativeControlValue.includes('observed.contains(text)') && nativeControlValue.includes('bounds.insetBy(dx: -2, dy: -2).contains(ocrBounds)') && nativeControlValue.includes('matches.count == 1'), 'the observed account OCR alias must appear exactly once inside the unique exact-value native control in the unchanged captured window');
 const nativeOverviewHeading = model.slice(model.indexOf('func nativeOverviewHeadingIsVisible('), model.indexOf('func nativeChatTextIsVisible('));
-assert.ok(nativeOverviewHeading.includes('enabledButton("Overview")') && nativeOverviewHeading.includes('bounds.minY >= headerBottom + 8') && nativeOverviewHeading.includes('bounds.maxY <= window()!.1.maxY - 32'), 'Overview heading fallback must stay inside the active page viewport and clear of fixed chrome');
+assert.ok(nativeOverviewHeading.includes('guard let top = enabledButton("Home").flatMap(nativeBounds).map({ $0.minY - 12 }) else { return false }') && nativeOverviewHeading.includes('bounds.minY >= top + 8') && nativeOverviewHeading.includes('bounds.maxY <= window()!.1.maxY - 32'), 'Overview heading fallback must stay inside the active page viewport and clear of fixed chrome');
 assert.ok(smoke.includes('let backMiss = ["Pack to clusters", "back to clusters"].contains(where: text.contains)') && smoke.includes('backMiss && visibleButtons("Back to clusters").count == 1'), 'Manage captures must pair observed Geist Back OCR misses with the exact visible native button');
+// CSS capitals (pills, section labels) are the only accepted variant of authored copy, in OCR and AX text alike.
+for (const [name, text] of [['native-model-macos.swift', model], ['native-smoke.swift', smoke]]) {
+  assert.ok(text.includes('func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }')
+    && text.includes('func isText(_ text: String, _ expected: String) -> Bool { text == expected || text == expected.uppercased() }'), `${name}: rendered text may differ from authored copy only by CSS capitals`);
+}
+assert.ok(!/(?<![\w.])text\.contains\("/.test(smoke), 'native smoke OCR checks must go through showsText');
+// The cluster context and account pickers draw no backdrop.
+assert.ok(smoke.includes('require(visibleButtons("Close picker").count == 1, "Context picker must be visibly open")') && !smoke.includes('expected.map { $0 * 0.45 }'), 'smoke walk must see the open context picker over plain paper');
+assert.ok(smoke.includes('return (popoverBounds(element) ?? bodyBounds()).contains(bounds) ? bounds : nil') && smoke.includes('["AXApplicationDialog", "AXDialog"]'), 'controls in an open popover are visible within the popover, other controls only within the page');
 const nativeUpgradeVisibility = model.slice(model.indexOf('func nativeChatTextIsVisible('), model.indexOf('func waitForButton('));
-assert.ok(nativeUpgradeVisibility.includes('text.contains(expected)') && nativeUpgradeVisibility.includes('"AXStaticText"'), 'upgrade fallback must use actual expected native text, not OCR spelling aliases');
+assert.ok(nativeUpgradeVisibility.includes('showsText(text, expected)') && nativeUpgradeVisibility.includes('"AXStaticText"'), 'upgrade fallback must use actual expected native text, not OCR spelling aliases');
 assert.ok(nativeUpgradeVisibility.includes('bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)') && nativeUpgradeVisibility.includes('bounds.maxY <= window()!.1.maxY - 32'), 'hidden, clipped, off-window and footer text cannot satisfy upgrade fallback');
 assert.equal(captureManifest.model.length, 208);
 assert.equal(captureManifest['destinations-workspace'].length, 121);
 assert.equal(new Set([...captureManifest.model, ...captureManifest['destinations-workspace']]).size, 329);
 const overviewCaptures = [
   ...['disconnected', 'connected'].flatMap(ai => ['wide', 'minimum'].flatMap(size => ['collapsed', 'expanded'].map(state => `local-overview-ai-${ai}-${state}-${size}`))),
+  // At 540x640 the expanded row's Run tests is captured in its own frame below the page heading.
+  ...['disconnected', 'connected'].map(ai => `local-overview-ai-${ai}-expanded-run-minimum`),
   ...['wide', 'compact', 'minimum'].flatMap(size => ['collapsed', 'expanded-earlier-pass', 'expanded-earlier-failed', 'expanded-draft'].map(state => `local-controls-overview-${state}-${size}`)),
 ];
 assert.deepEqual(captureManifest.model.filter(name => name.includes('overview')).sort(), overviewCaptures.sort(), 'scoped manifest must retain every list/evidence capture with no obsolete grouping names');
@@ -446,28 +524,31 @@ assert.ok(overviewDriver.includes('oldCards:') && overviewDriver.includes('oldGr
 assert.ok(overviewDriver.includes("shoot('-collapsed')") && overviewDriver.includes("shoot('-expanded')"), 'Overview must capture collapsed and expanded native states');
 assert.ok(model.includes('local-overview-ai-disconnected-collapsed-') && model.includes('local-overview-ai-connected-expanded-'), 'native model fixtures must cover disconnected and connected list states');
 const overviewResult = model.slice(model.indexOf('func nativeOverviewResultIsVisible('), model.indexOf('func nativeChatTextIsVisible('));
-assert.ok(overviewResult.includes('enabledButton("Show places for \\(agent)")') && overviewResult.includes('enabledButton("Show places for \\(nextAgent)")') && overviewResult.includes('attribute(element, "AXRole") as? String == "AXStaticText"') && overviewResult.includes('attribute(element, "AXValue") as? String == expected') && overviewResult.includes('bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)') && overviewResult.includes('bounds.minY >= start.maxY && bounds.maxY <= end.minY'), 'native Overview result evidence must be exact, visibly bounded and lie between its agent row and the following row');
-assert.ok(model.includes('theme == "dark" && size == "wide" && scene == "earlier-failed"') && model.includes('pixels.contains("lot & passed, derore your edle")') && model.includes('pixels.contains("Failed") && pixels.contains("Run tests")') && model.includes('nativeOverviewResultIsVisible("pr-summary", before: "release-notes", "1 of 2 passed, before your edit")') && model.includes('expected.allSatisfy { pixels.contains($0) } || failedCountMiss'), 'only the observed dark wide Overview verdict OCR miss may use exact card-scoped native evidence');
+assert.ok(overviewResult.includes('enabledButton("Show places for \\(agent)")') && overviewResult.includes('enabledButton("Show places for \\(nextAgent)")') && overviewResult.includes('attribute(element, "AXRole") as? String == "AXStaticText"') && overviewResult.includes('(attribute(element, "AXValue") as? String).map({ isText($0, expected) }) == true') && overviewResult.includes('bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)') && overviewResult.includes('bounds.minY >= start.maxY && bounds.maxY <= end.minY'), 'native Overview result evidence must be exact, visibly bounded and lie between its agent row and the following row');
+assert.ok(model.includes('theme == "dark" && size == "wide" && scene == "earlier-failed"') && model.includes('pixels.contains("lot & passed, derore your edle")') && model.includes('showsText(pixels, "Failed") && pixels.contains("Run tests")') && model.includes('nativeOverviewResultIsVisible("pr-summary", before: "release-notes", "1 of 2 passed, before your edit")') && model.includes('expected.allSatisfy { showsText(pixels, $0) } || failedCountMiss'), 'only the observed dark wide Overview verdict OCR miss may use exact card-scoped native evidence for a count');
+assert.ok(model.includes('let pillMiss = !showsText(pixels, expected[0]) && expected.dropFirst().allSatisfy { showsText(pixels, $0) }') && model.includes('&& nativeOverviewResultIsVisible(agent, before: next, expected[0])') && model.includes('|| failedCountMiss || pillMiss,'), 'a missed pill word alone may use exact native text inside its own agent\'s expanded places; every other line must be read');
 assert.ok(!model.includes('by-cluster') && !model.includes('by-agent'), 'native model fixtures must not retain grouping controls');
-assert.ok(model.includes('Cannot bring Overview disclosure into view') && model.includes('let top = enabledButton("Overview").flatMap(nativeBounds)?.maxY'), 'native Overview disclosures must be brought clear of fixed navigation before pointer activation');
-assert.ok(model.includes('capture("local-overview-ai-disconnected-collapsed-\\(size)", ["Your agents"])') && model.includes('require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer.")'), 'disconnected Overview must verify the exact native reason without fragile OCR of AI/Al');
+assert.ok(model.includes('Cannot bring Overview disclosure into view') && model.includes('let top = pageTop()') && model.includes('func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 12 }'), 'native Overview disclosures must be brought clear of fixed navigation before pointer activation');
+assert.ok(model.includes('capture("local-overview-ai-disconnected-collapsed-\\(size)", ["Your agents"])') && model.includes('require(nativeResultTextIsVisible("Connect the AI in Clusters to try a task or run tests on this computer.")'), 'disconnected Overview must verify the exact native reason without fragile OCR of AI/Al');
 assert.ok(smoke.includes('Show places for web-reader') && smoke.includes('overview-fixture-multiple-places-expanded'), 'native smoke must expand the agent list before proving per-place evidence');
 assert.ok(!smoke.includes('heading: "fixture-secondary"'), 'place names are marks or evidence labels, never list headings');
 assert.ok(smoke.includes('overviewShot("overview-fixture-offline-expanded", ["fixture-secondary:",'), 'offline recovery must anchor its source label, not a distant place mark');
 const overviewShotGate = smoke.slice(smoke.indexOf('    func overviewShot('), smoke.indexOf('    func recordShot('));
 assert.ok(overviewShotGate.includes('afterFrame:') && !overviewShotGate.includes('anchor.minY'), 'capture the already-visible native Overview state; do not scroll it away for cosmetic framing');
 assert.ok(smoke.includes('name.hasPrefix("overview-probe-")'), 'renamed scrolled Overview probes must retain the existing heading exemption');
-assert.ok(smoke.includes('CGFloat(image.width - chromeInset)') && smoke.includes('name.hasPrefix("overview-") ? 20 : 8'), 'Overview theme sampling must avoid its transient edge scrollbar without relaxing the theme tolerance');
+assert.ok(smoke.includes('let frame = window()!.1, paper = pageGutter()') && smoke.includes('x: ((paper.x - frame.minX) * CGFloat(image.width) / frame.width).rounded(.down)') && smoke.includes('y: ((paper.y - frame.minY) * CGFloat(image.height) / frame.height).rounded(.down)') && smoke.includes('return CGPoint(x: page.minX + 8, y: y ?? page.minY + 12)') && !smoke.includes('chromeInset'), 'theme sampling must read the page panel\'s bare left padding, clear of the sidebar, the chrome margin and the panel scrollbar, without relaxing the theme tolerance');
+assert.ok(smoke.includes('scroll?.location = pageGutter(y: window()!.1.midY)'), 'page scrolling must target the page panel, not the scrollbar at the window edge');
+assert.ok(smoke.includes('guard top > 0.10 && top < 0.25, headingFrame.minX + observation.boundingBox.minX * headingFrame.width >= headingLeft'), 'sidebar page names must not count as page headings');
 assert.ok(smoke.includes('theme == "dark" ? [9, 9, 10] : [255, 255, 255]') && smoke.includes('Orka paper'), 'native smoke must verify the Orka paper palette in both themes');
 assert.ok(source.includes("theme === 'dark' ? '#09090a' : '#ffffff'") && source.includes("theme === 'dark' ? '#f4f4f5' : '#0b0b0c'"), 'Windows comparisons must use Orka paper and ink');
 assert.ok(!smoke.includes('clickText("Refresh"') && !smoke.includes('clickButton("Refresh")') && !smoke.includes('clickText("By agent"') && !smoke.includes('clickText("By cluster"'), 'native smoke must remove top Refresh and grouping-only Overview paths');
 for (const name of ['chat-long-early-wide', 'chat-long-early-minimum', 'chat-long-end-wide', 'chat-long-end-minimum']) {
-  assert.ok(captureManifest.model.includes(name), `long Chat capture must belong to model scope: ${name}`);
-  assert.ok(!captureManifest['destinations-workspace'].includes(name), `long Chat capture must not leak into destination scope: ${name}`);
+  assert.ok(captureManifest.model.includes(name), `earlier-tasks capture must belong to model scope: ${name}`);
+  assert.ok(!captureManifest['destinations-workspace'].includes(name), `earlier-tasks capture must not leak into destination scope: ${name}`);
 }
-assert.ok(model.includes('nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2")'), 'numbered Chat versions must be verified as native headings, not body static text');
-assert.ok(model.includes('anchorChatHeading("Conversation 2")'), 'Chat capture must align its native heading clear of fixed navigation');
-assert.ok(model.includes('let delta = header.maxY + 64 - bounds.minY'), 'Chat heading navigation must use actual header/heading geometry');
+assert.ok(!model.includes('nativeHeadingExists("Conversation') && model.includes('press("Earlier tasks: 1")') && model.includes('waitForButton("Earlier tasks: 1")'), 'Try a task walks earlier tasks through their folded disclosure, never numbered conversation headings');
+assert.ok(model.includes('click("Try a task", [])') && model.includes('enabledButton("Run task") == nil'), 'the native walk must open Try a task and prove a blocked Run task');
+assert.ok(model.includes('let delta = top + 64 - bounds.minY') && model.includes('let top = pageTop()'), 'heading navigation must use actual title-bar/heading geometry');
 assert.ok(smoke.indexOf('try capture("send-history-answer", "Designer")') > smoke.indexOf('let savedWide = try capturePreflight'), 'offline answer proof must follow its wide resize and provenance anchor');
 assert.ok(model.includes('attribute(element, "AXRole") as? String == "AXHeading"'), 'Chat heading discovery must use its actual native role');
 assert.ok(smoke.includes('("minimum", CGFloat(540), CGFloat(640))'));
@@ -477,7 +558,7 @@ const unsupportedWalk = smoke.slice(smoke.indexOf('    // Unsupported is deliber
 assert.ok(unsupportedWalk.includes('"Check cluster status"'));
 assert.ok(!unsupportedWalk.includes('clickSendControl("Retry cancellation"'), 'unsupported must be last, never followed by retry');
 assert.ok(smoke.indexOf('send-cancel-completion-race') < smoke.indexOf('// Unsupported is deliberately the last Send:'));
-assert.ok(smoke.includes('Resources and file hashes'), 'native discovery must distinguish resources from nested Details');
+assert.ok(smoke.includes('How Send works, checks and file hashes'), 'native discovery must distinguish resources from nested Details');
 assert.ok(smoke.includes('let buttonAnchor = nativeButtons(anchor ?? expected, root: root)'), 'action captions need scoped AXButton bounds after Details closes');
 assert.ok(smoke.includes('nativeTextBounds(anchor ?? expected, visibleOnly: false, exact: anchor != nil, root: root)'), 'duplicate local test names cannot steer Send anchors');
 assert.ok(smoke.includes('nativeTextBounds(failureReason, exact: true, root: root)'), 'the visible failure reason must belong to Send');
@@ -487,7 +568,10 @@ assert.ok(smoke.includes('attribute(element, "AXSubrole") as? String == "AXLandm
 assert.ok(smoke.includes('return viewport.contains(textBounds)'), 'frozen OCR evidence must be contained in the visible native region');
 assert.ok(smoke.includes('text.hasSuffix("-")'), 'hyphenated fixture IDs must survive native OCR line wraps');
 assert.ok(smoke.includes('region: "Past Sends", requiring:'), 'saved history anchors keep their separate region');
-assert.ok(smoke.includes('scrolling: -350, region: nil'), 'the Designer Send entry is outside the result region');
+// The Send card is always in Designer's right column: the walk brings its native region into view, with no page-head entry.
+assert.ok(!smoke.includes('clickText("Send to a cluster"') && !smoke.includes('clickSendControl("Send to a cluster"') && smoke.includes('guard let card = nativeBounds(nativeRegion("Send and cluster tests")) else { fail("Send card has no bounds") }')
+  && smoke.includes('guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {'), 'the walk must reach the always-shown Send card, and Past Sends once Sends are saved, without a page-head entry');
+assert.ok(model.includes('!nativeHeadingExists("Past Sends")') && model.includes('_ = try capture("local-shell-history-\\(size)", ["Past Sends keeps up to 256 Sends"])') && !model.includes('Saved results and limits'), 'with no saved Sends the model walk must see no Past Sends and read its limits in the Send card Details');
 assert.ok(smoke.includes('if let anchor = textAnchor ?? buttonAnchor'), 'native action anchors retain frozen-frame verification');
 assert.ok(smoke.includes('func uniqueOCRTarget('), 'scoped OCR click selection must reject distinct targets');
 assert.ok(smoke.includes('let scopedSeen = seen.filter'), 'OCR click candidates must belong to the selected native region');
@@ -502,13 +586,14 @@ assert.ok(checksumLabel.test('› published-checksum'));
 assert.ok(checksumLabel.test('Copies the checksum from the pagepublished-checksum'), 'OCR can join captured title and stable test ID');
 assert.ok(!checksumLabel.test('Copies a different checksum'));
 assert.ok(model.includes('localSize(540, 640)') && model.includes('chat-new-version-minimum'));
-assert.ok(!model.includes('seek("Ask your agent a question"'), 'empty Chat has no invitation to seek');
-assert.ok(model.includes('Enter sends · Shift+Enter for a new line'), 'Mac capture must check the precise composer hint');
+assert.ok(!model.includes('seek("Ask your agent a question"'), 'empty Try a task has no invitation to seek');
+assert.ok(model.includes('Runs once on this computer. It does not change test results.'), 'Mac capture must check the precise composer hint');
 assert.ok(model.includes('requireChatComposerVisible()'), 'Mac captures must verify composer geometry');
-assert.ok(model.includes('chat-long-early-') && model.includes('chat-long-end-'), 'Mac long Chat must capture earlier-reader and end states');
-assert.ok(model.includes('name.hasPrefix("local-shell-chat-")'), 'mixed local/Chat captures must check the visible native subtitle, not only OCR');
-assert.ok(smoke.includes('"Fix in Designer", "Run cluster tests again"'), 'failed Send must preserve Fix primary and precise rerun secondary');
-assert.ok(source.includes('chat-long-early') && source.includes('chat-long-end'), 'long Chat needs distinct earlier-reader and end captures');
+assert.ok(model.includes('chat-long-early-') && model.includes('chat-long-end-'), 'Mac Try a task must capture earlier tasks folded and open');
+assert.ok(model.includes('name.hasPrefix("local-shell-chat-")'), 'mixed local/Try a task captures must check the visible native subtitle, not only OCR');
+assert.ok(smoke.includes('actions: ["Run cluster tests again", "Fix in Designer", "See in Overview"]') && smoke.includes('try requireSendActions(["Run cluster tests again", "See in Overview"])')
+  && smoke.includes('require(actions.count <= 3 && actions == expected,'), 'Send results must keep their exact actions in reading order: rerun first, Fix in Designer on a failure, then See in Overview');
+assert.ok(source.includes('chat-long-early') && source.includes('chat-long-end'), 'many earlier tasks need distinct captures');
 assert.ok(source.includes("resizeTo({ width: 1280, height: 800 }, 'Wide')"));
 assert.ok(source.includes("resizeTo({ width: 540, height: 640 }, 'Compact')"));
 assert.ok(!source.includes('Emulation.setDeviceMetricsOverride'), 'a fake viewport cannot qualify native size evidence');
@@ -662,6 +747,41 @@ for (const name of ['upgrade-refresh-pending', 'upgrade-refresh-busy', 'upgrade-
 assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_status', args: { refresh: true } }], 'upgrade-refresh-arbitrary', 'fixture-transaction'));
 // Old isolated-world React pollers may still retire their own first-test intent;
 // their synthetic preferences must not change a later scene's identity.
+// Guided first-run screens have no sidebar: the smoke walk anchors the page under the guided title-bar row, finds
+// Get started as the native button (its arrow is CSS content) and leaves guidance through the fixture cluster.
+assert.ok(smoke.includes('guard let row = guidedTitleRow() else { fail("Cannot locate the native sidebar or the guided title bar for the page viewport") }')
+  && smoke.includes('return CGRect(x: rect.minX, y: row.maxY, width: rect.width, height: max(0, rect.maxY - row.maxY))')
+  && smoke.includes('== "Setup progress" }') && smoke.includes('bounds.width >= rect.width * 0.9, bounds.height < 100'), 'guided pages must be anchored under the actual guided title-bar row');
+assert.ok(!smoke.includes('Show all of Bridge') && smoke.includes('"Using the fixture cluster did not end the guided first run and bring back the sidebar"')
+  && smoke.indexOf('clickButton("Use this cluster")', smoke.indexOf('func leaveGuidedFirstRun()')) < smoke.indexOf('clickButton("Remove cluster")', smoke.indexOf('func leaveGuidedFirstRun()'))
+  && smoke.includes('require(nativeButtons("Manage").isEmpty && nativeTextIsVisible("No other clusters added yet"), "The fixture cluster used to leave guidance was not forgotten")')
+  && !smoke.slice(smoke.indexOf('func leaveGuidedFirstRun()'), smoke.indexOf("// A point in the page's bare left padding:")).includes('"On this computer"')
+  && (smoke.match(/leaveGuidedFirstRun\(\)\n\s*clickTab\(/g) ?? []).length >= 2, 'the walk must leave guidance through the fixture cluster, forget it, and use the sidebar only afterwards');
+assert.ok(!/topCandidates\(1\)\.first\?\.string == "Get started"/.test(smoke) && !smoke.includes('clickText("Get started"'), 'Get started carries a CSS arrow, so it is found as a native button, not an exact OCR line');
+// The walk reads visible text in its authored case: capitals drawn by CSS map back to the app's words, nothing else.
+{
+  const authored = source.match(/const authoredInnerText = `([\s\S]*?)`;/)?.[1];
+  assert.ok(authored && source.includes('for (const setup of [fixtureStorage, authoredInnerText])'), 'Windows walk must install authored-case innerText in every fixture world');
+  class HTMLElement { constructor(text, children = [], transform = 'none') { this.rendered = text; this.children = children; this.textContent = text; this.transform = transform; }
+    querySelectorAll() { return this.children.flatMap(child => [child, ...child.querySelectorAll()]); } }
+  Object.defineProperty(HTMLElement.prototype, 'innerText', { configurable: true, get() { return this.rendered; }, set() {} });
+  let styleReads = 0;
+  const world = { HTMLElement, getComputedStyle: node => { styleReads += 1; return { textTransform: node.transform }; } };
+  vm.runInNewContext(authored, world);
+  // Polling reads stay cheap: no capitals run means no tree walk, and only candidate elements cost a style read.
+  const lower = new HTMLElement('Tests on this computer\nWaiting', [new HTMLElement('Waiting', [], 'uppercase')]);
+  lower.querySelectorAll = () => { throw Error('fast path must not walk the tree'); };
+  assert.equal(lower.innerText, 'Tests on this computer\nWaiting');
+  const mixed = new HTMLElement('Saved\nPASSED\nOther copy', [new HTMLElement('Saved'), new HTMLElement('Passed', [], 'uppercase'), new HTMLElement('Other copy')]);
+  assert.equal(mixed.innerText, 'Saved\nPassed\nOther copy');
+  assert.equal(styleReads, 1, 'only the element whose capitals appear in the text reads its computed style');
+  styleReads = 0;
+  const pill = new HTMLElement('Not started', [], 'uppercase');
+  const card = new HTMLElement('Tests on this computer\nNOT STARTED\nWaiting', [pill]);
+  assert.equal(card.innerText, 'Tests on this computer\nNot started\nWaiting');
+  const plain = new HTMLElement('READY TO SEND', [new HTMLElement('Ready to send')]);
+  assert.equal(plain.innerText, 'READY TO SEND', 'text the app wrote in capitals, or that CSS does not capitalise, is unchanged');
+}
 const fixtureStorage = source.match(/const fixtureStorage = `([\s\S]*?)`;/)?.[1];
 assert.ok(fixtureStorage, 'each renderer fixture world needs isolated presentation preferences');
 const nativePreferences = new Map([['native-sentinel', 'kept']]);
@@ -707,4 +827,4 @@ for (const intent of ['pending', 'attempted']) {
   assert.equal(local.get('bridge.firstTest.v1'), 'attempted', 'bootstrap must not rearm intent after the handshake');
 }
 await import('./test-native-workspace-contracts.mjs');
-console.log('PASS real scope parsing; 47+25 unique action cases; 29 upgrade variants/148 disjoint Windows frame slots; upgrade scope/50 baseline+20 integration-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
+console.log('PASS real scope parsing; 47+25 unique action cases; 29 upgrade variants/148 disjoint Windows frame slots; upgrade scope/50 baseline+20 integration-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with four-minute ceilings');

@@ -253,7 +253,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     } else {
         guard let panel = rows.filter({
             let label = $0.topCandidates(1).first?.string ?? ""
-            // The shell now also says Connect the AI. Anchor below the tab bar, in the model column.
+            // The shell now also says Connect the AI. Anchor below the title bar, in the model column.
             return (label.contains("Connect the AI") || label.contains("Connect the Al")) && $0.boundingBox.minX > 0.5 && $0.boundingBox.maxY < 0.85
         }).max(by: { $0.boundingBox.maxY < $1.boundingBox.maxY })
             else { fatalError("Model panel heading was not recognized") }
@@ -267,6 +267,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI")
             .replacingOccurrences(of: "APl key", with: "API key")
             .replacingOccurrences(of: "Reset Al connection", with: "Reset AI connection").contains(value)
+            || visible.contains(value.uppercased())
         // Recovery copy has apostrophes and "AI" that Vision misreads; require visible native text instead.
         let lenient = ["local-key-", "local-reset-", "local-remove-"].contains { name.hasPrefix($0) }
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || lenient && nativeChatTextIsVisible(value))
@@ -277,24 +278,25 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         let chatText = !found && !accountExpectation
             && (name.hasPrefix("chat-") || name.hasPrefix("cluster-") || name.hasPrefix("local-shell-chat-"))
             && nativeChatTextIsVisible(value)
-        let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
+        let workspaceControl = !found && (name.hasPrefix("local-workspace-") || name.hasPrefix("local-reset-")) && nativeWorkspaceButtonIsVisible(value)
+        // Context and account choices are buttons named by their mono name (WebKit exposes no text inside them), and
+        // Vision can skip a short mono line in a picker; accept the exact named choice drawn inside the window.
+        let pickerChoice = !found && (name.hasPrefix("cluster-picker-") || name.hasPrefix("cluster-account-picker-")) && nativeWorkspaceButtonIsVisible(value)
         let overviewControl = !found && name.hasPrefix("local-") && name.contains("overview") && nativeWorkspaceButtonIsVisible(value)
         let overviewHeading = !found && value == "web-reader"
             && (name.hasPrefix("local-overview-") || name.hasPrefix("local-controls-overview-"))
             && ["web-xeader", "WeD-reader"].contains(where: visible.contains) && nativeOverviewHeadingIsVisible(value)
         let accountValue = !found && value == "team-runner" && name.hasPrefix("cluster-account-allowed-")
             && nativeControlShowsObservedOCRValue("ServiceAccount", value, ["team- runner", "Team- Tunne t"], rows, capturedWindow)
-        require(found || nativeText || upgradeText || chatText || workspaceControl || overviewControl || overviewHeading || accountValue, "Missing \(value) in \(name): \(text)")
+        require(found || nativeText || upgradeText || chatText || workspaceControl || overviewControl || overviewHeading || pickerChoice || accountValue, "Missing \(value) in \(name): \(text)")
     }
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
         let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
         let space = CGColorSpace(name: CGColorSpace.sRGB) else { fail("Cannot decode native theme") }
     let windowFrame = capturedWindow.1
-    let titlebarHeight = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable]).height - 100
-    // This blank tab-bar point is always --color-page and lies outside every picker.
-    let pagePoint = CGPoint(x: (12 * CGFloat(image.width) / windowFrame.width).rounded(.down),
-        y: ((titlebarHeight + 2) * CGFloat(image.height) / windowFrame.height).rounded(.down))
+    let paper = pageGutter()
+    let pagePoint = CGPoint(x: ((paper.x - windowFrame.minX) * CGFloat(image.width) / windowFrame.width).rounded(.down),
+        y: ((paper.y - windowFrame.minY) * CGFloat(image.height) / windowFrame.height).rounded(.down))
     guard let pixel = image.cropping(to: CGRect(origin: pagePoint, size: CGSize(width: 1, height: 1)))
         else { fail("Cannot locate native theme sample") }
     var rgba = [UInt8](repeating: 0, count: 4)
@@ -307,27 +309,21 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         return true
     }
     require(sampled, "Cannot sample native theme in sRGB")
-    let pickerOpen = enabledButton("Close picker") != nil
+    // No picker dims the page any more: the cluster context and account pickers are popovers with a transparent
+    // backdrop (.context-picker::backdrop in clusters.css) and the tool picker is a card in the page (designer.css),
+    // so the sampled corner is plain paper with or without one open.
     let page: [CGFloat] = theme == "dark" ? [9, 9, 10] : [255, 255, 255]
     let actual = rgba.prefix(3).map { CGFloat($0) }
-    if pickerOpen {
-        let backdrop: [CGFloat] = theme == "dark" ? [0, 0, 0] : [11, 11, 12]
-        let opacity: CGFloat = theme == "dark" ? 0.55 : 0.18
-        let expected = zip(page, backdrop).map { $0 * (1 - opacity) + $1 * opacity }
-        require(zip(actual, expected).allSatisfy { abs($0 - $1) < 3 },
-            "Native fixture picker backdrop does not use the Orka paper composite: \(actual)")
-    } else {
-        require(zip(actual, page).allSatisfy { abs($0 - $1) < 8 }, "Native fixture does not use Orka paper: \(actual)")
-    }
+    require(zip(actual, page).allSatisfy { abs($0 - $1) < 8 }, "Native fixture does not use Orka paper: \(actual)")
     // Setup frames 1c, 1d (cropped) and 1e exist only in light; dark captures use them as layout references.
     // Frames 1g (AI connection failed) and 1h (AI reset) are approved in both themes.
     let frame: (file: String, label: String)? =
-        name.hasPrefix("chat-") ? ("designer-reference-\(theme)", "Designer design system (no dedicated Chat frame)")
+        name.hasPrefix("chat-") ? ("designer-reference-\(theme)", "Designer design system (Try a task boards are not reference frames)")
         : name.hasPrefix("cluster-") ? ("cluster-reference-light", "Approved cluster cards (wide reference)")
         : name.hasPrefix("local-workspace-") || name == "local-stopped" ? ("workspace-reference-\(theme)", "Approved workspace frame (wide reference)")
         : ["local-result", "local-answer", "local-story", "local-running", "local-stopping", "local-shell", "local-catalog-no-destination"].contains(where: { name.hasPrefix($0) }) ? ("designer-reference-\(theme)", "Approved Designer frame (wide reference)")
         : name.hasPrefix("local-first-pass") ? ("setup-reference-first-pass", "Approved frame 1e, light (wide reference)")
-        : name.hasPrefix("local-setup-installing") || name.hasPrefix("local-setup-meet") ? ("setup-reference-meet", "Approved frame 1c, light (wide reference)")
+        : name.hasPrefix("local-setup-installing") ? ("setup-reference-meet", "Approved frame 1c, light (wide reference)")
         : ["before-connect", "connected"].contains(name) || name.hasPrefix("local-setup-ai") || name.hasPrefix("local-setup-queued") || name.hasPrefix("local-setup-connected") || name.hasPrefix("local-key-anthropic-empty") ? ("setup-reference-ai", "Approved frame 1d, light (wide reference, cropped)")
         : name.hasPrefix("local-reset-mismatch") || name.hasPrefix("local-reset-place") ? ("ai-connection-failed-reference-\(theme)", "Approved AI connection failure frame (wide reference)")
         : name.hasPrefix("local-reset-") ? ("ai-reset-failed-reference-\(theme)", "Approved AI reset frame (wide reference)")
@@ -369,6 +365,27 @@ func enabledButton(_ label: String) -> AXUIElement? {
     }
     return buttons.count == 1 ? buttons[0] : nil
 }
+// CSS can draw authored copy in capitals (pills, section labels). Text read back from the screen, or from WebKit's
+// accessibility values, is then the authored copy or exactly its capitals; any other casing is still a mismatch.
+func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }
+func isText(_ text: String, _ expected: String) -> Bool { text == expected || text == expected.uppercased() }
+// The page starts under the title bar, which ends 12pt above the sidebar's first button (Home).
+func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 12 } ?? window()!.1.minY }
+// A sidebar page button by name, enabled or not: an open picker makes the page behind it inert, not moved.
+func sidebarButton(_ label: String) -> CGRect? {
+    nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
+    }.compactMap(nativeBounds).min { $0.minX < $1.minX }
+}
+// A point in the page's bare left padding. The page starts 8pt right of the sidebar's buttons and its content
+// 16-30pt further in, so no control, text or scrollbar is under it. Just under the title bar it is also above every
+// fixed picker (80pt down) and inside the solid paper corner art.css keeps clear of the chart, so its colour is page
+// paper, or paper under the picker's backdrop.
+func pageGutter(y: CGFloat? = nil) -> CGPoint {
+    guard let nav = sidebarButton("Clusters"), let home = sidebarButton("Home") else { fail("Cannot locate the native sidebar beside the page") }
+    return CGPoint(x: nav.maxX + 16, y: y ?? home.minY + 8)
+}
 func setOverviewExpanded(_ title: String, _ expanded: Bool) {
     let label = "Show places for \(title)"
     let buttons = nativeElements().filter { element in
@@ -377,7 +394,7 @@ func setOverviewExpanded(_ title: String, _ expanded: Bool) {
     }
     require(buttons.count == 1, "Cannot identify Overview disclosure \(label)")
     if attribute(buttons[0], "AXExpanded") as? Bool == expanded { return }
-    let top = enabledButton("Overview").flatMap(nativeBounds)?.maxY ?? window()!.1.minY
+    let top = pageTop()
     for _ in 0..<12 {
         if let bounds = enabledButton(label).flatMap(nativeBounds) {
             if bounds.minY >= top + 8 && bounds.maxY <= window()!.1.maxY - 32 {
@@ -400,47 +417,68 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     for type in [CGEventType.leftMouseDown, .leftMouseUp] {
         CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
     }
+    // A hovered tab in the narrow rail shows its name over the page (shell.css .page-tab::after); move the pointer
+    // onto the page's bare corner, a move WebKit sees inside the web view, so later captures show only the page.
+    if ["Home", "Overview", "Designer", "Clusters"].contains(label) {
+        Thread.sleep(forTimeInterval: 0.3)
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: pageGutter(), mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
     Thread.sleep(forTimeInterval: 1)
 }
 // Keep journey bodies unchanged; only execution is partitioned.
 var rows: [VNRecognizedTextObservation] = []
 if scope.runsModel {
-// Exercise the four-step list with only synthetic IPC, at the actual minimum and wide sizes.
-waitForButton("Change")
-for (phase, expected) in [("installing", "Downloading, 1.1 of 2.1 GB"), ("starting", "45 seconds elapsed")] {
+// Exercise the two-card first setup with only synthetic IPC, at the actual minimum and wide sizes. The fixture opens
+// installing, so the Workspace card's Cancel is the first control to settle.
+waitForButton("Cancel")
+for (phase, expected) in [("installing", "Installing cluster files, 1.1 of 2.1 GB"), ("starting", "45 seconds elapsed")] {
     try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
     Thread.sleep(forTimeInterval: 0.6)
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
         localSize(width, height)
         scroll(4000)
-        _ = try capture("local-setup-\(phase)-\(size)", ["Getting your workspace ready", "Where agents run", "Get your workspace ready", expected])
-        if phase == "installing" {
-            // Show the file-derived tool/test rows, not just the card heading at the fold.
-            scroll(-4000)
-            require(nativeChatTextIsVisible("web_fetch"), "Meet tool name must be visible")
-            _ = try capture("local-setup-meet-\(size)", ["Meet your first agent", "web-reader", "Read a web page"])
+        // Outside the guided first run, a first workspace getting ready is two cards: the Workspace card (pill, bar,
+        // elapsed or download line, Cancel) and the AI card, with no step list headings and no Meet card.
+        _ = try capture("local-setup-\(phase)-\(size)", ["This computer", "Workspace", expected])
+        require(enabledButton("Cancel") != nil, "The Workspace card must offer Cancel while \(phase)")
+        // The sidebar status card still says "Getting your workspace ready, step 2 of 4"; only the page must drop them.
+        let pageLeft = sidebarButton("Clusters")?.maxX ?? window()!.1.minX
+        let pageText = { (expected: String) -> Bool in
+            nativeElements().contains { element in
+                guard attribute(element, "AXRole") as? String == "AXStaticText", let text = attribute(element, "AXValue") as? String,
+                      showsText(text, expected), let bounds = nativeBounds(element) else { return false }
+                return bounds.minX > pageLeft
+            }
         }
+        require(!["Getting your workspace ready", "Get your workspace ready", "Meet your first agent"].contains(where: pageText),
+                "Two-card first setup must not show the step list headings or Meet your first agent on the page")
     }
-    if phase == "installing" { try setupFitCapture("download", ["Meet your first agent", "Run your first agent"], "Read its instructions") }
+    if phase == "installing" { try setupFitCapture("download", ["Workspace", expected], "Cancel") }
 }
 localSize(1280, 800)
 scroll(4000)
-// Default shows one Cancel (pauses setup); queueing the AI goes through its own inline Change first.
-click("Change", [])
+// The AI card is its own card beside the Workspace card, with its choices shown: Connect the AI queues Copilot
+// until the workspace is ready, and the queued card names its choice and offers its own Cancel.
 click("Connect the AI", [])
+// Connect the AI first checks the GitHub sign-in (examples/model_walk.rs answers setup_check_model from its fixed
+// catalog), then the queued card names the account and model in one sentence (setup/Model.tsx).
+let queuedLine = "GitHub Copilot is ready: signed in as synthetic-user, model gpt-5.6-terra. Connects when the workspace is ready."
+waitForNativeText([queuedLine])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("connects when", -200)
-    _ = try capture("local-setup-queued-\(size)", ["Queued", "Change"])
-    require(enabledButton("Cancel queued connection") == nil, "A queued connection must not offer its own Cancel")
+    _ = try seek("Connects when the workspace is ready.", -200)
+    _ = try capture("local-setup-queued-\(size)", ["Queued", "GitHub Copilot", queuedLine])
+    require(enabledButton("Cancel queued connection") != nil && enabledButton("Connect the AI") == nil,
+            "A queued connection must offer its own Cancel instead of Connect the AI")
 }
 localSize(1280, 800); scroll(4000)
-// Changing the provider choice while queued clears the queue; restore Copilot before continuing.
-click("Change", [])
+// Cancelling the queue brings the choices back; a key can't be queued, so restore Copilot unqueued before continuing.
+click("Cancel queued connection", [])
+waitForButton("Connect the AI")
+require(enabledButton("Cancel queued connection") == nil, "Cancelling must clear the queue")
 chooseConnection("Your own API key")
-require(!nativeTextExists("Queued"), "Changing the radio choice must clear the queue")
+waitForNativeText(["Bridge can't queue a key. Enter it once the workspace is ready."])
 chooseConnection("GitHub Copilot")
-click("Change", [])
 click("Show details", [])
 _ = try capture("local-setup-starting-details", ["45 seconds elapsed", "Starting the workspace"])
 try FileManager.default.removeItem(at: setupProgress)
@@ -454,7 +492,7 @@ require(enabledButton("Connect the AI") != nil && enabledButton("Manage") == nil
 click("Connect the AI", rows)
 rows = try capture("before-connect", ["Connect the AI"])
 // The tab subtitle is visible in the capture but isn't a separate AXStaticText value.
-require(rows.contains { $0.boundingBox.minX < 0.3 && $0.boundingBox.maxY > 0.85 && $0.topCandidates(1).first?.string == "4 saved agents" }, "Hidden Overview must report the saved-file count in the header")
+require(rows.contains { $0.boundingBox.minX < 0.3 && $0.topCandidates(1).first?.string == "4 saved agents" }, "Hidden Overview must report the saved-file count in the sidebar")
 click("Overview", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
@@ -464,13 +502,26 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
             "Long Overview context filter must fit the native window")
     require(!anyButton("By cluster") && !anyButton("By agent") && !anyButton("Refresh"),
             "Overview list must not retain grouping or top-level Refresh controls")
-    require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer."),
+    require(nativeResultTextIsVisible("Connect the AI in Clusters to try a task or run tests on this computer."),
             "Disconnected Overview must explain the local AI gate")
     _ = try capture("local-overview-ai-disconnected-collapsed-\(size)", ["Your agents"])
     setOverviewExpanded("web-reader", true)
     require(anyButton("Run tests web-reader") && enabledButton("Run tests web-reader") == nil && enabledButton("Open web-reader") != nil,
             "Without connected AI, Overview must disable local Run but preserve Open")
-    _ = try capture("local-overview-ai-disconnected-expanded-\(size)", ["Your agents", "web-reader", "This computer", "Run tests"])
+    // At 540x640 the stacked cluster note pushes the expanded place row's Run tests below the fold: capture the open
+    // row, then bring its disabled Run tests into view rather than requiring both ends of the page in one frame.
+    if size == "minimum" {
+        _ = try capture("local-overview-ai-disconnected-expanded-\(size)", ["Your agents", "web-reader", "This computer"])
+        // seek("Run tests") waits for an enabled Run tests; this one is disabled, so scroll by its native bounds.
+        for _ in 0..<6 {
+            if nativeElements().contains(where: { attribute($0, "AXRole") as? String == "AXButton" && (attribute($0, "AXTitle") as? String ?? attribute($0, "AXDescription") as? String) == "Run tests web-reader"
+                && nativeBounds($0).map { window()!.1.contains($0) && $0.maxY <= window()!.1.maxY - 32 } == true }) { break }
+            scroll(-150)
+        }
+        _ = try capture("local-overview-ai-disconnected-expanded-run-\(size)", ["web-reader", "This computer", "Run tests"])
+    } else {
+        _ = try capture("local-overview-ai-disconnected-expanded-\(size)", ["Your agents", "web-reader", "This computer", "Run tests"])
+    }
     setOverviewExpanded("web-reader", false)
 }
 localSize(1280, 800); scroll(4000)
@@ -485,7 +536,8 @@ try setupFitCapture("ai", ["Workspace", "GitHub Copilot"], "Connect the AI")
 try "model-mismatch".write(to: setupProgress, atomically: true, encoding: .utf8)
 press("Connect the AI")
 waitForButton("Reset AI connection")
-require(nativeTextExists("The AI couldn't connect") && nativeTextExists("Your agents are safe."), "Mismatch must name the AI failure and the safe workspace")
+// A failed connection keeps the stage's name (Connect the AI, with Needs you); the recovery says what went wrong.
+require(nativeHeadingExists("Connect the AI") && !nativeTextExists("The AI couldn't connect") && nativeTextExists("Your agents are safe."), "Mismatch must keep the Connect the AI stage and name the safe workspace")
 require(!["Remove sign-in", "Check again", "Connect the AI"].contains(where: anyButton), "Mismatch offers only reset recovery")
 try resetCapture("mismatch", ["earlier setup", "Use another provider", "Copy details for help"], anchor: "Reset AI connection")
 press("Clusters")
@@ -599,9 +651,16 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try capture("local-overview-ai-connected-collapsed-\(size)", ["Your agents", "web-reader"])
     setOverviewExpanded("web-reader", true)
-    require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to chat or run tests on this computer."),
+    require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to try a task or run tests on this computer."),
             "Connected AI must enable the failed agent's local Run action without the connection reason")
-    _ = try capture("local-overview-ai-connected-expanded-\(size)", ["Your agents", "This computer", "Run tests"])
+    if size == "minimum" {
+        // As above, the stacked cluster note can push Run tests below the fold at 540x640.
+        _ = try capture("local-overview-ai-connected-expanded-\(size)", ["Your agents", "This computer"])
+        if enabledButton("Run tests web-reader").flatMap(nativeBounds).map({ $0.maxY > window()!.1.maxY - 32 }) == true { scroll(-150) }
+        _ = try capture("local-overview-ai-connected-expanded-run-\(size)", ["This computer", "Run tests"])
+    } else {
+        _ = try capture("local-overview-ai-connected-expanded-\(size)", ["Your agents", "This computer", "Run tests"])
+    }
     setOverviewExpanded("web-reader", false)
 }
 localSize(1280, 800); scroll(4000)
@@ -609,11 +668,12 @@ click("Clusters", [])
 // Returning workspace observations follow the original baseline coverage below.
 // Reuse the setup-progress selector and the existing Places entry to remount real
 // preflight for each bounded synthetic result. No native admission command runs.
-// This synthetic reset is a fresh choice, so acknowledge Welcome explicitly;
-// Stop no longer provides that unrelated presentation side effect.
+// The fixture always remembers team-dev, so this synthetic reset counts as set up and
+// shows the Clusters list, not Welcome.
 try "preflight-ready".write(to: setupProgress, atomically: true, encoding: .utf8)
-waitForButton("Get started")
-click("Get started", [])
+// Clusters reopens on its last view (This computer here); pressing it again while on Clusters shows the list.
+click("Clusters", [])
+waitForButton("Set up")
 for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
     try "preflight-\(state)".write(to: setupProgress, atomically: true, encoding: .utf8)
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
@@ -627,7 +687,9 @@ for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
             let strings = nativeElements().flatMap { element in
                 ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
             }
-            if strings.contains(where: { $0.contains("These checks do not change") || $0.contains("This computer has") || $0.contains("Virtualization:") || $0.contains("Bridge couldn't check") }) { checksSettled = true; break }
+            // A build that checks only at start settles on its own line (setup/Preflight.tsx); the walk's
+            // fixture never answers that way, but its settle must not stall on one that does.
+            if strings.contains(where: { showsText($0, "These checks do not change") || showsText($0, "Bridge checks virtualization and memory when the workspace starts") || showsText($0, "This computer has") || showsText($0, "Virtualization:") || showsText($0, "Bridge couldn't check") }) { checksSettled = true; break }
             Thread.sleep(forTimeInterval: 0.1)
         }
         require(checksSettled, "Computer requirements did not settle")
@@ -647,22 +709,25 @@ for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
         let strings = nativeElements().flatMap { element in
             ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
         }
-        require(strings.contains { $0.contains("4.3 GB") } && strings.contains { $0.contains("Step 1 of 4") },
+        require(strings.contains { showsText($0, "4.3 GB") } && strings.contains { showsText($0, "Choose where agents run") },
                 "Local choice lost native-derived decimal GB or its step counter")
         require(enabledButton("Back to clusters") == nil && enabledButton("Choose where agents run") == nil, "Local setup must not have a header Back link")
         if ["ready", "unknown"].contains(state) {
-            require(!strings.contains { $0.hasPrefix("Virtualization:") || $0.hasPrefix("Installed memory:") || $0 == "Not checked" },
+            require(!strings.contains { $0.hasPrefix("Virtualization:") || $0.hasPrefix("Installed memory:") || isText($0, "Not checked") },
                     "Only checks that ran and failed get rows")
             require(enabledButton("Check again") == nil && enabledButton("Copy details for help") == nil, "Nonfailed checks need no recovery controls")
         }
         if ["unknown", "mixed"].contains(state) {
             let unchecked = state == "mixed" ? "virtualization" : "virtualization or memory"
-            require(strings.contains { $0.contains("Bridge couldn't check \(unchecked) yet. It checks again when the workspace starts.") },
+            require(strings.contains { showsText($0, "Bridge couldn't check \(unchecked) yet. It checks again when the workspace starts.") },
                     "Unknown checks need one quiet startup explanation")
         }
         if ["memory", "mixed"].contains(state) {
-            require(strings.contains { $0.contains("This computer has 2.1 GB of memory; Bridge needs 4.3 GB.") }, "Insufficient RAM must show its native amounts")
-            require(enabledButton("Check again") == nil && enabledButton("Copy details for help") == nil, "RAM failure needs only the cluster alternative")
+            require(strings.contains { showsText($0, "This computer has 2.1 GB of memory; Bridge needs 4.3 GB.") }, "Insufficient RAM must show its native amounts")
+            // Installed memory can't change by checking again; the computer check offers the cluster alternative and,
+            // since the memory shortfall is named, Copy details for help.
+            require(enabledButton("Check again") == nil && enabledButton("Use a cluster instead") != nil && enabledButton("Copy details for help") != nil,
+                    "RAM failure needs the cluster alternative and Copy details for help, not Check again")
         }
         if state == "cluster" {
             click("Use a cluster instead", [])
@@ -713,12 +778,14 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
 }
 try "ready".write(to: catalogRelease, atomically: true, encoding: .utf8)
 localSize(1280, 800); scroll(4000)
-waitForButton("Add a tool"); click("Add a tool", [])
+// The picker's visible title is Choose a tool; Find a tool is only the search's hidden label and placeholder.
+// Open it at each size: the app brings the picker into view when it opens, and a later window resize does not.
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
-    localSize(CGFloat(width), CGFloat(height))
-    _ = try capture("local-catalog-first-open-\(size)", ["Find a tool", "Read a file"])
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    waitForButton("Add a tool"); reveal("Add a tool"); click("Add a tool", [])
+    _ = try capture("local-catalog-first-open-\(size)", ["Choose a tool", "Read a file"])
+    click("Close picker", [])
 }
-click("Close picker", [])
 localSize(1280, 800); scroll(4000)
 click("Clusters", [])
 rows = try capture("local-first-test-failed", ["This computer", "Its test failed", "See what it answered"])
@@ -746,6 +813,8 @@ for outcome in ["passed", "unknown"] {
     try outcome.write(to: firstTestOutcome, atomically: true, encoding: .utf8)
     localSize(1280, 800); scroll(4000)
     try "preflight-ready".write(to: setupProgress, atomically: true, encoding: .utf8)
+    // Resetting a selected workspace reloads the renderer; with team-dev remembered it reopens on Home.
+    reopenedOnHome(required: false)
     waitForButton("Set up")
     try FileManager.default.removeItem(at: setupProgress)
     click("Set up", [])
@@ -792,7 +861,8 @@ func setupFitCapture(_ name: String, _ expected: [String], _ anchor: String) thr
 func scroll(_ pixels: Int32) {
     let rect = window()!.1
     let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)
-    event?.location = CGPoint(x: rect.maxX - 20, y: rect.midY)
+    // The page's own padding, not the panel's scrollbar at the window's right edge.
+    event?.location = sidebarButton("Clusters").map { CGPoint(x: $0.maxX + 16, y: rect.midY) } ?? CGPoint(x: rect.maxX - 20, y: rect.midY)
     event?.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: 0.3)
 }
@@ -843,7 +913,12 @@ func localSize(_ width: CGFloat, _ height: CGFloat) {
     let before = nativeBounds(native)
     let result = AXUIElementSetAttributeValue(native, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!)
     require(result == .success, "Cannot resize fixture window: AX=\(result.rawValue), title=\(attribute(native, "AXTitle") as? String ?? "unnamed"), windows=\((windows as! [AXUIElement]).count), before=\(String(describing: before)), requested=\(size)")
-    Thread.sleep(forTimeInterval: 0.3)
+    // The window server can take longer than one short sleep to apply a resize on a busy runner (CI once missed it at
+    // the very first resize); poll for the same tolerance instead of failing on the first look.
+    for _ in 0..<30 {
+        Thread.sleep(forTimeInterval: 0.1)
+        if abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3 { break }
+    }
     require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Fixture content size not applied")
 }
 // Key entry stays in the real password control; these actions never use a store or VM.
@@ -936,7 +1011,7 @@ try keyCapture("removed", ["API key", "Key removed."])
 chooseConnection("GitHub Copilot")
 _ = try seek("Connect the AI", -200)
 click("Connect the AI", [])
-// Restore Copilot before the original result, editor and Chat captures.
+// Restore Copilot before the original result, editor and Try a task captures.
 scroll(4000)
 rows = try seek("Read its instructions", -200)
 click("Read its instructions", rows)
@@ -972,17 +1047,18 @@ _ = try seek("Use this cluster", -150)
 click("Use this cluster", [])
 _ = try seek("Open your agent", -150)
 click("Open your agent", [])
-// A remote place blocks Chat: no Ready claim and a disabled New conversation, at both sizes.
+// A connected remote place runs Try a task there: no Ready claim and Run task waits for a task, at both sizes.
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    waitForButton("Chat"); click("Chat", [])
-    waitForChatText("Chat on this computer")
-    require(!nativeChatTextIsVisible("Ready for your message."), "Blocked Chat must not say Ready")
-    require(anyButton("New conversation") && enabledButton("New conversation") == nil, "Blocked Chat must disable New conversation")
-    _ = try capture("local-shell-chat-blocked-\(size)", ["Chat on this computer"])
-    _ = try seek("Chat is unavailable", -150)
-    scroll(-100) // Keep the status clear of the fixed footer.
-    _ = try capture("local-shell-chat-blocked-status-\(size)", ["Chat is unavailable."])
+    waitForButton("Try a task"); click("Try a task", [])
+    waitForChatText("before you rely on it.")
+    require(tryTaskSubtitlePlace() == "team-dev", "Remote Try a task must name the cluster") // As drawn in run 45931983935.
+    require(!nativeChatTextIsVisible("Ready for a task."), "Remote Try a task must not say Ready")
+    require(anyButton("Run task") && enabledButton("Run task") == nil, "Remote Try a task must wait for a task")
+    _ = try capture("local-shell-chat-remote-\(size)", ["before you rely on it."])
+    _ = try seek("Runs once on", -150)
+    scroll(-100) // Keep the hint clear of the fixed footer.
+    _ = try capture("local-shell-chat-remote-hint-\(size)", ["It does not change test results."])
     scroll(4000)
     click("Agent", [])
 }
@@ -1026,7 +1102,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
     _ = try capture("local-send-fix-result-\(size)", ["Which date is shown", "No date was given", "Edit instructions"])
 }
 // Return through the local row, without stopping either destination. The
-// remaining pre-existing editor/Chat walk continues on This computer.
+// remaining pre-existing editor/Try a task walk continues on This computer.
 click("Clusters", [])
 scroll(4000)
 click("Clusters", [])
@@ -1086,7 +1162,7 @@ func nativeResultTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
-            (text == expected || (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected))),
+            (isText(text, expected) || (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected))),
             let bounds = nativeBounds(element) else { return false }
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
     }
@@ -1129,13 +1205,14 @@ func nativeControlShowsObservedOCRValue(_ label: String, _ expected: String, _ o
     return matches.count == 1
 }
 func nativeOverviewHeadingIsVisible(_ expected: String) -> Bool {
-    guard let headerBottom = enabledButton("Overview").flatMap(nativeBounds)?.maxY else { return false }
+    // The page starts under the title bar, which ends 12pt above the sidebar's first button (Home).
+    guard let top = enabledButton("Home").flatMap(nativeBounds).map({ $0.minY - 12 }) else { return false }
     return nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXHeading",
             ["AXValue", "AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == expected }),
             let bounds = nativeBounds(element) else { return false }
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
-            && bounds.minY >= headerBottom + 8 && bounds.maxY <= window()!.1.maxY - 32
+            && bounds.minY >= top + 8 && bounds.maxY <= window()!.1.maxY - 32
     }
 }
 func nativeOverviewResultIsVisible(_ agent: String, before nextAgent: String, _ expected: String) -> Bool {
@@ -1143,7 +1220,8 @@ func nativeOverviewResultIsVisible(_ agent: String, before nextAgent: String, _ 
         let end = enabledButton("Show places for \(nextAgent)").flatMap(nativeBounds) else { return false }
     return nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
-            attribute(element, "AXValue") as? String == expected,
+            // WebKit can report a pill's text in its drawn capitals; accept the authored copy or exactly its capitals.
+            (attribute(element, "AXValue") as? String).map({ isText($0, expected) }) == true,
             let bounds = nativeBounds(element) else { return false }
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
             && bounds.minY >= start.maxY && bounds.maxY <= end.minY
@@ -1153,7 +1231,7 @@ func nativeChatTextIsVisible(_ expected: String, aboveFooter: Bool = false) -> B
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
-            text.contains(expected), let bounds = nativeBounds(element) else { return false }
+            showsText(text, expected), let bounds = nativeBounds(element) else { return false }
         // WebKit exposes clipped or screen-reader-only text with zero/one-pixel bounds.
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
             && (!aboveFooter || bounds.maxY <= window()!.1.maxY - 32)
@@ -1167,6 +1245,15 @@ func waitForButton(_ label: String) {
     require(false, "Native Chat action did not become available: \(label)")
 }
 // Presence checks for state assertions; unlike enabledButton these include disabled controls.
+// A fixture reload with something set up opens on Home; continue from Clusters as a person would.
+// Only a reload changes the page, so an optional reload that doesn't come leaves Clusters as it was.
+func reopenedOnHome(required: Bool = true) {
+    for _ in 0..<(required ? 150 : 30) {
+        if nativeHeadingExists("What do you want done?") { click("Clusters", []); return }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(!required, "The reloaded renderer did not open on Home")
+}
 func anyButton(_ label: String) -> Bool {
     nativeElements().contains { element in
         ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? "")
@@ -1176,7 +1263,7 @@ func anyButton(_ label: String) -> Bool {
 func nativeHeadings(_ expected: String) -> [AXUIElement] {
     nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXHeading"
-            && ["AXValue", "AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == expected }
+            && ["AXValue", "AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String).map { isText($0, expected) } == true }
     }
 }
 func nativeHeadingExists(_ expected: String) -> Bool { !nativeHeadings(expected).isEmpty }
@@ -1185,22 +1272,22 @@ func anchorChatHeading(_ expected: String) {
     // A real scroll away from the end disables follow before measuring the heading.
     scroll(4000)
     let headings = nativeHeadings(expected)
-    guard headings.count == 1, let bounds = nativeBounds(headings[0]),
-        let header = enabledButton("Designer").flatMap(nativeBounds) else {
+    guard headings.count == 1, let bounds = nativeBounds(headings[0]) else {
         require(false, "Cannot anchor native Chat heading: \(expected)"); return
     }
-    // Clear fixed navigation and the 48px composer-follow threshold before freezing the frame.
-    let delta = header.maxY + 64 - bounds.minY
+    // Clear the title bar and the 48px composer-follow threshold before freezing the frame.
+    let top = pageTop()
+    let delta = top + 64 - bounds.minY
     if abs(delta) > 2 { scroll(Int32(delta.rounded())) }
     guard let aligned = nativeHeadings(expected).first.flatMap(nativeBounds) else {
         require(false, "Lost native Chat heading after scrolling: \(expected)"); return
     }
-    require(window()!.1.contains(aligned) && aligned.minY >= header.maxY + 8,
-        "Native Chat heading is clipped after scrolling: \(expected), bounds=\(aligned), header=\(header)")
+    require(window()!.1.contains(aligned) && aligned.minY >= top + 8,
+        "Native Chat heading is clipped after scrolling: \(expected), bounds=\(aligned), pageTop=\(top)")
 }
 func nativeTextExists(_ expected: String) -> Bool {
     nativeElements().contains { element in
-        attribute(element, "AXRole") as? String == "AXStaticText" && (attribute(element, "AXValue") as? String)?.contains(expected) == true
+        attribute(element, "AXRole") as? String == "AXStaticText" && (attribute(element, "AXValue") as? String).map { showsText($0, expected) } == true
     }
 }
 func waitForNativeText(_ any: [String]) {
@@ -1236,7 +1323,7 @@ func resetCapture(_ state: String, _ expected: [String], anchor: String) throws 
                 let probe = try capture("local-probe", [])
                 let text = probe.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
                 // Copy notices and disclosure text can also wrap below the last action.
-                if expected.allSatisfy({ text.contains($0) || nativeChatTextIsVisible($0, aboveFooter: true) }) { contentVisible = true; break }
+                if expected.allSatisfy({ showsText(text, $0) || nativeChatTextIsVisible($0, aboveFooter: true) }) { contentVisible = true; break }
             }
             scroll(-200)
         }
@@ -1254,7 +1341,7 @@ func waitForChatText(_ text: String) {
     require(false, "Native Chat text did not appear: \(text)")
 }
 func fillMessage(_ text: String, secure: Bool = false, fieldLabel: String? = nil) {
-    let label = fieldLabel ?? (secure ? "API key" : "Message")
+    let label = fieldLabel ?? (secure ? "API key" : "Give web-reader one task")
     let fields = nativeElements().filter { element in
         (fieldLabel != nil ? ["AXTextField", "AXSearchField"] : secure ? ["AXTextField", "AXSecureTextField"] : ["AXTextArea"]).contains(attribute(element, "AXRole") as? String ?? "")
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
@@ -1272,7 +1359,7 @@ func fillMessage(_ text: String, secure: Bool = false, fieldLabel: String? = nil
     // per character that can flood the native event queue on a busy runner.
     for (lineIndex, line) in text.components(separatedBy: "\n").enumerated() {
         // A Unicode payload beginning with a newline can drop its following text.
-        // Use the real newline gesture, never an unmodified Enter that submits Chat.
+        // Use the real newline gesture, never an unmodified Enter that runs the task.
         if lineIndex > 0 {
             for down in [true, false] {
                 let event = CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: down)!
@@ -1295,10 +1382,10 @@ func fillMessage(_ text: String, secure: Bool = false, fieldLabel: String? = nil
     if !secure {
         let actual = attribute(field, "AXValue") as? String
         if actual != text { _ = try? capture("chat-input-failed", []) }
-        require(actual == text, "Native keystrokes did not fill Chat Message: expected \(text.debugDescription), got \(String(describing: actual))")
+        require(actual == text, "Native keystrokes did not fill the task field: expected \(text.debugDescription), got \(String(describing: actual))")
     }
 }
-let replyReason = "Conversation replies need an authenticated gateway conversation, which local tests and Chat do not have."
+let replyReason = "Conversation replies need an authenticated gateway conversation, which local tests and Try a task do not have."
 func typeUnicode(_ text: String) {
     let characters = Array(text.utf16)
     for start in stride(from: 0, to: characters.count, by: 16) {
@@ -1327,16 +1414,17 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
             && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Find a tool" }
     }
     require(search.count == 1, "Expected the labeled picker search field")
-    require(nativeBounds(search[0]).map { abs($0.height - 32) < 2 } == true, "Picker search must be 32px high")
-    _ = try capture("local-controls-picker-\(size)", ["Find a tool", "Read a file"])
-    let approvalReason = "Approval tools need autonomous coordination, which Bridge does not support for local tests or Chat."
+    // Fields are --height-control (34px) since the spec sizes; the search is an ordinary .field.
+    require(nativeBounds(search[0]).map { abs($0.height - 34) < 2 } == true, "Picker search must be 34px high")
+    _ = try capture("local-controls-picker-\(size)", ["Choose a tool", "Read a file"])
+    let approvalReason = "Approval tools need autonomous coordination, which Bridge does not support for local tests or Try a task."
     let approvalButtons = nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXButton"
             && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("request_approval") == true }
     }
     require(approvalButtons.count == 1 && attribute(approvalButtons[0], "AXEnabled") as? Bool == false, "Approval tool must stay disabled locally")
     require(nativeResultTextIsVisible(approvalReason), "Approval reason must be fully visible in the picker")
-    _ = try capture("local-approval-tool-\(size)", ["Find a tool", "Ask for approval", approvalReason])
+    _ = try capture("local-approval-tool-\(size)", ["Choose a tool", "Ask for approval", approvalReason])
     // Filter after the approval frame so the reply row and any reason must fit at every size, minimum included.
     require(AXUIElementSetAttributeValue(search[0], kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus picker search")
     typeUnicode("reply")
@@ -1347,11 +1435,12 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     require(replyButtons.count == 1, "Search must leave exactly the reply tool row")
     require(attribute(replyButtons[0], "AXEnabled") as? Bool == false, "Reply tool must stay disabled locally")
     // Require the whole reason in the captured window, not only accessibility-node geometry.
-    _ = try capture("local-reply-tool-\(size)", ["Find a tool", "Reply in a conversation", replyReason])
+    _ = try capture("local-reply-tool-\(size)", ["Choose a tool", "Reply in a conversation", replyReason])
     guard let close = enabledButton("Close picker"), let bounds = nativeBounds(close) else {
         fatalError("Labeled picker X missing")
     }
-    require(abs(bounds.width - 26) < 2 && abs(bounds.height - 26) < 2, "Picker X must be 26px square")
+    // Icon buttons are 28px square (.button-icon) since the spec sizes.
+    require(abs(bounds.width - 28) < 2 && abs(bounds.height - 28) < 2, "Picker X must be 28px square")
     // Use the labeled AX control after filtering rather than a second geometry lookup.
     require(AXUIElementPerformAction(close, kAXPressAction as CFString) == .success, "Cannot press picker X")
     Thread.sleep(forTimeInterval: 1)
@@ -1424,6 +1513,12 @@ func visibleStaticTexts(_ matches: (String) -> Bool) -> Bool {
 func replyChipVisible() -> Bool { visibleStaticTexts { $0 == "reply_in_conversation" } }
 // The warning's wording is shared with other tools; require only that it names this tool beyond the chip itself.
 func replyWarningVisible() -> Bool { visibleStaticTexts { $0.contains("reply_in_conversation") && $0 != "reply_in_conversation" } }
+// At narrower widths the warning wraps below the tool chips; bring a rendered warning fully into view before checking it.
+func revealReplyWarning() {
+    for _ in 0..<6 where !replyWarningVisible() && visibleStaticTexts({ $0 == "reply_in_conversation" }) {
+        scroll(-60)
+    }
+}
 func requireSavedReply(_ present: Bool, _ label: String) {
     Thread.sleep(forTimeInterval: 0.5)
     require(replyChipVisible() == present, "\(label): reply chip should be \(present ? "present" : "absent")")
@@ -1438,6 +1533,7 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     localSize(CGFloat(width), CGFloat(height))
     setFileText(replyFile)
     _ = try seek("It can use", -150)
+    revealReplyWarning()
     requireSavedReply(true, "preserved \(size)")
     _ = try capture("local-saved-reply-tool-\(size)", ["It can use", "Reply in a conversation"])
     click("Remove Reply in a conversation", [])
@@ -1445,6 +1541,7 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     _ = try capture("local-saved-reply-tool-removed-\(size)", ["It can use"])
     setFileText(replyFile)
     _ = try seek("It can use", -150)
+    revealReplyWarning()
     requireSavedReply(true, "restored \(size)")
     _ = try capture("local-saved-reply-tool-restored-\(size)", ["It can use", "Reply in a conversation"])
     setFileText(originalFile)
@@ -1488,9 +1585,10 @@ require(exactTextIsVisible("Saved"), "A completed edit/save must acknowledge Sav
 scroll(4000)
 _ = try seek("Not run since your edit", -250)
 _ = try capture("local-stale", ["Not run since your edit"])
-// Shell evidence beside the approved Designer frame: Agent, File, then Send and Past Sends opened on request.
-// Blocked Chat is captured in the remote section above. The first (wide) pass sees the unused Send hidden; opening it
-// keeps it retained, so the minimum pass must see it already visible.
+// Shell evidence beside the approved Designer frame: Agent and File, then the Send card, which is always in Designer's
+// right column (beside the editor when wide, below it at the minimum size). Past Sends joins it only once a Send is
+// saved, and this fixture has none, so its limits are read at the end of the Send card's Details instead.
+// Blocked Try a task is captured in the remote section above.
 }
 func exactTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
@@ -1504,138 +1602,177 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     click("Agent", [])
     require(nativeElements().contains { attribute($0, "AXRole") as? String == "AXPopUpButton" }, "Header agent picker missing")
-    require(anyButton("Send to a cluster") && anyButton("Past Sends"), "Header Send entry and Past Sends must always exist")
-    if size == "wide" { require(!anyButton("Choose a cluster"), "An unused Send must start hidden") }
-    else { require(anyButton("Choose a cluster"), "Send opened earlier must stay retained and visible") }
+    // Without a cluster the always-shown Send card offers Choose a cluster, not a disabled Send to a cluster.
+    require(anyButton("Choose a cluster") && !anyButton("Send to a cluster") && !nativeHeadingExists("Past Sends"),
+            "The Send card must always be in Designer's right column, without Past Sends before any Send is saved")
     _ = try capture("local-shell-agent-\(size)", ["Instructions and settings"])
     click("File", [])
     _ = try capture("local-shell-file-\(size)", ["web-reader.agent.md"])
     click("Agent", [])
-    click("Send to a cluster", [])
-    // The header action already reveals and scrolls the card into view.
+    _ = try seek("Send your agent", -250)
     require(exactTextIsVisible("Send your agent") && !nativeChatTextIsVisible("Team clusters are early in this preview."), "Send must retain its headline without repeating Welcome's preview sentence")
     require(enabledButton("Choose a cluster") != nil && !anyButton("Send and run tests"), "Without a cluster, Choose a cluster must replace Send outside Details")
     _ = try capture("local-shell-send-\(size)", ["Send your agent", "Choose a cluster"])
-    press("Past Sends")
-    _ = try seek("Saved results and limits", -150)
-    scroll(-100)
-    _ = try capture("local-shell-history-\(size)", ["Past Sends", "Saved results and limits"])
-    press("Past Sends")
+    func sendDetails() -> AXUIElement {
+        let matches = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXButton"
+                && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("How Send works, checks and file hashes") == true }
+        }
+        require(matches.count == 1, "Expected one Send card Details disclosure")
+        return matches[0]
+    }
+    require(AXUIElementPerformAction(sendDetails(), kAXPressAction as CFString) == .success, "Cannot open the Send card's Details")
+    Thread.sleep(forTimeInterval: 0.5)
+    _ = try seek("Past Sends keeps up to 256 Sends", -150)
+    _ = try capture("local-shell-history-\(size)", ["Past Sends keeps up to 256 Sends"])
+    require(AXUIElementPerformAction(sendDetails(), kAXPressAction as CFString) == .success, "Cannot close the Send card's Details")
+    Thread.sleep(forTimeInterval: 0.3)
+    scroll(4000)
 }
 localSize(1280, 800)
-// Chat runs before the final Run, which intentionally stays busy forever in
+// Try a task runs before the final Run, which intentionally stays busy forever in
 // this fixture. These actions change only the fixture's in-memory transcript.
 localSize(1280, 800)
 scroll(4000)
-click("Chat", [])
+click("Try a task", [])
+}
+// The Try a task subtitle names where tasks run: "Try a task on <place> before you rely on it." (designer/Example.tsx).
+// The place is a separate text node, which WebKit can expose as its own static text on the same line; read the
+// visible pieces between the two fixed parts, or the place inside a single merged string.
+func tryTaskSubtitlePlace() -> String? {
+    let texts = nativeElements().compactMap { element -> (String, CGRect)? in
+        guard attribute(element, "AXRole") as? String == "AXStaticText", let value = attribute(element, "AXValue") as? String,
+              let bounds = nativeBounds(element), bounds.width > 1, bounds.height > 1, window()!.1.contains(bounds) else { return nil }
+        return (value.trimmingCharacters(in: .whitespaces), bounds)
+    }
+    let head = "Try a task on", tail = "before you rely on it."
+    if let merged = texts.first(where: { $0.0.hasPrefix(head + " ") && $0.0.hasSuffix(" " + tail) })?.0 {
+        return String(merged.dropFirst(head.count + 1).dropLast(tail.count + 1))
+    }
+    guard let start = texts.first(where: { $0.0 == head })?.1, let end = texts.first(where: { $0.0 == tail })?.1,
+          abs(start.midY - end.midY) < 4, end.minX > start.maxX else { return nil }
+    let middle = texts.filter { abs($0.1.midY - start.midY) < 4 && $0.1.minX >= start.maxX - 1 && $0.1.maxX <= end.minX + 1 }
+        .sorted { $0.1.minX < $1.1.minX }.map { $0.0 }.filter { !$0.isEmpty }
+    return middle.isEmpty ? nil : middle.joined(separator: " ")
 }
 func requireSingleChatCopy() {
     let strings = nativeElements().flatMap { element in
         ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
     }
-    require(strings.contains(where: { $0.contains("Chat on this computer. Chat doesn't change test results.") }), "Chat subtitle missing from the agent heading")
-    require(!strings.contains(where: { $0.contains("Conversation 1") }), "A single Chat version must not be numbered, including its accessible label")
+    require(tryTaskSubtitlePlace() == "this computer", "Try a task subtitle missing from the agent heading")
+    require(!strings.contains(where: { showsText($0, "Conversation 1") || showsText($0, "Save as a test") }), "Try a task must not number conversations or offer Save as a test")
 }
 func requireChatComposerVisible() {
     let fields = nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXTextArea"
-            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Message" })
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Give web-reader one task" })
     }
     let sends = nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXButton"
-            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Send message" })
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Run task" })
     }
-    require(fields.count == 1 && sends.count == 1, "Chat must retain accessible Message and Send message controls")
+    require(fields.count == 1 && sends.count == 1, "Try a task must keep its accessible task field and Run task button")
     guard let field = fields.first.flatMap(nativeBounds), let send = sends.first.flatMap(nativeBounds) else {
-        require(false, "Chat composer bounds missing"); return
+        require(false, "Try a task composer bounds missing"); return
     }
-    require(reachable(field) && reachable(send) && abs(field.maxY - send.maxY) < 3 && field.maxX <= send.minX,
-            "Chat composer and visible Send must fit beside one another above the footer")
-    require(nativeChatTextIsVisible("Enter sends · Shift+Enter for a new line", aboveFooter: true), "Chat keyboard hint must remain visible")
+    require(reachable(field) && reachable(send) && send.minY >= field.maxY - 3,
+            "Try a task field and Run task must both be visible, Run task below the field")
+    require(nativeChatTextIsVisible("Runs once on this computer. It does not change test results.", aboveFooter: true), "Try a task hint must remain visible")
 }
 if scope.runsModel {
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     requireSingleChatCopy()
-    require(!anyButton("New conversation") && !nativeTextExists("About this conversation")
-            && !nativeTextExists("Ask your agent a question") && !nativeTextExists("Ready for your message."), "Healthy empty Chat must not show controls, invitation or routine Ready")
+    require(!anyButton("Run again") && !anyButton("Stop") && !nativeTextExists("Ready for a task."), "Healthy empty Try a task must not show task controls or routine Ready")
     requireChatComposerVisible()
-    _ = try capture("chat-empty-\(size)", ["Message your agent", "Enter sends · Shift+Enter for a new line"])
+    _ = try capture("chat-empty-\(size)", ["Describe the task", "No tasks run yet."])
 }
 fillMessage("Remember the checksum ALPHA.")
-waitForButton("Send message")
-click("Send message", [])
+waitForButton("Run task")
+click("Run task", [])
 localSize(1280, 800); scroll(4000)
 _ = try seek("Waiting for your agent to start…", -100)
 waitForChatText("Waiting for your agent to start…")
-for (phase, expected) in [("pending", "Waiting for your agent to start…"), ("running", "Waiting for your agent’s reply…"), ("session-null", "Waiting for the conversation to finish saving…"), ("session-answer", "The checksum is ALPHA.")] {
+for (phase, expected) in [("pending", "Waiting for your agent to start…"), ("running", "Waiting for your agent’s reply…"), ("session-null", "Waiting for the task to finish saving…"), ("session-answer", "The checksum is ALPHA.")] {
     try phase.write(to: chatPhase, atomically: true, encoding: .utf8)
-    waitForChatText(expected)
+    // The previous phase's frame can leave the window small and scrolled; the next state may render outside it.
+    // Wait for it to exist here; each size below seeks it into view and requires it visible before capturing.
+    waitForNativeText([expected])
     for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
         localSize(CGFloat(width), CGFloat(height)); scroll(4000)
         _ = try seek(expected, -100)
         _ = try capture("chat-\(phase)-\(size)", [expected])
-        require(!nativeTextExists("This turn is not confirmed in later context.") && !nativeTextExists("No answer was received."), "Waiting Chat must not show a premature missing-answer/context fault")
+        require(!nativeTextExists("No answer was received."), "A waiting task must not show a premature missing-answer fault")
         if phase == "session-answer" {
             require(nativeChatTextIsVisible("The checksum is ALPHA."), "Session wait must retain the known answer")
         }
     }
 }
 try "answer".write(to: chatPhase, atomically: true, encoding: .utf8)
-waitForChatText("The checksum is ALPHA.")
+waitForNativeText(["The checksum is ALPHA."])
+waitForButton("Run again") // The finished task, not the session wait that already showed this answer.
 try FileManager.default.removeItem(at: chatPhase)
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("The checksum is ALPHA.", -100)
     requireSingleChatCopy()
     requireChatComposerVisible()
-    require(nativeChatTextIsVisible("web_fetch"), "Chat tool use must remain visible without opening a disclosure")
+    _ = try seek("The checksum is ALPHA.", -100)
+    require(nativeChatTextIsVisible("web_fetch"), "Tool use must remain visible on the result without opening a disclosure")
+    require(enabledButton("Run again") != nil, "A finished task must offer Run again")
     _ = try capture("chat-answer-\(size)", ["The checksum is ALPHA.", "<script>fixture</script>", "web_fetch"])
 }
-localSize(1280, 800)
-// Use the existing synthetic native turn, not injected DOM or a new fixture backend.
-fillMessage("What checksum did I ask you to remember?" + String(repeating: "\nEarlier message.", count: 40))
-waitForButton("Send message")
-click("Send message", [])
-waitForChatText("You asked me to remember ALPHA.")
-_ = try capture("chat-followup-wide", ["You asked me to remember ALPHA."])
-localSize(540, 900)
-_ = try capture("chat-followup-compact", ["You asked me to remember ALPHA."])
+localSize(1280, 800); scroll(4000)
+// A second task always starts a new conversation; the fixture holds it running until Stop.
+fillMessage("Read another page." + String(repeating: "\nA longer task description.", count: 12))
+waitForButton("Run task")
+click("Run task", [])
+// Earlier tasks folds below the new, long task's card (designer/TryTask.tsx), so it can start below the window. Its
+// label is a Disclosure summary (role="button"), which WebKit exposes as a button titled with it, not as static text.
+waitForButton("Earlier tasks: 1")
+require(enabledButton("Stop") != nil, "A running task must offer Stop")
+_ = try seek("Earlier tasks: 1", -100)
+_ = try capture("chat-followup-wide", ["Earlier tasks: 1", "Read another page."])
+localSize(540, 900); scroll(4000)
+_ = try seek("Earlier tasks: 1", -100)
+_ = try capture("chat-followup-compact", ["Earlier tasks: 1", "Read another page."])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("Remember the checksum ALPHA.", 4000, diagnosticPrefix: "chat-long-early-\(size)-seek")
-    require(nativeChatTextIsVisible("Remember the checksum ALPHA.") && !nativeChatTextIsVisible("You asked me to remember ALPHA."),
-            "Long transcript capture must read earlier messages, not the end")
-    requireChatComposerVisible()
-    _ = try capture("chat-long-early-\(size)", ["Remember the checksum ALPHA.", "Enter sends · Shift+Enter for a new line"])
-    scroll(-4000)
-    requireChatComposerVisible()
-    _ = try capture("chat-long-end-\(size)", ["You asked me to remember ALPHA.", "Enter sends · Shift+Enter for a new line"])
+    // At narrow widths Instructions and settings follow Earlier tasks, so the page's end is not the list. Bring the
+    // folded list just inside the window's lower edge by its own bounds, which keeps the long task's first line in view.
+    if let list = enabledButton("Earlier tasks: 1").flatMap(nativeBounds) {
+        let delta = list.maxY - (window()!.1.maxY - 12)
+        if delta > 0 { scroll(-Int32(delta.rounded())) }
+    }
+    _ = try seek("Earlier tasks: 1", -100, diagnosticPrefix: "chat-long-early-\(size)-seek")
+    require(!nativeChatTextIsVisible("The checksum is ALPHA."), "Earlier tasks must stay folded until opened")
+    _ = try capture("chat-long-early-\(size)", ["Earlier tasks: 1", "Read another page."])
+    press("Earlier tasks: 1")
+    // The opened earlier task can extend below a small window; find it, then require it on screen in the frame.
+    waitForNativeText(["The checksum is ALPHA."])
+    _ = try seek("The checksum is ALPHA.", -100)
+    _ = try capture("chat-long-end-\(size)", ["Earlier tasks: 1", "The checksum is ALPHA."])
+    press("Earlier tasks: 1")
 }
+localSize(540, 640); scroll(4000)
+_ = try seek("Read another page.", -100)
+_ = try capture("chat-new-version-minimum", ["Read another page.", "Running"])
+// The long task's phases and its Stop sit below its message, so each frame seeks them from the top of the page.
 localSize(1280, 800); scroll(4000)
-click("New conversation", [])
-scroll(-4000)
-fillMessage("Read another page.")
-waitForButton("Send message")
-rows = try seek("Enter sends · Shift+Enter for a new line", -150)
-click("Send message", rows)
-waitForChatText("Read another page.")
-require(nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2"), "Two Chat versions must retain both numbered headings")
-localSize(540, 640)
-anchorChatHeading("Conversation 2")
-_ = try capture("chat-new-version-minimum", ["Conversation 2", "Read another page."])
-localSize(1280, 800)
-anchorChatHeading("Conversation 2")
-_ = try capture("chat-new-version-wide", ["Conversation 2", "Read another page."])
-require(enabledButton("Stop") != nil, "Working Chat must offer Stop")
+_ = try seek("Running", -100)
+_ = try capture("chat-new-version-wide", ["Read another page.", "Running"])
+_ = try seek("Stop", -100)
 _ = try capture("chat-working-wide", ["Stop", "Read another page."])
-localSize(540, 900)
+localSize(540, 900); scroll(4000)
+_ = try seek("Stop", -100)
 _ = try capture("chat-working-compact", ["Stop", "Read another page."])
 click("Stop", [])
-waitForChatText("Execution termination is unconfirmed.")
-waitForButton("New conversation")
+waitForNativeText(["Execution termination is unconfirmed."])
+waitForButton("Run again")
+scroll(4000)
+_ = try seek("Execution termination is unconfirmed.", -100)
 _ = try capture("chat-stop-ready-compact", ["Execution termination is unconfirmed."])
-localSize(1280, 800)
+localSize(1280, 800); scroll(4000)
+_ = try seek("Execution termination is unconfirmed.", -100)
 _ = try capture("chat-stop-ready-wide", ["Execution termination is unconfirmed."])
 // Capture list actions before the final test deliberately holds the fixture busy.
 click("Overview", [])
@@ -1655,9 +1792,15 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 
         let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         let failedCountMiss = theme == "dark" && size == "wide" && scene == "earlier-failed"
             && pixels.contains("lot & passed, derore your edle")
-            && pixels.contains("Failed") && pixels.contains("Run tests")
+            && showsText(pixels, "Failed") && pixels.contains("Run tests")
             && nativeOverviewResultIsVisible("pr-summary", before: "release-notes", "1 of 2 passed, before your edit")
-        require(expected.allSatisfy { pixels.contains($0) } || failedCountMiss,
+        // Vision can skip a small mono pill (the draft's DRAFT was drawn but not read); accept the pill word, the first
+        // expectation, only as exact native text inside this agent's own expanded places, with every other line read.
+        let next = ["release-notes": "draft-helper", "pr-summary": "release-notes", "draft-helper": "review-helper"][agent]!
+        let pillMiss = !showsText(pixels, expected[0]) && expected.dropFirst().allSatisfy { showsText(pixels, $0) }
+            && nativeOverviewResultIsVisible(agent, before: next, expected[0])
+        // Pills are drawn in CSS capitals, so the pill words may read in capitals; nothing else may differ.
+        require(expected.allSatisfy { showsText(pixels, $0) } || failedCountMiss || pillMiss,
             "Expanded Overview result must have exact OCR or paired native evidence")
         scroll(4000)
         setOverviewExpanded(agent, false)
@@ -1676,7 +1819,9 @@ _ = try capture("local-running", ["Waiting for answers", "Observed for"])
 localSize(1280, 800)
 scroll(4000)
 _ = try seek("Waiting for answers", -250)
-_ = try capture("local-running-wide", ["Waiting for answers", "Observed for", "Stop", "Copies the checksum from the page", "Awaiting result"])
+// While tests run, the wider AWAITING RESULT pill (x 1100-1222 at 1280x800) wraps reads-page's description after
+// "from the", leaving "page" alone on the next line, which Vision does not read. Require the drawn first line.
+_ = try capture("local-running-wide", ["Waiting for answers", "Observed for", "Stop", "reads-page Copies the checksum from the", "Awaiting result"])
 localSize(540, 640)
 scroll(4000)
 _ = try seek("Stop", -100)
@@ -1820,7 +1965,20 @@ func captureUpgradeMatrix(manage: Bool) throws {
         try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
         if manage && index == 0 { waitForButton("Manage"); click("Manage", []) }
         waitForNativeText([expected])
-        waitForNativeText([manage ? "Agents" : "Where agents run"])
+        if manage {
+            // The returning Workspace card (region "Workspace"); an update or recovery decision replaces its Agents and
+            // Files facts until settled (Workspace.tsx), so the region, not the facts, proves this is Manage.
+            var returning = false
+            for _ in 0..<40 {
+                returning = nativeElements().contains { element in attribute(element, "AXSubrole") as? String == "AXLandmarkRegion" && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Workspace" } }
+                    && !nativeTextExists("Where agents run")
+                if returning { break }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            require(returning, "Manage upgrade \(state) is not on the returning Workspace card")
+        } else {
+            waitForNativeText(["Where agents run"])
+        }
         if state == "eligible-credential" {
             waitForNativeText(["A saved connection can be reused without connecting automatically."])
         }
@@ -1904,10 +2062,19 @@ func workspaceCapture(_ state: String, _ expected: [String]) throws {
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
         localSize(width, height); scroll(4000)
         _ = try capture("local-workspace-\(state)-\(size)", expected)
-        require(enabledButton("Stop the workspace") == nil && enabledButton("Start") == nil && enabledButton("Cancel") == nil, "Returning workspace must not expose Start/Stop/Cancel")
+        // Starting shows the same bar, elapsed time and Cancel (which pauses it) as first setup; no other scene cancels.
+        let starting = state.hasPrefix("starting")
+        require(enabledButton("Stop the workspace") == nil && enabledButton("Start") == nil && (enabledButton("Cancel") != nil) == starting,
+                starting ? "Returning Starting must offer Cancel and no Start/Stop" : "Returning workspace must not expose Start/Stop/Cancel")
         if ["failed", "stopped-unexpectedly", "stop-failed", "forced-stop"].contains(state) {
-            require(!anyButton("Hide details"), "Diagnostics must start folded")
-            click("Show details", [])
+            // A failed start opens its diagnostics when the failure appears, as the board shows; a stop's stay folded.
+            // Only the first (wide) look at a scene sees that initial state; later sizes keep whatever the walk left.
+            let opensByDefault = ["failed", "stopped-unexpectedly"].contains(state)
+            if size == "wide" {
+                require(anyButton("Hide details") == opensByDefault,
+                        opensByDefault ? "A failed start's diagnostics must start open" : "A stop's diagnostics must start folded")
+            }
+            if !anyButton("Hide details") { click("Show details", []) }
             _ = try capture("local-workspace-\(state)-details-\(size)", state == "stopped-unexpectedly" ? ["Synthetic workspace stopped unexpectedly.", "Hide details"] : ["Hide details"])
             click("Hide details", [])
         }
@@ -1916,20 +2083,26 @@ func workspaceCapture(_ state: String, _ expected: [String]) throws {
 }
 // First scene reloads once with selected localVm plus the attempted marker.
 try workspacePhase("workspace-scene-ready")
+// The returning reload has a finished workspace, so it reopens on Home.
+reopenedOnHome()
 waitForButton("Manage"); click("Manage", [])
 try workspaceCapture("ready", ["This computer", "Ready", "Agents", "Files"])
-require(nativeHeadingExists("AI"), "Returning Model must be headed AI")
+// The returning AI card names its state: AI once connected, Connect the AI before, The AI couldn't connect after a
+// failure. The reloaded ready scene has no saved connection (its capture shows the choices and Connect the AI).
+require(nativeHeadingExists("Connect the AI") && !nativeHeadingExists("AI") && enabledButton("Connect the AI") != nil,
+        "Returning Model without a connection must be headed Connect the AI and offer it")
 click("What's inside", [])
-_ = try capture("local-workspace-inside", ["4 GB of memory"])
+_ = try capture("local-workspace-inside", ["4.3 GB of memory"])
 click("What's inside", [])
 try workspacePhase("workspace-scene-starting")
-try workspaceCapture("starting-after-quit-synthetic", ["This computer", "Starting", "0:18 so far"])
+// The fixture reports 18000 ms elapsed while starting.
+try workspaceCapture("starting-after-quit-synthetic", ["This computer", "Starting", "18 seconds elapsed"])
 click("Designer", [])
-for (view, label) in [("Agent", "tests"), ("Chat", "chat")] {
+for (view, label) in [("Agent", "tests"), ("Try a task", "chat")] {
     localSize(1280, 800); scroll(4000)
     click(view, [])
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
-        localSize(width, height); scroll(view == "Chat" ? -12000 : 4000)
+        localSize(width, height); scroll(4000)
         _ = try seek("Waiting for the workspace to start.", -100)
         _ = try capture("local-designer-waiting-\(label)-\(size)", ["Waiting for the workspace to start."])
     }
@@ -2024,7 +2197,7 @@ for state in ["refresh-pending", "refresh-busy", "refresh-io", "cancel-requested
 for (phase, summary) in [("image-update", "This version of Bridge needs a new workspace."), ("image-unsupported", "This workspace uses different cluster files.")] {
     try workspacePhase(phase)
     try workspaceCapture(phase, [summary, "Restart workspace"])
-    require(enabledButton("Restart workspace") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
+    require(enabledButton("Restart workspace") == nil && !anyButton("Set up new workspace") && enabledButton("Start a fresh workspace") != nil, "Image refusal must not retry or update the workspace, and must offer a fresh workspace")
 }
 try workspacePhase("setup-forced-stop")
 if !nativeTextExists("Get your workspace ready") {

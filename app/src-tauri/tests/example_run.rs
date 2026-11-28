@@ -221,8 +221,8 @@ async fn first_test_cannot_select_another_document_or_claim_admission() {
     // A token never unlocks another document or template; nil is no correlation.
     for (id, model, attempt) in [
         (other.document_id(), model(), token),
-        (pair.document_id, "arbitrary-model".into(), token),
-        (pair.document_id, "arbitrary-model".into(), None),
+        (pair.document_id, "not a model".into(), token),
+        (pair.document_id, "not a model".into(), None),
         (pair.document_id, model(), Some(Uuid::nil())),
     ] {
         assert!(run
@@ -951,6 +951,7 @@ async fn fixture_with_model(
             guest_nonce: Uuid::new_v4(),
             accepted_boot_nonce: Some(id),
             run_cleanup: cleanup_reply.is_some(),
+            navigator_chat: false,
         },
     )
     .unwrap();

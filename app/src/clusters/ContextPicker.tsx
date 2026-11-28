@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Button, CloseIcon } from '../components/Button';
+import { useAnchoredPopover } from '../components/anchored-popover';
 import type { ContextView } from './api';
 
 export default function ContextPicker({ choices, value, found, disabled, active, trigger, onChoose }: {
@@ -9,17 +10,20 @@ export default function ContextPicker({ choices, value, found, disabled, active,
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const popover = useRef<HTMLDivElement>(null);
+  useAnchoredPopover(open && active && !disabled, trigger, popover);
   function close(focus = true) { setOpen(false); setQuery(''); if (focus) trigger.current?.focus(); }
   useEffect(() => {
     if (!active || disabled) { setOpen(false); setQuery(''); return; }
     if (open) { popover.current?.showPopover?.(); popover.current?.querySelector('input')?.focus(); }
   }, [open, active, disabled]);
+  const chosen = choices.find(choice => choice.id === value)?.name;
   const matches = choices.filter(choice => choice.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return <>
     <label htmlFor="cluster-context">kubectl context</label>
-    <Button ref={trigger} id="cluster-context" type="button" kind="secondary" className="context-trigger" aria-label="kubectl context" aria-describedby="cluster-context-value" aria-haspopup="dialog" aria-expanded={open && active && !disabled} aria-controls="cluster-context-picker" disabled={disabled}
+    <Button ref={trigger} id="cluster-context" type="button" kind="secondary" className={`context-trigger${choices.length ? '' : ' context-trigger-empty'}`} aria-label="kubectl context" aria-describedby="cluster-context-value" aria-haspopup="dialog" aria-expanded={open && active && !disabled} aria-controls="cluster-context-picker" disabled={disabled}
       onClick={() => { if (open) close(); else setOpen(true); }}>
-      <span id="cluster-context-value">{choices.find(choice => choice.id === value)?.name ?? 'Choose a context'}</span><span aria-hidden="true">⌄</span>
+      {chosen ? <code id="cluster-context-value">{chosen}</code> : <span id="cluster-context-value">Choose a context</span>}
+      <svg className="icon context-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
     </Button>
     {open && active && !disabled && <div ref={popover} popover="auto" role="dialog" aria-label="Choose a context" id="cluster-context-picker" className="context-picker"
       onToggle={event => { if (event.newState === 'closed') close(popover.current?.contains(document.activeElement) === true || document.activeElement === document.body); }}

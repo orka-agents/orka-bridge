@@ -45,6 +45,11 @@ async fn two_turns_reuse_frozen_agent_and_session_and_drain_cursor_events() {
     );
     assert!(first.versions[0].turns[0].context_retained);
     assert_eq!(first.versions[0].turns[0].tools.len(), 2);
+    let started = first.versions[0].turns[0].started_at;
+    assert!(started > 0);
+    assert!(first.versions[0].turns[0]
+        .finished_at
+        .is_some_and(|finished| finished >= started));
     chat.send(f.vm.clone(), f.folder.clone(), "Follow-up".into())
         .unwrap();
     let second = ready(&chat, id).await;
@@ -366,10 +371,12 @@ async fn acknowledged_stop_is_not_termination_and_notice_survives_follow_up() {
     let id = f.folder.document_id();
     chat.send(f.vm.clone(), f.folder.clone(), "Work".into())
         .unwrap();
-    until(&chat, id, |s| {
+    let running = until(&chat, id, |s| {
         !s.versions.is_empty() && s.versions[0].turns[0].tools.len() == 2
     })
     .await;
+    assert!(running.versions[0].turns[0].started_at > 0);
+    assert!(running.versions[0].turns[0].finished_at.is_none());
     chat.stop(f.vm.clone(), id).unwrap();
     until(&chat, id, |s| s.state == ChatState::StopRequested).await;
     assert!(!chat.status(id).can_send);
@@ -893,4 +900,61 @@ async fn valid_events_continue_beyond_sixteen_pages_without_reconnect() {
         .requests
         .iter()
         .any(|r| r.after == Some(17)));
+}
+
+// The Navigator reuses the chat path under its own names, with Bridge's instructions and no tools.
+#[tokio::test]
+async fn navigator_turns_use_navigator_names_and_keep_one_agent_and_session() {
+    let f = Fixture::new().await;
+    let chat = owner();
+    let id = bridge_engine::navigator::CONVERSATION;
+    chat.send_navigator(
+        f.vm.clone(),
+        "- web-reader: Answers from a page".into(),
+        "What is a Task?".into(),
+    )
+    .unwrap();
+    ready(&chat, id).await;
+    assert!(chat.thinks_with().is_some());
+    // A newly saved agent does not restart the conversation's Session.
+    chat.send_navigator(
+        f.vm.clone(),
+        "- web-reader\n- inbox-digest".into(),
+        "And a Session?".into(),
+    )
+    .unwrap();
+    let second = ready(&chat, id).await;
+    assert_eq!(second.versions.len(), 1);
+    assert_eq!(second.versions[0].turns.len(), 2);
+    let g = f.guest.lock().unwrap();
+    let agents = g.posts("agents");
+    assert_eq!(agents.len(), 1);
+    let name = agents[0]["name"].as_str().unwrap();
+    assert!(name.starts_with("bridge-nav-agent-"), "{name}");
+    assert_eq!(agents[0]["spec"]["tools"], serde_json::json!([]));
+    let prompt = agents[0]["spec"]["systemPrompt"]["inline"]
+        .as_str()
+        .unwrap();
+    assert!(prompt.contains("navigator-card"));
+    assert!(prompt.contains("- web-reader: Answers from a page"));
+    assert!(!prompt.contains("inbox-digest"));
+    let tasks = g.posts("tasks");
+    assert_eq!(tasks.len(), 2);
+    for task in &tasks {
+        assert!(task["name"]
+            .as_str()
+            .unwrap()
+            .starts_with("bridge-nav-task-"));
+        assert_eq!(task["spec"]["agentRef"]["name"], name);
+        assert!(task["spec"]["sessionRef"]["name"]
+            .as_str()
+            .unwrap()
+            .starts_with("bridge-nav-"));
+    }
+    assert_eq!(
+        tasks[0]["spec"]["sessionRef"]["name"],
+        tasks[1]["spec"]["sessionRef"]["name"]
+    );
+    // A document conversation owner never sees the Navigator's conversation.
+    assert!(owner().status(id).versions.is_empty());
 }

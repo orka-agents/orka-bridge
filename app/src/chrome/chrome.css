@@ -1,0 +1,10 @@
+.window-controls { display: flex; align-self: stretch; flex: none; margin-left: auto; }
+.window-controls button { display: inline-flex; align-items: center; justify-content: center; width: 46px; min-height: 36px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--color-text); }
+.window-controls button:hover { background: var(--color-hover); }
+.window-controls button:active { background: var(--color-border-strong); }
+.window-controls button:focus-visible { outline-offset: -2px; }
+.window-controls svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; shape-rendering: crispEdges; }
+.window-controls .window-close svg { shape-rendering: auto; }
+/* Windows' own close-button colours, so the control reads as the system one. */
+.window-controls .window-close:hover { background: #c42b1c; color: #ffffff; }
+.window-controls .window-close:active { background: #a52a1e; color: #ffffff; }

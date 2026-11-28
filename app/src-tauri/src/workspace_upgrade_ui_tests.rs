@@ -37,6 +37,36 @@ fn explicit_status_preserves_real_current_image_and_no_predecessor_policy_none()
     }
 }
 
+#[test]
+fn a_first_install_that_never_finished_is_not_an_update_conflict() {
+    // Interrupted while copying the image (no binding yet), while preparing the state disk, or
+    // prepared before any guest booted it; and before its first record. None is a workspace to
+    // update: the status is `none`, never a conflict that only "Check again" answers.
+    for phase in [Some("empty"), Some("preparing"), Some("prepared"), None] {
+        let scene = Scene::new(ImageTarget::WindowsAmd64);
+        let root = scene.local.join("local-vm-v1");
+        fs::remove_file(root.join("image-binding.json")).unwrap();
+        fs::create_dir(scene.local.join(STORE)).unwrap();
+        fs::write(scene.local.join(STORE).join("owner.lock"), b"").unwrap();
+        match phase {
+            Some(phase) => record_phase(&root, phase),
+            None => fs::remove_file(root.join("record.json")).unwrap(),
+        }
+        let dto = query_upgrade_status(&scene.data, &scene.local, Some(&scene.source)).unwrap();
+        assert_eq!(dto.state, "none", "{phase:?}");
+        let dto = upgrade_status(&scene.data, &scene.local, Some(&scene.source));
+        assert_eq!((dto.state, dto.error), ("none", None), "{phase:?}");
+    }
+    // A workspace that booted keeps the strict checks: a missing binding is still a conflict.
+    let scene = Scene::new(ImageTarget::WindowsAmd64);
+    fs::remove_file(scene.local.join("local-vm-v1/image-binding.json")).unwrap();
+    assert!(eligible_status(&scene.data, &scene.local, Some(&scene.source)).is_err());
+    assert_eq!(
+        upgrade_status(&scene.data, &scene.local, Some(&scene.source)).state,
+        "conflict"
+    );
+}
+
 fn prepared(target: ImageTarget) -> (Scene, WorkspaceUpgrade) {
     let mut scene = Scene::new(target);
     let mut owner = WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap();

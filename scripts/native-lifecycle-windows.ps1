@@ -2,7 +2,7 @@
 param([Parameter(Mandatory)][string]$Executable, [Parameter(Mandatory)][string]$Output)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Hosted CI walk only; never run against an existing user profile' }
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing, Accessibility
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Windows.Forms, System.Drawing, Accessibility
 # Accessibility's legacy System.Runtime metadata needs the same reference-unification allowance as the .NET SDK.
 Add-Type -ReferencedAssemblies 'System.Collections.dll', ([Accessibility.IAccessible].Assembly.Location) -CompilerOptions '/nowarn:1701' @'
 using System;
@@ -86,6 +86,9 @@ $data = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'ai.orka.bri
 $selected = Join-Path $data 'setup-v1/local-vm'
 $vmData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ai.orka.bridge/local-vm-v1'
 if (Test-Path $data) { throw "Expected fresh hosted-CI application profile: $data (will not erase it)" }
+# Loopback cluster fixture: the only way out of the guided first run on a healthy setup screen without a workspace.
+if (!$env:BRIDGE_WALK_KUBECONFIG -or !(Test-Path $env:BRIDGE_WALK_KUBECONFIG -PathType Leaf)) { throw 'Expected the CI loopback cluster fixture kubeconfig' }
+$env:KUBECONFIG = $env:BRIDGE_WALK_KUBECONFIG
 if (!(Test-Path $env:BRIDGE_DEV_IMAGE_DIR -PathType Container) -or @(Get-ChildItem -Force $env:BRIDGE_DEV_IMAGE_DIR).Count) { throw 'Expected empty image source directory' }
 if (Get-Process -Name orka-bridge -ErrorAction SilentlyContinue) { throw 'Bridge is already running' }
 $desktop = $null
@@ -117,13 +120,59 @@ function Get-UiNames($Root) {
     @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
 }
 $menuItem = [System.Windows.Automation.ControlType]::MenuItem
+# The undecorated window keeps Tauri's resize-border child window on top of its whole frame. That window's
+# region is only the border, so real clicks reach the page, but UIA's clickable-point search goes by window
+# rectangles and finds every page point covered. Then click the visible centre of the control, and only
+# after a real hit test at that point lands on the control itself.
+function Get-ClickPoint($Element) {
+    $point = [System.Windows.Point]::new(0, 0)
+    if ($Element.TryGetClickablePoint([ref]$point)) { return [Drawing.Point]::new([int]$point.X, [int]$point.Y) }
+    $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $visible = [System.Windows.Rect]::Intersect($Element.Current.BoundingRectangle, [System.Windows.Rect]::new($area.X, $area.Y, $area.Width, $area.Height))
+    if ($Element.Current.IsOffscreen -or $visible.IsEmpty -or $visible.Width -lt 1 -or $visible.Height -lt 1) { throw "Native control is not on screen: $($Element.Current.Name)" }
+    $centre = [System.Windows.Point]::new($visible.X + $visible.Width / 2, $visible.Y + $visible.Height / 2)
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    $first = [System.Windows.Automation.AutomationElement]::FromPoint($centre)
+    for ($hit = $first; $hit; $hit = $walker.GetParent($hit)) {
+        if ([System.Windows.Automation.Automation]::Compare($hit, $Element)) { return [Drawing.Point]::new([int]$centre.X, [int]$centre.Y) }
+    }
+    # CI showed UIA hit-testing every page point to Tauri's resize child (it goes by window rectangles, not the
+    # child's border-only region), while real clicks reach the page. Only then, and only for a point clear of the
+    # resize border inside the window, is the pointer click allowed; anything else still counts as covered.
+    $frame = $script:window.Current.BoundingRectangle
+    $inside = $centre.X -ge $frame.Left + 8 -and $centre.X -le $frame.Right - 8 -and $centre.Y -ge $frame.Top + 8 -and $centre.Y -le $frame.Bottom - 8
+    if ($first -and $first.Current.Name -eq 'TAURI_DRAG_RESIZE_WINDOW' -and $inside) {
+        Write-Host "Hit test reached the resize child; clicking the visible centre of $($Element.Current.Name)"
+        return [Drawing.Point]::new([int]$centre.X, [int]$centre.Y)
+    }
+    $hitName = if ($first) { "$($first.Current.Name) ($($first.Current.ControlType.ProgrammaticName))" } else { 'nothing' }
+    throw "Native control is covered at its visible centre: $($Element.Current.Name); hit $hitName"
+}
 function Press($Element) {
     $pattern = $null
     if ($Element -isnot [Drawing.Point] -and $Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { $pattern.Invoke(); return }
-    $point = if ($Element -is [Drawing.Point]) { $Element } else { $Element.GetClickablePoint() }
+    # Chromium exposes a <summary> disclosure through ExpandCollapse and a radio through SelectionItem, not Invoke.
+    # Use those semantic actions rather than a pointer click, whose hit test the window's resize child can intercept.
+    if ($Element -isnot [Drawing.Point] -and $Element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
+        if ($pattern.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Collapsed) { $pattern.Expand() } else { $pattern.Collapse() }
+        return
+    }
+    if ($Element -isnot [Drawing.Point] -and $Element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) { $pattern.Select(); return }
+    $point = if ($Element -is [Drawing.Point]) { $Element } else { Get-ClickPoint $Element }
     [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y) | Out-Null
     [NativeWalk]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
     [NativeWalk]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+}
+# The guided first run's title-bar row: the full-width row that holds the Setup progress list.
+function Get-GuidedTitleRow {
+    $node = Find-Control $script:window 'Setup progress' ([System.Windows.Automation.ControlType]::List)
+    $width = $script:window.Current.BoundingRectangle.Width
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    for ($i = 0; $node -and $i -lt 8; $i++) {
+        $bounds = $node.Current.BoundingRectangle
+        if (!$bounds.IsEmpty -and $bounds.Width -ge $width * 0.9 -and $bounds.Height -lt 100) { return $bounds }
+        $node = $walker.GetParent($node)
+    }
 }
 function Capture([string]$Name, [bool]$Menu = $false) {
     $r = if ($Menu) { [System.Windows.Forms.SystemInformation]::VirtualScreen } else { $script:window.Current.BoundingRectangle }
@@ -133,9 +182,21 @@ function Capture([string]$Name, [bool]$Menu = $false) {
         $graphics.CopyFromScreen([int]$r.X, [int]$r.Y, 0, 0, $bitmap.Size)
         $bitmap.Save((Join-Path $script:themeOutput "$Name.png"), [Drawing.Imaging.ImageFormat]::Png)
         if (!$Menu) {
-            # The maximized frame can extend below the display; sample the visible
-            # window interior, not the themed taskbar or off-screen padding.
-            $colour = $bitmap.GetPixel($bitmap.Width - 30, [int]($bitmap.Height / 2))
+            # Sample the page, not the sidebar or title bar. It starts 8px right of the sidebar's buttons and under the
+            # title bar, which ends 12px above the sidebar's first button (Home); its content starts 16-30px in and
+            # art.css keeps its top-left corner solid paper, so this pixel is bare page colour.
+            # It is near the top, clear of the taskbar where the maximized frame extends below the display.
+            $nav = Find-Control $script:window 'Clusters' $button
+            $homeButton = Find-Control $script:window 'Home' $button
+            if ($nav -and $homeButton) {
+                $colour = $bitmap.GetPixel([int]($nav.Current.BoundingRectangle.Right + 16 - $r.X), [int]($homeButton.Current.BoundingRectangle.Top + 8 - $r.Y))
+            } else {
+                # The guided first run has no sidebar: the page is the whole window under the title-bar row that
+                # holds the Setup progress list, and its top-left corner is solid paper within 32px (art.css).
+                $row = Get-GuidedTitleRow
+                if (!$row) { throw 'Cannot locate the native sidebar or the guided title bar beside the page' }
+                $colour = $bitmap.GetPixel([int]($row.Left + 8 - $r.X), [int]($row.Bottom + 12 - $r.Y))
+            }
             $expected = if ($script:theme -eq 'dark') { @(9, 9, 10) } else { @(255, 255, 255) }
             $actual = @($colour.R, $colour.G, $colour.B)
             for ($channel = 0; $channel -lt 3; $channel++) {
@@ -238,7 +299,11 @@ function Find-ReadyClusters {
         Write-StartupEvent 'uia-attached'
         [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
     }
-    Find-Control $script:window 'Clusters' $button
+    # Nothing is set up, so Bridge opens on Welcome in the guided first run, which has no sidebar:
+    # its Get started is then the ready control, and pressing it leads to the same Places.
+    $control = Find-Control $script:window 'Clusters' $button
+    if (!$control) { $control = Find-Control $script:window 'Get started' $button }
+    $control
 }
 function Find-TrayPoint($Root, [string]$Label) {
     $all = @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
@@ -402,6 +467,32 @@ try {
         # Observe the real runner; never inject Ready or select a local workspace.
         Capture 'computer-requirements'
         if (Test-Path $selected) { throw 'Preflight selected a workspace' }
+        # The guided first run has no side door on this healthy screen, and Continue on this computer would select
+        # and start a workspace. It ends when a cluster is in use: use the loopback fixture cluster, then forget it
+        # and choose this computer again, so nothing is remembered or selected afterwards.
+        if (!(Find-Control $script:window 'Designer' $button)) {
+            Press (Wait-For 'Guided cluster choice missing' { $buttons = $script:window.FindAll($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::RadioButton)); foreach ($candidate in $buttons) { if ($candidate.Current.Name -and $candidate.Current.Name.StartsWith('On a cluster you already have', [StringComparison]::Ordinal)) { return $candidate } } })
+            Press (Wait-For 'Guided Continue missing' { Find-Control $script:window 'Continue' $button })
+            Press (Wait-For 'kubectl context picker missing' {
+                # The trigger opens a dialog, so its control type is the browser's choice; skip the visible label text.
+                foreach ($candidate in $script:window.FindAll($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'kubectl context'))) {
+                    if ($candidate.Current.ControlType -ne [System.Windows.Automation.ControlType]::Text -and $candidate.Current.IsEnabled) { return $candidate }
+                }
+            })
+            Press (Wait-For 'Fixture context missing' { Find-Action $script:window 'fixture-cluster' })
+            Press (Wait-For 'Use this cluster missing' { Find-Control $script:window 'Use this cluster' $button })
+            Wait-For 'Using the fixture cluster did not end the guided first run' { (Find-Control $script:window 'Designer' $button) -and (Find-Control $script:window 'Done' $button) } | Out-Null
+            if (Test-Path $selected) { throw 'Leaving guidance selected a workspace' }
+            Press (Find-Control $script:window 'Done' $button)
+            Press (Wait-For 'Fixture Manage missing' { Find-Action $script:window 'Manage' })
+            Press (Wait-For 'Fixture Show details missing' { Find-Control $script:window 'Show details' $button })
+            Press (Wait-For 'Fixture Remove missing' { Find-Control $script:window 'Remove' $button })
+            Press (Wait-For 'Remove cluster confirmation missing' { Find-Control $script:window 'Remove cluster' $button })
+            Press (Wait-For 'This computer Set up missing after removal' { if ((Get-UiNames $script:window) -match 'No other clusters added yet') { Find-Action $script:window 'Set up' } })
+            Press (Wait-For 'Use this computer missing' { Find-Control $script:window 'Use this computer' $button })
+            Wait-For 'This computer was not chosen again' { !(Find-Control $script:window 'Use this computer' $button) } | Out-Null
+            if (Test-Path $selected) { throw 'Returning to this computer selected a workspace' }
+        }
         Press (Wait-For 'Designer button missing' { Find-Control $script:window 'Designer' $button })
         # Observe the actual editable owned example before toggling File, not a
         # welcome-button proxy or a read-only preview that will be remounted.
@@ -559,7 +650,7 @@ assertions: []
         # File > Quit is exercised by the native menu/failed-stop subprocess test,
         # not by a duplicate GUI lookup through this runner's incomplete UIA tree.
         if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared' }
-        "PASS $theme`: native own-repo chooser, selected path/copy, blank draft pair only; idle-close-exited without notice/marker change; tray menu/Open, same PID/window, File view/edited text retained, minimized second launch, menu Quit Bridge. Standard Quit is covered by native subprocess tests. Integrated debug shell only; empty image source, no VM/Ready/background-close/notice/provider/cluster/session logout proof. OS popup theme is captured as drawn." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
+        "PASS $theme`: native own-repo chooser, selected path/copy, blank draft pair only; idle-close-exited without notice/marker change; tray menu/Open, same PID/window, File view/edited text retained, minimized second launch, menu Quit Bridge. Standard Quit is covered by native subprocess tests. Integrated debug shell only; empty image source, loopback fixture cluster used only to leave the guided first run and then forgotten; no VM/Ready/background-close/notice/provider/cluster/session logout proof. OS popup theme is captured as drawn." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
     }
 } catch {
     $failure = $_

@@ -1,0 +1,36 @@
+/* Try a task: one composer card that holds the next action, then the result card, then earlier results folded. */
+.try-task { display: grid; gap: var(--space-3); min-width: 0; align-content: start; }
+.try-composer { display: grid; gap: var(--space-3); }
+.try-composer-label { font: var(--type-card); overflow-wrap: anywhere; }
+.try-agent { font-family: var(--font-mono); font-variant-ligatures: none; font-size: .92em; }
+/* The field sits inside the strong card, so it reads as the card's writing area rather than a second box. */
+.try-composer textarea { width: 100%; min-height: 72px; max-height: 40dvh; overflow-y: auto; resize: none; padding: var(--space-1) var(--space-1-5); border-color: transparent; font: var(--type-reading); overflow-wrap: anywhere; }
+.try-composer-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.try-composer-foot p { flex: 1 1 16rem; margin: 0; font: var(--type-body); }
+.try-composer-foot .button { margin-left: auto; }
+.try-status, .try-composer > .alert { margin: 0; }
+.try-status:empty { display: none; }
+.try-recovery, .try-result-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.try-empty { text-align: center; }
+
+.try-result { display: grid; gap: var(--space-3); }
+.try-result > * { margin: 0; }
+.try-result-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
+.try-result-head h3 { margin: 0; }
+.try-result-task { font: var(--type-body); overflow-wrap: anywhere; white-space: pre-wrap; }
+.try-phases { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin: 0; padding: 0; list-style: none; font: var(--type-caption); font-family: var(--font-mono); font-variant-ligatures: none; }
+.try-phases li { display: inline-flex; align-items: center; gap: var(--space-1); }
+/* One rule under the phases; the sections after it run on without their own lines. */
+.try-result .card-section { margin-top: 0; padding-top: var(--space-3); }
+.try-result .card-section + .card-section { border-top: 0; padding-top: 0; }
+.try-tools { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.try-tool { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.try-tool .code-chip { margin-left: var(--space-0-5); }
+.try-tools + .disclosure { margin-top: var(--space-2); }
+.try-waiting { display: flex; align-items: center; gap: var(--space-2); margin: 0; }
+.try-result .reading { margin: 0; }
+.try-answer-value { font: 500 13px/20px var(--font-mono); font-variant-ligatures: none; overflow-wrap: anywhere; }
+.try-result-meta code { font-size: .92em; }
+.try-earlier-list { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+.try-about-copy { display: grid; gap: var(--space-1-5); font: var(--type-body); }
+.try-about-copy > p { margin: 0; }

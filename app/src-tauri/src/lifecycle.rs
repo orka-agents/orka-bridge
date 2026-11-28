@@ -137,6 +137,11 @@ pub fn install(
                     stop(app);
                 }
             });
+            // The page draws the title bar, so the main window hides the menu bar. Quit is the tray
+            // icon's Quit Bridge; this menu stays installed, and its Quit still routes through stop().
+            if let Some(window) = app.get_webview_window("main") {
+                window.hide_menu()?;
+            }
         }
         let open = MenuItem::with_id(app, "open", "Open Bridge", true, None::<&str>)?;
         let quit = MenuItem::with_id(app, "stop-quit", "Quit Bridge", true, None::<&str>)?;

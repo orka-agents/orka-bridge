@@ -39,7 +39,8 @@ test('Instructions autosave through the existing writer without changing metadat
   fireEvent.change(field, { target: { value: 'New instructions\n' } });
   await waitFor(() => expect(writes).toEqual([agent.replace('Read a page.\n', 'New instructions\n')]));
   await waitFor(() => expect(screen.queryByText('Saving…')).toBeNull());
-  expect(screen.queryByText('Saved')).toBeNull();
+  // Once edited here, the head of the editor keeps saying Saved, next to where the editing happens.
+  expect(document.querySelector('.file-toolbar [role="status"]')?.textContent).toBe('Saved');
   expect(writes[0]).toContain('---\n\nNew instructions\n');
 });
 test('new leading blank lines remain visible and removable without changing the original separator', async () => {
@@ -98,7 +99,8 @@ test('picker rows lead with one name, retain distinct built-in ids and availabil
   ] } }} />);
   await user.click(screen.getByRole('button', { name: 'Add a tool' }));
   const builtin = screen.getByRole('button', { name: /Read a file.*file_read/ });
-  expect(builtin.querySelector('.tool-option-heading')?.textContent).toBe('Read a fileBuilt-in');
+  // The built-in's id follows its name on the same line, as the picker board shows.
+  expect(builtin.querySelector('.tool-option-heading')?.textContent).toBe('Read a file file_readBuilt-in');
   expect(builtin.querySelector('code')?.textContent).toBe('file_read');
   const custom = screen.getByRole('button', { name: /team_lookup/ });
   expect(custom.textContent?.match(/team_lookup/g)).toHaveLength(1);

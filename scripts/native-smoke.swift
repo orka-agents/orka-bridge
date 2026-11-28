@@ -116,11 +116,12 @@ while Date() < rendererDeadline {
             ["AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
         })
         // Navigation/footer controls can render before setup_status settles.
-        // Observe the welcome or the actual release setup result, not a button
-        // that merely happens to be below the header.
+        // Observe the welcome, the actual release setup result or Home (a remembered
+        // cluster opens there), not a button that merely happens to be below the header.
         // The text viewport also needs the tab bar; do not query it during renderer startup.
-        if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names)
-            && (names.contains("Get started") || nativeTextIsVisible("Choose where agents run")) { found = true; break }
+        // The guided first run (a fresh profile, or Welcome again while nothing is set up) has no sidebar.
+        if (Set(["Overview", "Designer", "Clusters"]).isSubset(of: names) || names.contains("Get started"))
+            && (names.contains("Get started") || nativeTextIsVisible("Choose where agents run") || nativeTextIsVisible("What do you want done?")) { found = true; break }
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 }
@@ -214,19 +215,130 @@ func nativeButtons(_ label: String, root: AXUIElement? = nil) -> [AXUIElement] {
             }
     }
 }
-// Page content only; the fixed header and footer can overlay scrolled controls. The compact tab
-// bar is shorter than the wide one, so take its bottom from the actual native tab, not a fixed 110px.
+// Page content only, in the flat frame: the page starts at the sidebar's hairline, 8pt right of the actual native
+// Clusters button (the narrow icon rail is 60pt, the wide sidebar 232pt), and below the title bar, which ends 12pt
+// above the sidebar's first button (Home). The status card sits in the sidebar (a dot box in the narrow rail).
 func bodyBounds() -> CGRect {
     let rect = window()!.1
-    guard let tabsBottom = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).map({ $0.maxY }).max() else {
-        fail("Cannot locate the native tab bar for the page viewport")
+    guard let nav = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).first,
+          let home = nativeButtons("Home").compactMap({ nativeBounds($0) }).map({ $0.minY }).min() else {
+        // The guided first run has no sidebar and no visible status card: the page is the whole window under
+        // the app's title-bar row.
+        guard let row = guidedTitleRow() else { fail("Cannot locate the native sidebar or the guided title bar for the page viewport") }
+        return CGRect(x: rect.minX, y: row.maxY, width: rect.width, height: max(0, rect.maxY - row.maxY))
     }
-    let top = tabsBottom + 8
-    return CGRect(x: rect.minX, y: top, width: rect.width, height: max(0, rect.maxY - 32 - top))
+    let left = nav.maxX + 8
+    let top = max(rect.minY, home - 12)
+    let statusBar = nativeElements()
+        .filter { attribute($0, "AXSubrole") as? String == "AXLandmarkContentInfo" }
+        .compactMap { nativeBounds($0) }
+        .first { $0.maxX > left && $0.minY > top }
+    let bottom = statusBar.map { $0.minY - 8 } ?? rect.maxY - 8
+    return CGRect(x: left, y: top, width: max(0, rect.maxX - left), height: max(0, bottom - top))
+}
+// The guided first run's title-bar row: the full-width row that holds the Setup progress list. WebKit drops the
+// list role of an <ol> drawn with list-style: none (it reports a group), so match the labelled node as either.
+func guidedTitleRow() -> CGRect? {
+    let rect = window()!.1
+    guard var node = nativeElements().first(where: { element in
+        ["AXList", "AXGroup"].contains(attribute(element, "AXRole") as? String ?? "")
+            && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Setup progress" }
+    }) else { return nil }
+    let list = nativeBounds(node)
+    for _ in 0..<8 {
+        if let bounds = nativeBounds(node), bounds.width >= rect.width * 0.9, bounds.height < 100 { return bounds }
+        guard let parent = attribute(node, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+        node = parent as! AXUIElement
+    }
+    // WebKit may not expose the title bar's own element; then the row runs from the list down to the page's main
+    // landmark, which starts where the title bar ends.
+    guard let list, let main = nativeElements().first(where: { attribute($0, "AXSubrole") as? String == "AXLandmarkMain" }).flatMap(nativeBounds),
+          main.minY > list.maxY, main.minY - list.minY < 100 else { return nil }
+    return CGRect(x: rect.minX, y: list.minY, width: rect.width, height: main.minY - list.minY)
+}
+// The guided first run has no side door on a healthy setup screen: it ends when a cluster is in use (or at Set up
+// later, offered only where setup has stopped, which this runner's unknown virtualization check never reaches).
+// Continue on this computer would download and start a real workspace, so connect the CI fixture cluster instead,
+// then forget it and return to this computer, leaving the walk's state as it was: nothing set up, nothing
+// remembered, guidance over for this run.
+func leaveGuidedFirstRun() {
+    guard nativeButtons("Home").isEmpty else { return }
+    require(ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil,
+            "The guided first run ends only through a connected cluster here; the walk needs its fixture kubeconfig")
+    scrollMain(4000)
+    if visibleButtons("Add a cluster").count == 1 {
+        clickButton("Add a cluster")
+    } else {
+        // The where-to-run step: choose the cluster option, then Continue, which opens Add a cluster.
+        let rect = window()!.1
+        let choices = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXRadioButton"
+                && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.hasPrefix("On a cluster you already have") == true }
+        }.compactMap { nativeBounds($0) }.filter { rect.contains($0) }
+        require(choices.count == 1, "The guided where-to-run step must offer one visible cluster choice")
+        mouse(.leftMouseDown, CGPoint(x: choices[0].midX, y: choices[0].midY)); mouse(.leftMouseUp, CGPoint(x: choices[0].midX, y: choices[0].midY))
+        Thread.sleep(forTimeInterval: 0.3)
+        clickButton("Continue")
+    }
+    Thread.sleep(forTimeInterval: 1)
+    clickButton("kubectl context")
+    clickButton("fixture-cluster")
+    for _ in 0..<50 where nativeButtons("Use this cluster").isEmpty { Thread.sleep(forTimeInterval: 0.2) }
+    clickButton("Use this cluster")
+    for _ in 0..<50 {
+        if !nativeButtons("Home").isEmpty && !nativeButtons("Clusters").isEmpty && !nativeButtons("Done").isEmpty { break }
+        Thread.sleep(forTimeInterval: 0.2)
+    }
+    require(!nativeButtons("Home").isEmpty && !nativeButtons("Clusters").isEmpty && guidedTitleRow() == nil,
+            "Using the fixture cluster did not end the guided first run and bring back the sidebar")
+    requireNoLocalWorkspace()
+    // Forget the cluster again and choose this computer, as the rest of the walk expects.
+    clickButton("Done")
+    clickButton("Manage")
+    clickButton("Show details")
+    clickButton("Remove")
+    clickButton("Remove cluster")
+    for _ in 0..<30 where !nativeButtons("Manage").isEmpty { Thread.sleep(forTimeInterval: 0.1) }
+    require(nativeButtons("Manage").isEmpty && nativeTextIsVisible("No other clusters added yet"), "The fixture cluster used to leave guidance was not forgotten")
+    clickButton("Set up")
+    clickButton("Use this computer")
+    requireNoLocalWorkspace()
+    require(nativeButtons("Use this computer").isEmpty && guidedTitleRow() == nil, "This computer was not chosen again after leaving guidance")
+    // The Clusters page keeps its last view; return it to Places, where Get started left the walk before.
+    _ = clickTab("Clusters", [])
+    for _ in 0..<30 where visibleButtons("Set up").count != 1 { Thread.sleep(forTimeInterval: 0.1) }
+    require(visibleButtons("Set up").count == 1 && nativeTextIsVisible("No other clusters added yet"), "Clusters did not return to Places after leaving guidance")
+}
+// A point in the page's bare left padding: page content starts 16-30pt in from the page's left edge, so no control,
+// text or scrollbar is under it. Just under the title bar it is also above every fixed picker (80pt down), and inside
+// the solid paper corner art.css keeps clear of the chart (40pt radius; 32pt on guided screens), so its colour is
+// page paper, or paper under the picker's backdrop.
+func pageGutter(y: CGFloat? = nil) -> CGPoint {
+    let page = bodyBounds()
+    return CGPoint(x: page.minX + 8, y: y ?? page.minY + 12)
+}
+// CSS can draw authored copy in capitals (pills, section labels). Text read back from the screen, or from WebKit's
+// accessibility values, is then the authored copy or exactly its capitals; any other casing is still a mismatch.
+func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }
+func isText(_ text: String, _ expected: String) -> Bool { text == expected || text == expected.uppercased() }
+// An open popover (role=dialog in the top layer) is drawn over the sidebar and the page alike, so a control inside
+// one is visible anywhere within that dialog's own bounds in the window, not only inside the page panel.
+func popoverBounds(_ element: AXUIElement) -> CGRect? {
+    var node = element
+    for _ in 0..<16 {
+        guard let parent = attribute(node, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { return nil }
+        node = parent as! AXUIElement
+        if ["AXApplicationDialog", "AXDialog"].contains(attribute(node, "AXSubrole") as? String ?? "") {
+            return nativeBounds(node).map { $0.intersection(window()!.1) }
+        }
+    }
+    return nil
 }
 func visibleButtons(_ label: String) -> [CGRect] {
-    nativeButtons(label).filter { attribute($0, "AXEnabled") as? Bool == true }
-        .compactMap { nativeBounds($0) }.filter { bodyBounds().contains($0) }
+    nativeButtons(label).filter { attribute($0, "AXEnabled") as? Bool == true }.compactMap { element -> CGRect? in
+        guard let bounds = nativeBounds(element) else { return nil }
+        return (popoverBounds(element) ?? bodyBounds()).contains(bounds) ? bounds : nil
+    }
 }
 func setOverviewExpanded(_ title: String, _ expanded: Bool) {
     let label = "Show places for \(title)"
@@ -247,6 +359,19 @@ func clickButton(_ label: String) {
         scrollMain(attempt == 0 ? 1000 : -200)
     }
     fail("No visible enabled native button: \(label)")
+}
+// The context picker opens under its trigger (components/anchored-popover.ts) and its list scrolls inside it, so in a
+// 540x640 window the later contexts start below the popover's edge. Scroll that list, as a person would, not the page.
+func clickPickerChoice(_ label: String) {
+    for _ in 0..<12 {
+        if !visibleButtons(label).isEmpty { clickButton(label); return }
+        guard let choice = nativeButtons(label).first, let popover = popoverBounds(choice), !popover.isEmpty else { break }
+        let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -80, wheel2: 0, wheel3: 0)
+        scroll?.location = CGPoint(x: popover.midX, y: popover.maxY - 24)
+        scroll?.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.3)
+    }
+    fail("Picker choice not reachable by scrolling its list: \(label)")
 }
 // Whole accessibility tree, below the fold included: for counting, not for proving visibility.
 func nativeStrings() -> [String] {
@@ -270,7 +395,7 @@ func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bo
                 values += nativeElements(element).dropFirst().filter { attribute($0, "AXRole") as? String == "AXStaticText" }
                     .compactMap { attribute($0, "AXValue") as? String }
             }
-            if values.contains(where: { (heading || exact) ? $0 == expected : $0.contains(expected) }),
+            if values.contains(where: { (heading || exact) ? isText($0, expected) : showsText($0, expected) }),
                 let bounds = nativeBounds(element), (!visibleOnly || body.contains(bounds)) { matches.append(bounds) }
         }
         guard !heading, role == "AXGroup",
@@ -280,7 +405,7 @@ func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bo
         var text = ""
         var line: CGRect?
         func finishLine() {
-            if let bounds = line, (exact ? text == expected : text.contains(expected)) { matches.append(bounds) }
+            if let bounds = line, (exact ? isText(text, expected) : showsText(text, expected)) { matches.append(bounds) }
             text = ""; line = nil
         }
         for child in children {
@@ -322,9 +447,14 @@ func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> 
     let rect = window()!.1
     let bounds = CGRect(origin: origin, size: extent)
     require(extent.width > 0 && extent.height > 0 && rect.contains(bounds)
-        && bounds.maxY <= rect.minY + 110, "Native tab is not visible in the header: \(page), \(bounds)")
+        && bounds.maxX <= rect.minX + 260, "Native page button is not visible in the sidebar: \(page), \(bounds)")
     let point = CGPoint(x: bounds.midX, y: bounds.midY)
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+    // In the narrow rail a hovered tab shows its name beside it, over the page (shell.css .page-tab::after). Leaving
+    // the web view for the native title did not clear WebKit's hover (CI still drew the label), so move the pointer
+    // onto the page's own bare corner, which WebKit sees as a move onto another element.
+    Thread.sleep(forTimeInterval: 0.3)
+    mouse(.mouseMoved, pageGutter())
     Thread.sleep(forTimeInterval: 0.5)
     return target
 }
@@ -344,8 +474,11 @@ func normalizedSendText(_ text: String) -> String {
 }
 func sendFrameVisible(_ observations: [VNRecognizedTextObservation]) -> Bool {
     let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-    let markers = ["Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
-        "What you send", "What happened", "Earlier result", "Send needs attention", "Running tests",
+    // The Send card's own rerun action is a marker too: at 540x640 the result head can sit above a frame anchored on
+    // the card's actions, and "Run cluster tests again" appears nowhere but the Send card (clusters/Send.tsx againLabel).
+    // Likewise its own Details hint "How Send works, checks and file hashes", which stays under a recovery-actions frame at 540x640.
+    let markers = ["Run cluster tests again", "How Send works","Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
+        "Earlier result", "Send needs attention", "Running tests",
         "Cancelling tests", "Cancellation requested.", "Cannot cancel with this cluster identity", "This Orka cannot cancel tests.", "Cancellation not confirmed.", "Tests cancelled on the cluster.", "Tests finished before cancellation."]
     return markers.contains { text.localizedCaseInsensitiveContains($0) }
 }
@@ -376,12 +509,13 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         guard let tiff = comparison.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) else { fail("Cannot compose native comparison") }
         try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
     }
-    // Overview's scrolled evidence can paint an overlay scrollbar at the window edge.
-    let chromeInset = name == "overview" || name.hasPrefix("overview-") ? 20 : 8
+    // The window edge is the page's scrollbar or chrome, so sample the page's top-left corner instead.
+    let frame = window()!.1, paper = pageGutter()
     // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
         let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-        let pixel = image.cropping(to: CGRect(x: CGFloat(image.width - chromeInset), y: CGFloat(image.height - 8), width: 1, height: 1)),
+        let pixel = image.cropping(to: CGRect(x: ((paper.x - frame.minX) * CGFloat(image.width) / frame.width).rounded(.down),
+            y: ((paper.y - frame.minY) * CGFloat(image.height) / frame.height).rounded(.down), width: 1, height: 1)),
         let space = CGColorSpace(name: CGColorSpace.sRGB) else { fail("Cannot decode screenshot") }
     var rgba = [UInt8](repeating: 0, count: 4)
     let sampled = rgba.withUnsafeMutableBytes { bytes in
@@ -393,12 +527,11 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         return true
     }
     require(sampled, "Cannot sample screenshot in sRGB")
-    var expected: [CGFloat] = theme == "dark" ? [9, 9, 10] : [255, 255, 255]
+    let expected: [CGFloat] = theme == "dark" ? [9, 9, 10] : [255, 255, 255]
     if name.hasPrefix("cluster-picker-open") || name == "cluster-reload-options" {
+        // The context picker is a popover with a transparent backdrop (.context-picker::backdrop in clusters.css):
+        // it no longer dims the page, so the page beside it is plain paper in both themes.
         require(visibleButtons("Close picker").count == 1, "Context picker must be visibly open")
-        // The themed backdrop composites over paper; the theme check still applies.
-        expected = theme == "dark" ? expected.map { $0 * 0.45 }
-            : zip(expected, [CGFloat](repeating: 11, count: 3)).map { $0 * 0.82 + $1 * 0.18 }
     }
     let actual = rgba.prefix(3).map { CGFloat($0) }
     require(zip(actual, expected).allSatisfy { abs($0 - $1) < 8 },
@@ -437,7 +570,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name == "before-settings" || name == "designer-settings" {
         // These captures intentionally scroll the page heading out of view.
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(name == "before-settings" ? text.contains("More settings") : text.contains("Personality") && text.contains("Description"),
+        require(name == "before-settings" ? showsText(text, "More settings") : showsText(text, "Personality") && showsText(text, "Description"),
                 "Designer settings section is not visible: \(text)")
         print("PASS \(name): native Designer settings section observed")
         return observations
@@ -445,11 +578,11 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name.hasPrefix("cluster-reload") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         if name == "cluster-reload-failed" {
-            require(text.contains("kubeconfig could not be read") && text.contains("Copy details"), "Reload failure recovery missing: \(text)")
+            require(showsText(text, "kubeconfig could not be read") && showsText(text, "Copy details"), "Reload failure recovery missing: \(text)")
         } else if name == "cluster-reload-options" {
-            require(text.contains("fixture-reloaded"), "Corrected kubeconfig context not reread: \(text)")
+            require(showsText(text, "fixture-reloaded"), "Corrected kubeconfig context not reread: \(text)")
         } else {
-            require(!text.contains("Access confirmed") && !text.contains("Cluster found"), "Reload retained stale selection: \(text)")
+            require(!showsText(text, "Access confirmed") && !showsText(text, "Cluster found"), "Reload retained stale selection: \(text)")
         }
         print("PASS \(name): offline native reload, no real credentials")
         return observations
@@ -457,11 +590,11 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name == "cluster-conditional" || name == "cluster-denied" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can split the camel-case label even though the native field is present.
-        let accountName = text.contains("ServiceAccount name") || text.contains("Service Account name")
+        let accountName = showsText(text, "ServiceAccount name") || showsText(text, "Service Account name")
         if name == "cluster-conditional" {
-            require(accountName && text.contains("cannot list ServiceAccounts in agents") && text.contains("cluster administrator"), "Forbidden-list name fallback missing: \(text)")
+            require(accountName && showsText(text, "cannot list ServiceAccounts in agents") && showsText(text, "cluster administrator"), "Forbidden-list name fallback missing: \(text)")
         } else {
-            require(text.contains("account and namespace") && text.contains("Access was denied") && !accountName, "Denial incorrectly offered identity substitution: \(text)")
+            require(showsText(text, "account and namespace") && showsText(text, "Access was denied") && !accountName, "Denial incorrectly offered identity substitution: \(text)")
             guard let explanation = nativeTextBounds("Access was denied").first,
                 let retry = nativeButtons("Check again").compactMap({ nativeBounds($0) }).first else {
                 fail("Access error or its retry action is missing")
@@ -480,21 +613,21 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name == "send-history-restarted" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can misread small dark badges; exact visible AX text proves the same property.
-        let savedPass = text.contains("Saved tests: pass") || nativeTextIsVisible("Saved tests: pass")
-        let savedUnknown = text.contains("Saved tests: unknown") || nativeTextIsVisible("Saved tests: unknown")
-        require(text.contains("Past Sends") && savedPass && savedUnknown, "Newest saved results missing after restart: \(text)")
-        require(text.contains("bridge-run-") && text.contains("fixture-secondary"), "Saved destination or planned Agent missing: \(text)")
+        let savedPass = showsText(text, "Saved tests: pass") || nativeTextIsVisible("Saved tests: pass")
+        let savedUnknown = showsText(text, "Saved tests: unknown") || nativeTextIsVisible("Saved tests: unknown")
+        require(showsText(text, "Past Sends") && savedPass && savedUnknown, "Newest saved results missing after restart: \(text)")
+        require(showsText(text, "bridge-run-") && showsText(text, "fixture-secondary"), "Saved destination or planned Agent missing: \(text)")
         print("PASS send-history-restarted: saved summaries after app restart; no new Send")
         return observations
     }
     if name == "send-history-passed" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Saved tests: pass"), "Earlier saved pass missing: \(text)")
+        require(showsText(text, "Saved tests: pass"), "Earlier saved pass missing: \(text)")
         return observations
     }
     if name == "send-history-answer" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Saved on this computer") && text.contains("Fixture answer:"), "Offline saved answer missing after restart: \(text)")
+        require(showsText(text, "Saved on this computer") && showsText(text, "Fixture answer:"), "Offline saved answer missing after restart: \(text)")
         print("PASS send-history-answer: durable answer opened offline after restart, no cluster access restored")
         return observations
     }
@@ -523,7 +656,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     }
     if name.hasPrefix("cluster-access") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Access confirmed") && text.contains("Open your agent") && !nativeButtons("Done").isEmpty,
+        require(showsText(text, "Access confirmed") && showsText(text, "Open your agent") && !nativeButtons("Done").isEmpty,
                 "Fixture access must finish with Done and an optional agent handoff: \(text)")
         return observations
     }
@@ -531,9 +664,9 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // The image is folded into Details until the user opens it.
         if name == "cluster-card-details" {
-            require(text.contains("orka:fixture"), "Fixture Orka image is not visible in Details: \(text)")
+            require(showsText(text, "orka:fixture"), "Fixture Orka image is not visible in Details: \(text)")
         } else {
-            require(text.contains("Cluster found") && !text.contains("Access confirmed"), "Fixture Orka not visible: \(text)")
+            require(showsText(text, "Cluster found") && !showsText(text, "Access confirmed"), "Fixture Orka not visible: \(text)")
         }
         print("PASS \(name): native discovery card; no Use or Send")
         return observations
@@ -541,7 +674,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name.hasPrefix("cluster-connect-known") {
         require(nativeTextIsVisible("Cluster found") && !nativeButtons("Use this cluster").isEmpty,
                 "Remembered Connect did not discover its known context without choosing again")
-        require(!nativeStrings().contains { $0.contains("choose its context to check it again") },
+        require(!nativeStrings().contains { showsText($0, "choose its context to check it again") },
                 "Remembered Connect still asks for its context")
         return observations
     }
@@ -565,7 +698,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         let blank = pickers.count == 1 && observations.contains {
             $0.topCandidates(1).first?.string.contains("Choose a context") == true && pickers[0].contains(centre($0))
         }
-        let checks = ["back": text.contains("Back to clusters"), "no discovery": !text.contains("Cluster found"),
+        let checks = ["back": showsText(text, "Back to clusters"), "no discovery": !showsText(text, "Cluster found"),
             "no body confirmation": !bodyConfirmed, "no open": nativeButtons("Open your agent").isEmpty,
             "no recheck": nativeButtons("Check access again").isEmpty, "blank picker": blank]
         require(checks.values.allSatisfy { $0 }, "Add a cluster did not open a blank Places subview: \(checks): \(text)")
@@ -575,16 +708,16 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if name.hasPrefix("cluster-manage") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         let backMiss = ["Pack to clusters", "back to clusters"].contains(where: text.contains)
-        require(text.contains("Back to clusters") || backMiss && visibleButtons("Back to clusters").count == 1,
+        require(showsText(text, "Back to clusters") || backMiss && visibleButtons("Back to clusters").count == 1,
                 "Manage is not a Places subview: \(text)")
         if name == "cluster-manage-change" { // Change context only reveals the select.
-            require(text.contains("kubectl context") || nativeTextIsVisible("kubectl context"), "Change context did not reveal the context choice: \(text)")
+            require(showsText(text, "kubectl context") || nativeTextIsVisible("kubectl context"), "Change context did not reveal the context choice: \(text)")
         } else {
             require(!nativeButtons("Open your agent").isEmpty && !nativeButtons("Done").isEmpty
-                && !nativeButtons("Show details").isEmpty && nativeStrings().contains { $0 == "AI connection" }
-                && nativeStrings().contains { $0.contains("Agents on this cluster") }
-                && nativeStrings().contains { $0.contains("runtime-reader") }
-                && nativeStrings().contains { $0.contains("Checked") }
+                && !nativeButtons("Show details").isEmpty && nativeStrings().contains { isText($0, "AI connection") }
+                && nativeStrings().contains { showsText($0, "Agents on this cluster") }
+                && nativeStrings().contains { showsText($0, "runtime-reader") }
+                && nativeStrings().contains { showsText($0, "Checked") }
                 && ["Change context", "Check access again", "Reload kubeconfig", "Remove"].allSatisfy { nativeButtons($0).isEmpty },
                 "Manage lost its summary or exposed maintenance outside Show details")
         }
@@ -599,14 +732,18 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if page == "Clusters" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can read the capital I in AI as lowercase l. Match the rest of the heading.
-        let welcome = text.contains("Build an") && text.contains("does a real job") || !nativeButtons("Get started").isEmpty
-        let places = text.contains("Choose where agents run") || nativeTextIsVisible("Choose where agents run")
-        let detail = text.contains("Back to clusters") || text.contains("Where should your agents run?") || !nativeButtons("Continue").isEmpty
-        require(welcome || places || detail, "Places heading or subview not visible; observed: \(text)")
-        require(!text.contains("Engine diagnostics"), "Removed engine diagnostics is still visible: \(text)")
+        let welcome = showsText(text, "Your agents. Your models.") && showsText(text, "Your keys. Your cluster.") || !nativeButtons("Get started").isEmpty
+        let places = showsText(text, "Choose where agents run") || nativeTextIsVisible("Choose where agents run")
+        let detail = showsText(text, "Back to clusters") || showsText(text, "Where should your agents run?") || !nativeButtons("Continue").isEmpty
+        // The open context picker covers the page head (it sits 80pt down over the page); it still belongs to the Add a
+        // cluster subview, whose Back to clusters stays in the native tree beneath it.
+        let picker = name.hasPrefix("cluster-picker-open") && visibleButtons("Close picker").count == 1
+            && showsText(text, "Find a context") && nativeButtons("Back to clusters").count == 1
+        require(welcome || places || detail || picker, "Places heading or subview not visible; observed: \(text)")
+        require(!showsText(text, "Engine diagnostics"), "Removed engine diagnostics is still visible: \(text)")
         if places && !detail {
             // Places keeps direct row actions; the local subview owns the setup choices.
-            require(!text.contains("Where should your agents run") && !text.contains("On a cluster you already have"),
+            require(!showsText(text, "Where should your agents run") && !showsText(text, "On a cluster you already have"),
                     "Setup chooser leaked onto Places: \(text)")
         }
         if name.hasPrefix("local-preflight") {
@@ -616,7 +753,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
                     ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.hasPrefix(choice) == true }
                 }, "Missing local setup choice: \(choice)")
             }
-            require(nativeStrings().contains { $0.contains("Step 1 of 4") } && nativeButtons("Continue").count == 1,
+            require(nativeStrings().contains { showsText($0, "Choose where agents run") } && nativeButtons("Continue").count == 1,
                     "Local setup choice lost its step counter or Continue")
         }
         if !welcome {
@@ -638,9 +775,11 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         return observations
     }
     let pages = ["Your agents", "Designer", "Clusters", "web-reader"]
+    // The sidebar's page names share this band at the window's left; only the page panel holds headings.
+    let headingFrame = window()!.1, headingLeft = bodyBounds().minX
     let headings = Set(observations.compactMap { observation -> String? in
         let top = 1 - observation.boundingBox.maxY
-        guard top > 0.10 && top < 0.25,
+        guard top > 0.10 && top < 0.25, headingFrame.minX + observation.boundingBox.minX * headingFrame.width >= headingLeft,
             let text = observation.topCandidates(1).first?.string,
             pages.contains(text) else { return nil }
         return text
@@ -655,9 +794,9 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     return observations
 }
 func scrollMain(_ pixels: Int32) {
-    let rect = window()!.1
     let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)
-    scroll?.location = CGPoint(x: rect.maxX - 20, y: rect.midY)
+    // The page's own padding, not the panel's scrollbar at the window's right edge.
+    scroll?.location = pageGutter(y: window()!.1.midY)
     scroll?.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: 0.3)
 }
@@ -712,7 +851,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32, region: String? 
         // A state capture may leave the card header above the viewport. Locate
         // its actual button instead of searching only in the caller's direction.
         let buttons = label == "Details" ? nativeButtons(label, root: root).filter { element in
-            ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("Resources and file hashes") == true }
+            ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("How Send works, checks and file hashes") == true }
         } : nativeButtons(label, root: root)
         if buttons.count == 1, let bounds = nativeBounds(buttons[0]), !bodyBounds().contains(bounds) {
             scrollMain(Int32((bodyBounds().minY + 32 - bounds.minY).rounded()))
@@ -767,7 +906,7 @@ func requirePlaceCards() {
     for expected in ["fixture-cluster", "fixture-secondary", "Checked", "In use", "Orka in"] {
         require(strings.contains { $0.contains(expected) }, "Places is missing \(expected)")
     }
-    require(!strings.contains { $0.contains("No other clusters added yet") } && nativeButtons("Use").count == 1
+    require(!strings.contains { showsText($0, "No other clusters added yet") } && nativeButtons("Use").count == 1
         && nativeButtons("Manage").count == 1 && nativeButtons("Set up").count == 1 && nativeButtons("Add a cluster").count == 1,
         "expected one Use, Manage, Set up and Add a cluster")
     print("PASS: Places shows last-check times and current selection with one action per card")
@@ -778,6 +917,7 @@ func localPreflight(_ name: String) throws {
     try capture(name, "Clusters")
     requireNoLocalWorkspace() // the size screen must never start the VM
     require(visibleButtons("Back to clusters").isEmpty, "Local setup must not have a header Back link")
+    leaveGuidedFirstRun()
     clickTab("Clusters", [])
 }
 func requireBlankPair(_ agent: URL, _ tests: URL, _ name: String) throws {
@@ -793,7 +933,8 @@ try FileManager.default.createDirectory(atPath: output, withIntermediateDirector
 setContent(1280, 800)
 var initial = try capture("initial", "Clusters")
 // Each theme owns a fresh runner profile; verify retention after its own restart.
-let initiallyWelcome = initial.contains { $0.topCandidates(1).first?.string == "Get started" }
+// Get started draws a CSS arrow after its name, so find it as the native button, not as an exact OCR line.
+let initiallyWelcome = visibleButtons("Get started").count == 1
 require(initiallyWelcome, "Expected a first-run welcome in the fresh \(theme) job")
 for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
     setContent(width, height)
@@ -803,19 +944,20 @@ for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum",
     try capture("welcome-\(size)-end", "Clusters")
     // A release build names its download; the bare "Mostly a download" means the sizes never arrived.
     // Welcome draws its fallback until the native requirements answer.
-    let sizedLine = { nativeStrings().contains { $0.range(of: #"Mostly a \d+\.\d GB download"#, options: .regularExpression) != nil } }
+    // A profile that already holds the download says so, with the measured start time instead.
+    let sizedLine = { nativeStrings().contains { $0.range(of: #"Mostly a \d+\.\d GB download|Already downloaded, then about \d+ minutes? to start"#, options: .regularExpression) != nil } }
     let sizedDeadline = Date(timeIntervalSinceNow: 10)
     while !sizedLine() && Date() < sizedDeadline { Thread.sleep(forTimeInterval: 0.5) }
     let sized = sizedLine()
     require(visibleButtons("Get started").count == 1 && sized,
             "Welcome next action and time cue must remain reachable at \(size)")
-    require(nativeStrings().contains { $0.contains("Send it to your team's cluster (preview).") }, "Welcome lost the team-cluster preview caveat")
+    require(nativeStrings().contains { showsText($0, "Send it to your team's cluster (preview).") }, "Welcome lost the team-cluster preview caveat")
     requireNoLocalWorkspace()
 }
 setContent(1280, 800)
 scrollMain(4000)
-if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" }) {
-    clickText("Get started", in: initial)
+if visibleButtons("Get started").count == 1 {
+    clickButton("Get started")
     initial = try capture("places-empty", "Clusters")
 }
 try localPreflight("local-preflight")
@@ -937,9 +1079,17 @@ require(app.isTerminated, "Bridge did not quit before preference check")
 app = try launch()
 app.activate(options: [])
 waitForWorkspaceRenderer()
+// Nothing is set up yet, so Welcome returns on every launch until Get started in that run.
+let reopened = try capture("welcome-reopened", "Clusters")
+require(visibleButtons("Get started").count == 1 && guidedTitleRow() != nil,
+        "Restart with nothing set up must show Welcome again, guided")
+_ = reopened
+clickButton("Get started")
 let retained = try capture("places-retained", "Clusters")
-require(!retained.contains { $0.topCandidates(1).first?.string == "Get started" },
-        "Restart must retain welcome dismissal without starting a workspace")
+require(nativeButtons("Get started").isEmpty,
+        "Get started must dismiss Welcome without starting a workspace")
+requireNoLocalWorkspace()
+leaveGuidedFirstRun()
 clickTab("Overview", retained)
 _ = try capture("overview", "Overview")
 require(!nativeTextIsVisible("This workspace can't list its agents yet."),
@@ -1151,7 +1301,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         let names = ["fixture-cluster", "conditional-fixture", "denied-fixture", "missing-tools-fixture", "unreadable-tools-fixture", "fixture-secondary"]
         require((1...names.count).contains(index), "Unknown fixture context index")
         clickButton("kubectl context")
-        clickButton(names[index - 1])
+        clickPickerChoice(names[index - 1])
         Thread.sleep(forTimeInterval: 1)
         return try capture("cluster-card-selected", "Clusters")
     }
@@ -1326,10 +1476,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     func requireSendActions(_ expected: [String]) throws {
         try closeSendDetails()
         let root = nativeRegion("Send and cluster tests")
-        let actions = sendActionLabels.filter { label in
-            nativeButtons(label, root: root).contains { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }
-        }
-        require(actions.count <= 2 && actions.sorted() == expected.sorted(), "Unexpected Send header actions: \(actions); expected \(expected)")
+        // Actions in reading order (row, then left to right), as the card lays them out; a failed result has three.
+        let shown = sendActionLabels.compactMap { label -> (String, CGRect)? in
+            nativeButtons(label, root: root).compactMap { nativeBounds($0) }.first { $0.width > 1 && $0.height > 1 }.map { (label, $0) }
+        }.sorted { abs($0.1.minY - $1.1.minY) > 4 ? $0.1.minY < $1.1.minY : $0.1.minX < $1.1.minX }
+        let actions = shown.map { $0.0 }
+        require(actions.count <= 3 && actions == expected, "Unexpected Send actions: \(actions); expected, in order, \(expected)")
     }
     func captureRecoveryActions(_ name: String, retry: Bool = true) throws {
         try requireSendActions(retry ? ["Check cluster status", "Retry cancellation"] : ["Check cluster status"])
@@ -1350,31 +1502,18 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let connected = try capture("cluster-access-compact", "Clusters")
     clickText("Open your agent", in: connected)
     Thread.sleep(forTimeInterval: 0.5)
-    let ownedAgent = try capture("agent-cluster-owned", "Designer")
-    clickText("Send to a cluster", in: ownedAgent)
+    // The Send card is always in Designer's right column; there is no page-head entry to open it.
+    try capture("agent-cluster-owned", "Designer")
     Thread.sleep(forTimeInterval: 1)
     let allowed = try capturePreflight("send-ready", "Ready to send")
-    require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Ready to send") }
+    require(allowed.contains { showsText($0.topCandidates(1).first?.string ?? "", "Ready to send") }
         && !nativeButtons("Send and run tests").isEmpty, "Ready destination must expose the Send action")
     func focusSend() throws {
-        // Pixel scroll offsets are not stable across responsive reflow. Focus
-        // the real entry button, then pointer-click its verified native bounds.
-        let matches = nativeElements().filter { element in
-            attribute(element, "AXRole") as? String == "AXButton"
-                && attribute(element, "AXEnabled") as? Bool == true
-                && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Send to a cluster" }
-        }
-        require(matches.count == 1, "Expected one enabled Send entry")
-        let entry = matches[0]
-        require(AXUIElementSetAttributeValue(entry, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus Send entry")
-        Thread.sleep(forTimeInterval: 0.3)
-        guard let focusedBounds = nativeBounds(entry) else { fail("Focused Send entry has no bounds") }
-        if !bodyBounds().contains(focusedBounds) {
-            scrollMain(Int32((bodyBounds().minY + 32 - focusedBounds.minY).rounded()))
-        }
-        guard let bounds = nativeBounds(entry), bodyBounds().contains(bounds) else { fail("Focused Send entry is not visible") }
-        mouse(.leftMouseDown, CGPoint(x: bounds.midX, y: bounds.midY))
-        mouse(.leftMouseUp, CGPoint(x: bounds.midX, y: bounds.midY))
+        // Pixel scroll offsets are not stable across responsive reflow. The Send card is always in Designer's
+        // right column (there is no page-head entry), so bring its actual native top under the page top.
+        guard let card = nativeBounds(nativeRegion("Send and cluster tests")) else { fail("Send card has no bounds") }
+        if abs(card.minY - (bodyBounds().minY + 32)) > 1 { scrollMain(Int32((bodyBounds().minY + 32 - card.minY).rounded())) }
+        guard let shown = nativeBounds(nativeRegion("Send and cluster tests")), bodyBounds().contains(CGPoint(x: shown.midX, y: shown.minY + 1)) else { fail("Send card top is not visible") }
         Thread.sleep(forTimeInterval: 0.5)
         try closeSendDetails()
         // Observe a real Send control after reflow. Vision can omit the small uppercase section label.
@@ -1407,7 +1546,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         // A partial result can reflow while scrolling. Re-anchor before qualifying the frozen answer frame.
         let answer = try capturePreflight(name, "What SHA-256 checksum does")
         let text = answer.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("What SHA-256 checksum does") && text.contains("Fixture answer:"), "Question and answer are not visible together")
+        require(showsText(text, "What SHA-256 checksum does") && showsText(text, "Fixture answer:"), "Question and answer are not visible together")
     }
     func captureSendPresentation(_ name: String, actions: [String], earlier: String? = nil, destination: String? = nil) throws {
         for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
@@ -1469,7 +1608,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     try assertDeployment(passedUID, generation: 1, tasks: 1)
     try capturePreflight("send-unchanged", "Run cluster tests again")
-    try requireSendActions(["See in Overview", "Run cluster tests again"])
+    // A passing result: rerun first, then See in Overview, both secondary.
+    try requireSendActions(["Run cluster tests again", "See in Overview"])
     try clickSendControl("Run cluster tests again", scrolling: -350)
     try capturePreflight("send-unchanged-result", "1 of 1 tests passed")
     try assertDeployment(passedUID, generation: 1, tasks: 2)
@@ -1542,15 +1682,21 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let failureReason = "The answer did not include “2099-12-31”."
     let visibleFailure: ([VNRecognizedTextObservation]) -> Bool = { seen in
         let root = nativeRegion("Send and cluster tests")
-        return seen.contains { ($0.topCandidates(1).first?.string ?? "").contains("Failed") }
+        // The verdict pill is drawn in CSS capitals.
+        return seen.contains { showsText($0.topCandidates(1).first?.string ?? "", "Failed") }
             && nativeButtons("has-a-date", root: root).compactMap { nativeBounds($0) }.contains { bodyBounds().contains($0) }
             && nativeTextBounds(failureReason, exact: true, root: root).contains { bodyBounds().contains($0) }
     }
-    try capturePreflight("send-failed-wide", "Finds the publication date", anchor: failureReason, requiring: visibleFailure)
-    require(nativeStrings().contains { $0.contains("has-a-date") }, "Captured test title must retain its code ID")
+    // The Send card starts every test closed under its headline (TestResults collapsed); open the failed one.
+    try clickSendControl("has-a-date", scrolling: -250)
+    // The open test shows its question, answer and hashes before the reason; anchor its title row so the title,
+    // verdict and reason share the frame (anchoring the reason pushed the title above it).
+    try capturePreflight("send-failed-wide", "Finds the publication date", anchor: "has-a-date", requiring: visibleFailure)
+    require(nativeStrings().contains { showsText($0, "has-a-date") }, "Captured test title must retain its code ID")
     try resultSize(540, 640)
     try capturePreflight("send-failed-minimum", "Finds the publication date", anchor: "has-a-date", requiring: visibleFailure)
-    try captureSendPresentation("send-failed", actions: ["Fix in Designer", "Run cluster tests again"])
+    // A failed result: rerun first (secondary), Fix in Designer (the one primary), then See in Overview.
+    try captureSendPresentation("send-failed", actions: ["Run cluster tests again", "Fix in Designer", "See in Overview"])
     // Arm only the loopback fixture: first answer completes, second Task stays
     // live. Hold the cancel reply until its in-flight state has been captured.
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "cancelling"])
@@ -1560,7 +1706,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try resultSize(1280, 800)
     try capturePreflight("send-running-wide", "Waiting for answers and evaluating tests")
     let partial = try capturePreflight("send-running-partial", "published-checksum")
-    require(partial.contains { ($0.topCandidates(1).first?.string ?? "").contains("Passed") }, "Cancellation walk needs a completed test before Cancel tests")
+    // The verdict pill is drawn in CSS capitals.
+    require(partial.contains { showsText($0.topCandidates(1).first?.string ?? "", "Passed") }, "Cancellation walk needs a completed test before Cancel tests")
     try clickSendControl("published-checksum", scrolling: -250)
     try captureAnswer("send-running-answer-wide")
     try clickSendControl("published-checksum", scrolling: 250)
@@ -1572,7 +1719,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let cancellingFrame = try capture("send-cancelling", "Designer") {
         try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "requested"])
     }
-    require(cancellingFrame.contains { ($0.topCandidates(1).first?.string ?? "").contains("Cancelling tests") }, "Native cancellation progress missing from captured frame")
+    require(cancellingFrame.contains { showsText($0.topCandidates(1).first?.string ?? "", "Cancelling tests") }, "Native cancellation progress missing from captured frame")
     Thread.sleep(forTimeInterval: 0.5)
     try capturePreflight("send-cancel-requested-wide", "Cancellation requested. Waiting for the cluster.")
     try captureRecoveryActions("send-cancel-requested-actions-wide")
@@ -1705,7 +1852,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try capturePreflight("send-cancel-completion-race", "Tests finished before cancellation.")
     try focusSend()
     try capturePreflight("send-cancel-race-result", "1 of 2 tests passed")
-    try capturePreflight("send-cancel-race-failure", "Finds the publication date", anchor: failureReason, requiring: visibleFailure)
+    try clickSendControl("has-a-date", scrolling: -250) // a new result starts its tests closed again
+    try capturePreflight("send-cancel-race-failure", "Finds the publication date", anchor: "has-a-date", requiring: visibleFailure)
     // Restore and actually Send the common file version on the primary cluster
     // before comparing it with the secondary. Merely restoring local bytes does
     // not undo the live spec updates exercised above.
@@ -1740,7 +1888,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(12000)
         try capture("cluster-success-\(size)", "Clusters")
         require(nativeTextBounds("fixture-secondary", heading: true).count == 1
-            && nativeTextIsVisible("Orka in") && nativeStrings().contains { $0.contains("In use") },
+            && nativeTextIsVisible("Orka in") && nativeStrings().contains { showsText($0, "In use") },
             "Connected cluster must show its named heading, Orka location and header selection")
         require(["Change context", "Check access again", "Reload kubeconfig", "Remove"].allSatisfy { nativeButtons($0).isEmpty },
             "Connected maintenance must start behind Show details")
@@ -1797,8 +1945,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickButton("Manage")
     scrollMain(-400)
     clickText("Open your agent", in: try capture("cluster-probe", "Clusters"))
-    let secondAgent = try capture("agent-cluster-owned", "Designer")
-    clickText("Send to a cluster", in: secondAgent)
+    try capture("agent-cluster-owned", "Designer")
     // The primary's restored-version Send already reloaded these exact files.
     try clickSendControl("Check again", scrolling: -250)
     // The primary's result remains visible as Earlier result; destination readiness is a collapsed disclosure.
@@ -1849,13 +1996,16 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(-400)
         let connected = try capture("cluster-access", "Clusters")
         clickText("Open your agent", in: connected)
-        let agent = try capture("agent-cluster-owned", "Designer")
-        clickText("Send to a cluster", in: agent)
+        try capture("agent-cluster-owned", "Designer")
         Thread.sleep(forTimeInterval: 1)
         for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
             try resultSize(width, height)
             try capturePreflight("\(name)-\(size)", expected)
-            try requireSendActions(["Check again"])
+            // A blocked destination keeps its Send action in view, disabled, with Check again beside it (clusters/Send.tsx).
+            // Preflight reports a refused Send as action "blocked", which the card labels as an update.
+            try requireSendActions(["Update agent and run tests", "Check again"])
+            require(nativeButtons("Update agent and run tests", root: nativeRegion("Send and cluster tests"))
+                .allSatisfy { attribute($0, "AXEnabled") as? Bool == false }, "\(name): the blocked Send action must stay disabled")
         }
         clickTab("Clusters", [])
     }
@@ -1866,7 +2016,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Use this cluster", in: cancellationTarget)
     scrollMain(-400)
     clickText("Open your agent", in: try capture("cluster-probe", "Clusters"))
-    try clickSendControl("Send to a cluster", scrolling: -350, region: nil)
+    try focusSend()
     restoreTemporaryTests = { try originalTests.write(to: testsURL, options: .atomic) }
     try mixedTests.write(to: testsURL, options: .atomic)
     try clickSendControl("Check again", scrolling: -250)
@@ -1896,13 +2046,17 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // A native frame can appear before the relaunched WebView paints anything.
     // Use the same observed page readiness as the initial launch.
     waitForWorkspaceRenderer()
+    // Remembered clusters count as set up, so Bridge reopens on Home.
+    require(nativeTextIsVisible("What do you want done?") && nativeButtons("Get started").isEmpty,
+            "Restart with remembered clusters must open on Home, not Welcome")
+    clickTab("Clusters", [])
     let restarted = try capture("cluster-place-reopened", "Clusters")
     // Remembered metadata survives, but neither selection nor live access does.
     let remembered = nativeButtons("Use").count
     require(remembered == 4 && nativeButtons("Manage").isEmpty
-        && nativeStrings().contains { $0.contains("fixture-cluster") }
-        && nativeStrings().contains { $0.contains("fixture-secondary") }
-        && nativeStrings().contains { $0.contains("Checked") }
+        && nativeStrings().contains { showsText($0, "fixture-cluster") }
+        && nativeStrings().contains { showsText($0, "fixture-secondary") }
+        && nativeStrings().contains { showsText($0, "Checked") }
         && !nativeTextIsVisible("No other clusters added yet"),
         "Restart must retain four checked cluster identities, disconnected")
     // Focus and pointer-click the first retained row. Fresh native discovery, not
@@ -1946,17 +2100,17 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     app = try launch()
     app.activate(options: [])
     waitForWorkspaceRenderer()
+    require(nativeTextIsVisible("What do you want done?"), "Restart with remembered clusters must open on Home")
+    clickTab("Clusters", [])
     try capture("cluster-removal-reopened", "Clusters")
     require(nativeButtons("Use").count == remembered - 1 && nativeButtons("Manage").isEmpty,
             "Removed cluster returned after restart")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
-    try clickSendControl("Send to a cluster", scrolling: -350, region: nil)
-    clickButton("Past Sends")
-    guard let historyHeading = nativeButtons("Past Sends").compactMap({ nativeBounds($0) }).first else {
+    // Past Sends shows under the Send card once a Send is saved (several are by now), labelled by its heading.
+    guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {
         fail("Saved Send history was not reachable after restart")
     }
-    // The label is now a disclosure control, not a standalone OCR heading.
     // Put it near the top so the newest saved summaries fit in the frame.
     scrollMain(Int32((bodyBounds().minY + 24 - historyHeading.minY).rounded()))
     try capture("send-history-restarted", "Designer")
@@ -2057,12 +2211,40 @@ do {
     }
     guard let chooser = panel, let chooserBounds = nativeBounds(chooser) else { fail("Native repo folder chooser missing") }
     // Drive the real NSOpenPanel's Go to Folder sheet; never inject picker IPC.
-    for down in [true, false] {
-        let event = CGEvent(keyboardEventSource: nil, virtualKey: 5, keyDown: down)!
-        event.flags = [.maskCommand, .maskShift]; event.post(tap: .cghidEventTap)
+    // The panel can be in the accessibility tree before it takes keys, so a fixed pause could send Cmd-Shift-G and
+    // the path to nothing (CI run 46107695940, light). Wait for the Go to Folder field to have focus, retrying the
+    // shortcut, and for it to hold the whole path before pressing Return.
+    func goToFolderField() -> AXUIElement? {
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+            let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+        let field = focused as! AXUIElement
+        // The panel's own search field is a text field too; Go to Folder's is not a search field.
+        guard ["AXTextField", "AXComboBox"].contains(attribute(field, "AXRole") as? String ?? ""),
+            attribute(field, "AXSubrole") as? String != "AXSearchField" else { return nil }
+        return field
     }
-    Thread.sleep(forTimeInterval: 0.3)
+    var goField: AXUIElement?
+    for _ in 0..<3 where goField == nil {
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: 5, keyDown: down)!
+            event.flags = [.maskCommand, .maskShift]; event.post(tap: .cghidEventTap)
+        }
+        for _ in 0..<20 {
+            goField = goToFolderField()
+            if goField != nil { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+    }
+    guard let goField else { fail("Go to Folder did not open in the native repo chooser") }
     typeText(selectedRepo.path)
+    var typed: String?
+    for _ in 0..<30 {
+        typed = attribute(goField, "AXValue") as? String
+        if typed?.hasPrefix(selectedRepo.path) == true { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(typed?.hasPrefix(selectedRepo.path) == true, "Go to Folder did not receive the repo path: \(typed ?? "no value")")
     key(36)
     var navigated = false
     for _ in 0..<50 {

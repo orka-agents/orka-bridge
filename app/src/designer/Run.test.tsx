@@ -118,8 +118,10 @@ test.each(['submit', 'observe', null])('uncertain %s is not labelled failed or n
   vi.stubGlobal('isTauri', true);
   mockIPC(() => ({ ...idle, state: 'unknown', error }));
   const { container } = render(<Run />);
-  expect((await screen.findByText('Result unknown')).closest('.pill')).toBeNull();
-  expect(container.querySelector('.pill.status-stale')?.textContent).toBe('Stale');
+  // The pill names the state itself, in amber, never the bare word Stale.
+  expect((await screen.findByText('Result unknown')).closest('.pill.status-needs-you')).toBeTruthy();
+  expect(container.querySelector('.pill.status-stale')).toBeNull();
+  expect(container.textContent).not.toContain('Stale');
   expect(container.querySelector('.pill.status-failed')).toBeNull();
 });
 test('an older pass is a stale pill and never a green result', async () => {
@@ -150,6 +152,8 @@ test.each([false, true])('disconnected AI keeps Run secondary/disabled even when
   await waitFor(() => expect(screen.getByRole('button', { name: 'Connect the AI' })).toBeTruthy());
   expect(run.classList.contains('button-primary')).toBe(false);
   expect(run.hasAttribute('disabled')).toBe(true);
+  // The workspace is running: the reason is the AI, not starting the workspace.
+  expect(run.getAttribute('title')).toBe('Connect the AI in Clusters first.');
   await user.click(screen.getByRole('button', { name: 'Connect the AI' })); expect(choose).toHaveBeenCalledOnce();
 });
 test.each(['Succeeded', 'Failed'])('failed %s gives factual next steps and editor navigation', async phase => {
@@ -164,4 +168,13 @@ test.each(['Succeeded', 'Failed'])('failed %s gives factual next steps and edito
 test('preview never fabricates a native test or sends Run IPC', async () => {
   vi.stubGlobal('isTauri', false); const ipc = vi.fn(); mockIPC(ipc); render(<Run />);
   expect(await screen.findByText('Run is available only in the native app.')).toBeTruthy(); expect(ipc).not.toHaveBeenCalled();
+});
+test('on a build without the local cluster the tests card says why instead of waiting for the workspace', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => ({ ...idle, canRun: false, modelConnected: false }));
+  const reason = "This computer can't run agents on this build. Use a cluster you already have.";
+  render(<Run workspaceReady={false} unavailable={reason} />);
+  expect(await screen.findByText(reason)).toBeTruthy();
+  expect(screen.queryByText(/Waiting for the workspace|Connect the AI in Clusters first/)).toBeNull();
+  expect(screen.getByRole('button', { name: 'Run tests' }).getAttribute('title')).toBe(reason);
 });

@@ -1,0 +1,102 @@
+/* Home is the Navigator. Before a conversation: the mark, the headline, one line, the message box and starters, in
+   one centred column. During one: the turns, newest last, with the message box held at the bottom of the page. */
+.home { display: grid; gap: var(--space-4); width: 100%; max-width: 700px; margin-inline: auto; }
+.home-hero { display: grid; justify-items: center; gap: var(--space-2-5); text-align: center; }
+.home-hero h1 { margin: 0; font: var(--type-display); letter-spacing: var(--tracking-display); }
+.home-hero p { max-width: 60ch; margin: 0; font: 400 16px/24px var(--font-ui); }
+
+/* The message box: a strong card whose field reads as its writing area. */
+.nav-composer { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: var(--border-editing) solid var(--color-text); border-radius: var(--radius-card); background: var(--color-card); }
+.nav-composer textarea { width: 100%; min-height: 44px; max-height: 40dvh; padding: var(--space-1-5) var(--space-0-5); border: 0; resize: none; background: transparent; color: var(--color-text); font: 400 17px/24px var(--font-ui); overflow-wrap: anywhere; }
+.nav-composer-start textarea { min-height: 76px; }
+.nav-composer textarea::placeholder, .nav-composer-placeholder { color: var(--color-text-secondary); }
+/* One row whatever the line says: the line takes the room left beside the links and Send, so its length never moves
+   them. A long line shortens the place's name in the middle and keeps the model. */
+.nav-composer-foot { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2) var(--space-3); }
+.nav-composer-foot > .nav-line { grid-column: 1; }
+.nav-composer-foot > .button { grid-column: 3; }
+.nav-line { display: flex; min-width: 0; color: var(--color-text-secondary); font: 500 12.5px/16px var(--font-mono); font-variant-ligatures: none; white-space: nowrap; }
+/* Pre keeps each part's own spaces; the place gives way long before the model does. */
+.nav-line > span { overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.nav-line-lead { flex: none; }
+.nav-line-place { flex: 0 1000 auto; min-width: 5ch; }
+.nav-line-model { flex: none; max-width: calc(100% - 17ch); }
+.nav-links { display: inline-flex; align-items: center; gap: var(--space-3); margin-left: auto; }
+.nav-links .button-quiet { font-size: 13px; }
+/* Unavailable: the box is a quiet well, and the card above it says why. */
+.nav-composer-off { border: var(--border-control) solid var(--color-border-strong); background: var(--color-chrome); }
+.nav-composer-placeholder { height: 56px; margin: 0; padding: var(--space-1-5) var(--space-0-5); font: 400 16px/24px var(--font-ui); }
+.nav-composer-off .nav-composer-foot > .button { margin-left: auto; }
+.nav-starters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2-5); }
+.nav-starters > .muted { font-size: 13.5px; }
+
+/* The card that holds the screen when the Navigator can't answer. */
+.nav-gate { display: grid; gap: var(--space-2-5); }
+.nav-gate > p { margin: 0; }
+.nav-gate-head { display: flex; align-items: center; gap: var(--space-2-5); }
+.nav-gate-head .status-icon { color: var(--color-status-pending); }
+.nav-gate-head h2 { margin: 0; font: 600 16px/22px var(--font-ui); }
+.nav-gate-head .pill { margin-left: auto; }
+/* While the Navigator can't answer, the orca steps back behind the card that says why. */
+.home-start:has(.nav-gate) .art-orca { opacity: .5; }
+
+.home-conversation { max-width: 720px; flex: 1 0 auto; display: flex; flex-direction: column; gap: var(--space-3); }
+.page-content:has(> .home-conversation) { display: flex; flex-direction: column; }
+.nav-turns { flex: 1 0 auto; display: grid; align-content: start; gap: var(--space-4); margin: 0; padding: 0; list-style: none; }
+.nav-turn { display: grid; gap: var(--space-3); min-width: 0; }
+.nav-user { justify-self: end; max-width: 78%; margin: 0; padding: var(--space-2-5) 14px; border-radius: var(--radius-card); background: var(--color-chrome); font: 400 15px/21px var(--font-ui); overflow-wrap: anywhere; white-space: pre-wrap; }
+.nav-reply { display: grid; gap: var(--space-1-5); min-width: 0; }
+.nav-reply > p { margin: 0; }
+.nav-prose { display: grid; gap: var(--space-2); max-width: 62ch; font: 400 15px/24px var(--font-ui); overflow-wrap: anywhere; }
+.nav-prose > * { margin: 0; }
+.nav-prose ul, .nav-prose ol { padding-left: var(--space-5); }
+.nav-prose code, .nav-rows code, .nav-card-section code, .nav-sources code { padding: 1px var(--space-1-5); border-radius: var(--radius-small); background: var(--color-chrome); font: 500 0.9em var(--font-mono); font-variant-ligatures: none; }
+.nav-sources { font-size: 12.5px; }
+.nav-thinking { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--color-text-secondary); }
+.nav-thinking .status-icon { color: var(--color-status-running); }
+/* Held at the bottom while the turns scroll under it. */
+.nav-composer-dock { position: sticky; bottom: 0; z-index: 1; padding-top: var(--space-2); background: linear-gradient(to bottom, transparent, var(--color-page) var(--space-2)); }
+
+/* Cards in the conversation: a label row with the card's state, then rows or fields, then the actions. */
+.nav-card { display: grid; gap: var(--space-2); padding: 14px var(--space-4); }
+.nav-card > * { margin: 0; }
+.nav-card .alert { max-width: none; }
+.nav-card-head { display: flex; align-items: center; gap: var(--space-2-5); min-height: 24px; }
+.nav-card-head h3 { display: inline-flex; align-items: baseline; gap: var(--space-2); }
+.nav-card-head .pill { margin-left: auto; }
+.nav-agent-name { color: var(--color-text); font: 600 13px/16px var(--font-mono); letter-spacing: 0; text-transform: none; }
+.nav-rows { margin: 0; }
+.nav-rows > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-3); padding: 7px 0; border-top: 1px solid var(--color-border); }
+.nav-rows dt { color: var(--color-text-secondary); }
+.nav-rows dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.nav-task-text { white-space: pre-wrap; }
+.nav-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding-top: var(--space-1); }
+.nav-reason { font-size: 13px; }
+.nav-card-section { display: grid; gap: var(--space-1); padding-top: var(--space-2); border-top: 1px solid var(--color-border); }
+.nav-card-section > * { margin: 0; }
+.nav-result-value { font: 500 13.5px/20px var(--font-mono); font-variant-ligatures: none; overflow-wrap: anywhere; }
+.nav-result-text { white-space: pre-wrap; }
+.nav-phases { display: flex; flex-wrap: wrap; gap: var(--space-1-5) var(--space-4); margin: 0; padding: 0; list-style: none; font: 500 12px/18px var(--font-mono); font-variant-ligatures: none; }
+.nav-phases li { display: inline-flex; align-items: center; gap: var(--space-1-5); }
+.nav-step-done .status-icon { color: var(--color-text); }
+.nav-step-waiting { color: var(--color-text-secondary); }
+.nav-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+.nav-field { display: grid; gap: var(--space-1); font-weight: 600; }
+.nav-field .field { font-weight: 400; }
+.nav-field select.field { width: 260px; max-width: 100%; }
+.nav-field textarea { resize: none; }
+.nav-mono { font-family: var(--font-mono); font-variant-ligatures: none; }
+.nav-field select.nav-mono { font: 500 13px/18px var(--font-mono); }
+
+@media (max-width: 820px) {
+  .home-hero h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
+}
+/* At the narrowest the box names only the model, and the starters wrap under it. */
+@media (max-width: 600px) {
+  .nav-composer-start .nav-links { display: none; }
+  /* One line to start with: the box grows as the message does. */
+  .nav-composer-start textarea { min-height: 44px; height: 44px; }
+  .nav-edit-grid { grid-template-columns: minmax(0, 1fr); }
+  .nav-rows > div { grid-template-columns: minmax(0, 1fr); gap: var(--space-0-5); }
+  .nav-user { max-width: 92%; }
+}

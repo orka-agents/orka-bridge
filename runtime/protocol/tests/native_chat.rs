@@ -9,6 +9,12 @@ pub mod agents;
 pub mod catalog;
 #[path = "../../../app/src-tauri/src/chat.rs"]
 pub mod chat;
+#[path = "../../../app/src-tauri/src/chat_cluster.rs"]
+pub mod chat_cluster;
+#[path = "../../../app/src-tauri/tests/native_chat_cluster.rs"]
+mod cluster_tests;
+#[path = "../../../app/src-tauri/src/copilot_preflight.rs"]
+pub mod copilot_preflight;
 #[cfg(debug_assertions)]
 #[path = "../../../app/src-tauri/src/dev_image.rs"]
 pub mod dev_image;
@@ -22,10 +28,14 @@ pub mod job_run;
 pub mod local_results;
 #[path = "../../../app/src-tauri/src/local_vm.rs"]
 pub mod local_vm;
+#[path = "../../../app/src-tauri/src/navigator.rs"]
+pub mod navigator;
 #[path = "../../../app/src-tauri/src/overview.rs"]
 pub mod overview;
 #[path = "../../../app/src-tauri/src/pair_source.rs"]
 pub mod pair_source;
+#[path = "../../../app/src-tauri/tests/native_chat_places.rs"]
+mod place_tests;
 #[path = "../../../app/src-tauri/src/runtime/mod.rs"]
 pub mod runtime;
 #[path = "../../../app/src-tauri/src/setup.rs"]
@@ -34,5 +44,7 @@ pub mod setup;
 mod shared;
 #[path = "../../../app/src-tauri/tests/native_chat.rs"]
 mod tests;
+#[path = "../../../app/src-tauri/src/workspace_fresh.rs"]
+pub mod workspace_fresh;
 #[path = "../../../app/src-tauri/src/workspace_upgrade.rs"]
 pub mod workspace_upgrade;

@@ -7,25 +7,34 @@ const id = '00000000-0000-4000-8000-000000000001';
 const place = { key: 'full-installation-key', context: 'team', service: 'control/orka', namespace: 'agents', stale: true, observedAt: null, agents: [] };
 test('places reads only the passive native snapshot and preserves unobserved facts', async () => {
   vi.stubGlobal('isTauri', true);
-  const value = { places: [place], selectedKey: place.key, persistenceState: 'complete' };
+  const value = { places: [place], selectedKey: place.key, persistenceState: 'complete', accessLost: false };
   const ipc = vi.fn(() => value); mockIPC(ipc);
   await expect(clusterPlaces()).resolves.toEqual(value);
   expect(ipc).toHaveBeenCalledExactlyOnceWith('cluster_places', {});
 });
 test.each([
   null,
-  { places: [place], selectedKey: 'same-name-not-same-installation', persistenceState: 'complete' },
-  { places: [{ ...place, observedAt: null, stale: false }], selectedKey: null, persistenceState: 'complete' },
-  { places: [place], selectedKey: null, persistenceState: 'complete', token: 'SECRET_MARKER' },
+  { places: [place], selectedKey: 'same-name-not-same-installation', persistenceState: 'complete', accessLost: false },
+  { places: [{ ...place, observedAt: null, stale: false }], selectedKey: null, persistenceState: 'complete', accessLost: false },
+  { places: [place], selectedKey: null, persistenceState: 'complete', accessLost: false, token: 'SECRET_MARKER' },
   { places: [place], selectedKey: null },
   { places: [place], selectedKey: null, persistenceState: 'invented' },
+  // Lost access belongs to the selected place, and the flag is required.
+  { places: [place], selectedKey: null, persistenceState: 'complete', accessLost: true },
+  { places: [place], selectedKey: place.key, persistenceState: 'complete' },
+  { places: [place], selectedKey: place.key, persistenceState: 'complete', accessLost: 'no' },
 ])('invalid places snapshot is not projected: %j', async value => {
   vi.stubGlobal('isTauri', true); mockIPC(() => value);
   await expect(clusterPlaces()).resolves.toBeUndefined();
 });
 test('unavailable persistence is preserved, not treated as an empty saved list', async () => {
   vi.stubGlobal('isTauri', true);
-  const value = { places: [place], selectedKey: null, persistenceState: 'unavailable' };
+  const value = { places: [place], selectedKey: null, persistenceState: 'unavailable', accessLost: false };
+  mockIPC(() => value); await expect(clusterPlaces()).resolves.toEqual(value);
+});
+test('a selected place whose access can no longer authenticate is reported as needing reconnecting', async () => {
+  vi.stubGlobal('isTauri', true);
+  const value = { places: [place], selectedKey: place.key, persistenceState: 'complete', accessLost: true };
   mockIPC(() => value); await expect(clusterPlaces()).resolves.toEqual(value);
 });
 test('remembered reconnect uses only the native key and validates fresh target handles', async () => {

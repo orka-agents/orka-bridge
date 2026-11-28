@@ -6,6 +6,7 @@ import App from '../App';
 import Places from './Places';
 import { setupView } from '../setup/progress';
 import { chooseContext } from './test-context';
+import { openClusters } from '../setup/test-navigation';
 
 const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev', current: false };
 const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name, service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka:0.9.4' };
@@ -17,7 +18,7 @@ function native(failure?: { check: string; result: string }, stage = 'discover',
   mockIPC(command => {
     if (command === 'setup_status') return status;
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [place], selectedKey: place.key, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [place], selectedKey: place.key, persistenceState: 'complete', accessLost: false };
     if (command === 'overview_places') return { places: [place], historyState: 'complete', unobserved: [] };
     if (command === 'cluster_contexts') return failure && stage === 'contexts' ? Promise.reject(failure) : [context];
     if (command === 'cluster_discover') { if (failure && stage === 'discover') return Promise.reject(failure); return [target]; }
@@ -29,7 +30,9 @@ function native(failure?: { check: string; result: string }, stage = 'discover',
 }
 async function added(useReply?: () => unknown) {
   native(undefined, 'discover', useReply); const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'I already run Orka on a cluster' }));
+  // A remembered cluster counts as set up, so Bridge opens on Home rather than Welcome.
+  await openClusters(user);
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await chooseContext(user, context.name);
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   await screen.findByRole('button', { name: 'Done' });
@@ -51,8 +54,10 @@ test('added cluster names the page and keeps only Done and Open outside details'
   await user.click(screen.getByRole('button', { name: 'Change context' }));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'kubectl context' })));
   await chooseContext(user, context.name);
-  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('team-dev');
-  expect(document.querySelector('.host-chip .chip')).toBeNull();
+  // Another context is a cluster not yet in use: the page is Add a cluster again until Use this cluster succeeds,
+  // while the place already in use stays in use.
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Add a cluster');
+  expect(document.querySelector('.host-chip .chip')?.textContent).toBe('In use');
 });
 
 test.each([false, true])('Keep cluster restores visible focus even if details closed: %s', async close => {
@@ -89,7 +94,7 @@ test('failed removal preserves confirmation and named cluster', async () => {
 });
 
 test.each([false, true])('In use is independent of historical status, stale=%s', stale => {
-  render(<Places snapshot={{ places: [{ ...place, stale }, { ...place, key: 'other', context: 'unchecked', observedAt: null }], selectedKey: place.key, persistenceState: 'complete' }} unavailable={false} status={status} view={setupView(status)} place={{ kind: 'cluster', target }} onLocal={() => {}} onCluster={() => {}} />);
+  render(<Places snapshot={{ places: [{ ...place, stale }, { ...place, key: 'other', context: 'unchecked', observedAt: null }], selectedKey: place.key, persistenceState: 'complete', accessLost: false }} unavailable={false} status={status} view={setupView(status)} place={{ kind: 'cluster', target }} onLocal={() => {}} onCluster={() => {}} />);
   const selected = within(screen.getByRole('region', { name: 'team-dev' }));
   expect(selected.getByText('In use').className).toContain('chip');
   expect(selected.getByText(stale ? 'Stale' : 'Ready')).toBeTruthy();
@@ -105,6 +110,7 @@ test.each([false, true])('In use is independent of historical status, stale=%s',
 test('an unconnected remembered entry restores focus to its visible Remove action', async () => {
   native({ check: 'configuration', result: 'unknown' }, 'reconnect');
   localStorage.setItem('bridge.welcomeSeen.v1', '1'); const user = userEvent.setup(); render(<App />);
+  await openClusters(user);
   await user.click(await screen.findByRole('button', { name: 'Use' }));
   await screen.findByRole('alert');
   await user.click(screen.getByRole('button', { name: 'Remove' }));
@@ -127,6 +133,7 @@ test('removal confirmation hides maintenance and cancels when a new context is c
 test('connected kubeconfig errors retain visible removal and its focus return', async () => {
   native({ check: 'configuration', result: 'unknown' }, 'contexts');
   localStorage.setItem('bridge.welcomeSeen.v1', '1'); const user = userEvent.setup(); render(<App />);
+  await openClusters(user);
   await user.click(await screen.findByRole('button', { name: 'Use' }));
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   await user.click(await screen.findByRole('button', { name: 'Show details' }));
@@ -139,6 +146,7 @@ test('connected kubeconfig errors retain visible removal and its focus return', 
 
 test('returning to the same remembered entry republishes its known name', async () => {
   native(); localStorage.setItem('bridge.welcomeSeen.v1', '1'); const user = userEvent.setup(); render(<App />);
+  await openClusters(user);
   await user.click(await screen.findByRole('button', { name: 'Use' }));
   await screen.findByRole('button', { name: 'Use this cluster' });
   await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
@@ -150,6 +158,7 @@ test('returning to the same remembered entry republishes its known name', async 
 
 test('checked clusters say Use and populated Add stays secondary', async () => {
   native(); localStorage.setItem('bridge.welcomeSeen.v1', '1'); render(<App />);
+  await openClusters();
   expect(await screen.findByRole('button', { name: 'Use' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Add a cluster' }).className).toContain('button-secondary');
   expect(document.querySelector('.host-chip .chip')).toBeNull();
@@ -160,7 +169,8 @@ test.each([
   [{ check: 'clusterApi', result: 'permissionDenied' }, "Couldn't reach this cluster. Access was denied."],
 ])('discovery names network failures without replacing other recovery: %j', async (failure, copy) => {
   native(failure); const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'I already run Orka on a cluster' }));
+  await openClusters(user);
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   expect(screen.queryByText('Choose the context for the cluster you want to use.')).toBeNull();
   await chooseContext(user, context.name);
   expect(await within(await screen.findByRole('alert')).findByText(copy)).toBeTruthy();
@@ -170,8 +180,9 @@ test.each(['use', 'reconnect'])('network failure resolves the display context fo
   native({ check: 'clusterApi', result: 'connectionFailed' }, stage);
   if (stage === 'reconnect') localStorage.setItem('bridge.welcomeSeen.v1', '1');
   const user = userEvent.setup(); render(<App />);
+  await openClusters(user);
   if (stage === 'use') {
-    await user.click(await screen.findByRole('button', { name: 'I already run Orka on a cluster' }));
+    await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
     await chooseContext(user, context.name);
     await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   } else {

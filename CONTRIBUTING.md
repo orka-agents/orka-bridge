@@ -26,6 +26,76 @@ a VM; running an agent needs the local development image described below.
 Dependency lifecycle scripts are disabled in `app/.npmrc`. Do not enable them
 globally to install dependencies.
 
+## Preview the UI in a browser
+
+For quick UI work without a VM, start the dev server from `app/` with `npm run dev` and open `http://127.0.0.1:1420/?scenario=fresh`. In development builds only, a `scenario` query loads a scripted stand-in for the native commands (`app/src/preview/backend.ts`), so screens can be walked and captured in any browser. Scenarios are `fresh`, `ready`, `connected`, `restart`, `ghMissing`, `ghSignedOut`, `runFails` and `vmFailed`. Add `speed=20` to shorten waits, `clean` to hide the scenario toolbar and `page=Home`, `Overview`, `Designer` or `Clusters` to open that page. Like the app, the preview opens on Welcome while nothing is set up (`fresh`, `ghMissing`, `ghSignedOut`, `vmFailed`), on Clusters while setup is in progress (`restart`), and on Home once a workspace is ready (`ready`, `connected`, `runFails`, `clusterReady`). The preview is not native verification: it never runs a VM, an agent or a model.
+
+These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer (`wsReadyNoAi` on Clusters), `memoryLow`, `checkAtStart`, `noWorkspace`, the `first…` and the `copilot…` ones open on Welcome in the guided first run, and the rest open on Home; the steps say where the state appears, starting from Clusters unless they name another page.
+
+| Scenario | State | Where it appears |
+| --- | --- | --- |
+| `memoryLow` | Not enough installed memory | Get started → Set up |
+| `checkAtStart` | A build that checks virtualization and memory only when the workspace starts, as release builds do: the choice reads as normal and Continue stays on | Get started → Set up |
+| `wsStopped` | Workspace stopped | Opens there |
+| `wsCouldntStart` | Workspace couldn't start | Opens there |
+| `wsForced` | Workspace forcibly stopped | Opens there |
+| `wsExited` | The running workspace stopped unexpectedly; Restart workspace starts it again without quitting | Opens there |
+| `wsUpdate` | This version needs a new workspace | Opens there |
+| `wsRestore` | Interrupted update, restore offered | Opens there |
+| `wsRecovery` | Interrupted update, setup incomplete | Opens there |
+| `wsVersionUnsupported` | The workspace uses different cluster files; Start a fresh workspace sits beside Open the matching Bridge version | Opens there |
+| `wsStarting` | First setup, the workspace starting with its progress; Connect the AI checks the GitHub sign-in at once and waits with the account and model | Opens there |
+| `wsReadyNoAi` | A first setup left with the workspace ready and no AI: the setup card keeps What's inside and Start a fresh workspace… | Opens on Clusters; This computer → Connect the AI |
+| `wsReinstall` | Reopened after a first install that never booted: native retired it at launch and installs again from the start, as an ordinary first install | Opens there |
+| `firstDownloadFails` | First run: the workspace download fails partway, then Try again finishes it | Get started → Set up → Continue |
+| `firstCached` | First run on a computer that already has the workspace's download: Welcome and the choice say Already downloaded | Welcome, then Get started → Set up |
+| `firstTestFails` | First run: the first agent's test fails | Get started → Set up → Continue, then Connect the AI |
+| `firstTestStale` | First run: the first test's result is from an earlier edit, so it needs running again | Get started → Set up → Continue, then Connect the AI |
+| `firstTestUnknown` | First run: the first test's result can't be confirmed | Get started → Set up → Continue, then Connect the AI |
+| `copilotDenied` | First run: GitHub Copilot isn't available to the signed-in account, shown while the workspace downloads, with Use your own API key | Get started → Set up → Continue, then Connect the AI |
+| `copilotModelFallback` | First run: the account's models don't include the usual one, so another is preselected and named on the card | Get started → Set up → Continue, then Connect the AI |
+| `copilotNoModel` | First run: the account offers no model Bridge can use for agents | Get started → Set up → Continue, then Connect the AI |
+| `copilotUnreachable` | First run: this computer can't reach GitHub Copilot; Check again asks again | Get started → Set up → Continue, then Connect the AI |
+| `copilotChoiceGone` | First run: a saved model choice is no longer offered, so the card asks for another | Get started → Set up → Continue, wait for the workspace, then Connect the AI |
+| `keyRejected` | API key not accepted | This computer → Manage → Your own API key, enter a key starting `sk-`, Connect the AI |
+| `keyUnsupported` | The workspace's image can't use an API key: refused before anything is saved or sent | As `keyRejected` |
+| `aiMismatch` | Saved AI connection from an earlier setup | This computer → Manage → Connect the AI |
+| `aiStuck` | The workspace refuses to remove the previous AI connection: Check again once, then Start a fresh workspace, its confirmation, the replacement and the first-setup screen it lands on | This computer → Manage → Connect the AI, Check again, then Start a fresh workspace twice |
+| `aiUnknown` | The workspace may keep an AI connection Bridge can't name (an earlier connect never answered): Start a fresh workspace is offered at once | This computer → Manage → Connect the AI |
+| `freshStopUnconfirmed` | Start a fresh workspace refused because the workspace's stop can't be confirmed | This computer → Manage → What's inside → Start a fresh workspace…, then Start a fresh workspace |
+| `freshReclaimable` | Start a fresh workspace can't delete the previous workspace, and names its folder as space to reclaim | As `freshStopUnconfirmed`, then wait for the deletion |
+| `freshDownload` | The confirmation says first install downloads the workspace again, and how much | As `freshStopUnconfirmed`, up to the confirmation |
+| `freshInterrupted` | A fresh workspace set aside but not finished: Finish starting a fresh workspace, the workspace kept stopped until then | Opens there |
+| `freshConflict` | Folders Bridge didn't expect while finishing a fresh workspace, named with what to do | Opens there |
+| `freshBlocked` | After a workspace update: the stuck AI card keeps Check again and says why a fresh workspace isn't available | This computer → Manage → Connect the AI, then Check again |
+| `clusterDenied` | Cluster access denied | `team-dev` → Use this cluster |
+| `clusterUnreachable` | Can't reach the cluster | `team-dev` |
+| `clusterContexts` | kubectl contexts with one Orka installation (`team-dev`), two (`team-shared`), none (`kind-scratch`) and one that needs a ServiceAccount (`team-restricted`) | Add a cluster → kubectl context, then choose one; `team-restricted` asks for a ServiceAccount after Use this cluster |
+| `sendBlocked` | Send blocked by destination checks | `team-dev` → Use this cluster → Open your agent |
+| `sendRunning` | Send running on the cluster (until cancelled) | As `sendBlocked`, then Send and run tests |
+| `sendFailed` | Send finished with a failing test, recorded under `web-reader` in Overview | As `sendRunning` |
+| `sendPassed` | Send finished with every test passing; Overview then lists `team-dev` under `web-reader`, as a recorded Send does | As `sendRunning` |
+| `sendLocalFailed` | Local test failed, cluster ready to send | As `sendBlocked`, then Run tests, then Send and run tests for the warning |
+| `testIncomplete` | First test is incomplete | Designer, or add `page=Designer` |
+| `runStale` | Local result from before your last edit | Designer, or add `page=Designer` |
+| `overviewEmpty` | No saved agents yet | Overview, or add `page=Overview` |
+| `navThinking` | The Navigator thinking about an answer, with Stop | Opens there |
+| `navReplyFailed` | The Navigator couldn't answer | Opens there |
+| `navNoModel` | No model connected: the message box is disabled | Opens there (the same as `ready`) |
+| `navExplain` | The Navigator explains Orka with a card of terms | Opens there |
+| `navTask` | A proposed task card; Edit, then Create task runs it to Succeeded; Stop task while it runs cancels it | Opens there |
+| `navTaskFails` | As `navTask`, but the task fails | Opens there, then Create task |
+| `navAgent` | A proposed agent card; Create agent writes the file | Opens there |
+| `noWorkspace` | First run on a build without the local cluster, as on Linux: On this computer is unavailable and the cluster is chosen; every page names the cluster route | Get started, then Details on This computer |
+| `noWorkspaceChosen` | The same build reopened after this computer was chosen earlier, with `team-dev` remembered: Bridge opens on Home, not on a setup that can't move | Opens on Home; Clusters → `team-dev` → Use, then Use this cluster |
+| `navTooOld` | The workspace on this computer is too old for the Navigator: the message box and starters are disabled, with Open Designer (and Switch to a cluster connected in this run) | Opens there |
+
+The Navigator answers in every scenario with the AI connected, with scripted replies chosen by the question: a link or checksum gets a task card, "agent" an agent card, "new to Orka" an explanation, and a repo, monitor or charter question an explanation with no card, as Bridge can't set those up yet. It runs on the selected place: in `clusterReady`, choose `team-dev` in the Orka switcher and the Navigator and Try a task run there; in `clusterUnreachable` it shows the can't-reach card.
+
+In Try a task, `web-reader` fetches the page a task names, by a URL or a bare host such as `dl.k8s.io`, so its result shows Used a tool.
+
+In every scenario a local test run can be stopped while it runs, and a finished run is recorded for Overview with its time, as native local results are. A run keeps the files it started from, so editing the agent afterwards shows its result as not run since your edit.
+
 ## Run with a local VM
 
 Local VM development needs a debug build on Windows x64 or Apple silicon Mac.
@@ -85,7 +155,7 @@ See [the helper build instructions](app/src-tauri/native/macos/README.md).
 Intel Macs can build the app but cannot run its local VM. Both pinned images
 support model Connect, the workspace catalog and the example agent.
 
-In Clusters, dismiss the one-time welcome with Get started, then press Set up
+In Clusters, dismiss the welcome with Get started (it returns at each launch until a workspace or cluster is set up), then press Set up
 on This computer's place and Continue after its computer checks. On Windows and
 Apple-silicon Mac, the running VM unlocks Use GitHub sign-in, which needs GitHub CLI already installed and signed
 in to github.com. Bridge does not install it or open browser sign-in. Starting
@@ -164,6 +234,9 @@ may be blocked by Gatekeeper.
 - `runtime/`: VM protocol, guest endpoint and Windows QEMU build.
 - `images/`: Guest image build, packaging and validation.
 - `docs/`: Roadmap and shared-cluster design.
+- `app/src/home/navigator/`: The Navigator's instructions and the digest of Bridge and Orka docs it answers from.
+  Regenerate the digest with `node scripts/navigator-digest.mjs --orka <path to an orka checkout>` after either set of
+  docs changes; `--check` reports a stale digest. `size.test.ts` keeps both inside one Agent create request.
 - `.github/workflows/checks.yml`: App checks, artifacts and native smoke walk.
 
 Keep renderer input separate from native credentials and VM ownership. Preserve

@@ -1,5 +1,6 @@
 import type { Status } from '../components/DesignSystem';
 import { sameSource } from '../designer/agent-api';
+import { unavailableCopy } from '../setup/availability';
 import type { LiveAgents, Observation, Place, Places, SavedFile, SavedFiles } from './api';
 
 export type CardAction = { id: 'open' | 'chat' | 'run' };
@@ -7,16 +8,17 @@ export type Detail = { label: string; value: string; copy?: boolean };
 export type Card = {
   key: string; groupKey: string; agentKey: string; title: string; place: string; subject: string;
   status?: Status; pill?: string; testedAt?: number; description: string;
-  meta: { tests?: string };
+  // `agent`: the Agent's name on the cluster, which tells apart two Sends of one file to the same place.
+  meta: { tests?: string; agent?: string };
   documentId?: string; remote: boolean; actions: CardAction[]; details: Detail[];
 };
-export type Note = { text: string; seen?: number; check?: boolean; clusters?: boolean };
+export type Note = { text: string; seen?: number; check?: boolean; clusters?: boolean; /** Says only that the list is empty, which the empty Overview already says. */ empty?: boolean };
 export type Group = { key: string; title: string; sub?: string; description?: string; count?: number; notes: Note[]; cards: Card[] };
 export type CompleteAgents = LiveAgents & { state: 'complete'; installation: string; observedAt: number };
 export type Inputs = {
   files?: SavedFiles; filesStale: boolean; finals: Map<string, Observation>;
   live?: LiveAgents; observed?: CompleteAgents; pending: boolean; activeDocumentId?: string;
-  places?: Places; placeError: boolean; chat: boolean; run: boolean; workspaceNote?: string;
+  places?: Places; placeError: boolean; chat: boolean; run: boolean; workspaceNote?: string; localUnavailable?: boolean;
 };
 export type Built = ReturnType<typeof buildCards>;
 
@@ -113,9 +115,9 @@ export function buildCards(i: Inputs) {
   // installation + namespace + UID in the recorded list (or the live observation).
   const owned = new Set([...(files?.runAgents ?? []).map(a => exact(a.installation, a.namespace, a.agentUid)),
     ...(i.observed?.observation ? [exact(i.observed.installation, i.observed.observation.namespace, i.observed.observation.agentUid)] : [])]);
-  // Chat's generated Agents are implementation details, not the creator's files. This is display-only;
-  // it must never be used to claim ownership or authorize resource cleanup.
-  const strays: Card[] = !ownershipKnown || !i.observed ? [] : i.observed.agents.filter(a => !/^bridge-chat-agent-[0-9a-f]{32}$/.test(a.name) && !owned.has(exact(i.observed!.installation, a.namespace, a.uid))).map(a => ({
+  // Try a task's and the Navigator's generated Agents are implementation details, not the creator's files. This is
+  // display-only; it must never be used to claim ownership or authorize resource cleanup.
+  const strays: Card[] = !ownershipKnown || !i.observed ? [] : i.observed.agents.filter(a => !/^bridge-(?:chat|nav)-agent-[0-9a-f]{32}$/.test(a.name) && !owned.has(exact(i.observed!.installation, a.namespace, a.uid))).map(a => ({
     key: `local/${exact(a.namespace, a.uid)}`, groupKey: 'local', agentKey: `agent/local/${a.namespace}/${a.uid}`, title: a.name, place: 'This computer', subject: a.name,
     description: 'Running on this computer, not saved here', meta: {}, remote: false, actions: [],
     details: [{ label: 'Name on the cluster', value: a.name }, { label: 'Namespace', value: a.namespace }, { label: 'Agent ID', value: a.uid, copy: true }, { label: 'Last seen', value: absolute(i.observed!.observedAt) }],
@@ -133,7 +135,7 @@ export function buildCards(i: Inputs) {
     return {
       key: `${place.key}/${agent.uid}`, groupKey: place.key, agentKey: file?.documentId ?? `agent/${place.key}/${agent.uid}`, title: file ? fileTitle(file) : agent.name, place: name, subject: file?.name ?? agent.name,
       ...s, testedAt: record ? record.time * 1000 : undefined, description: file ? file.summary?.description || 'No description in the agent file.' : `Running on ${name}, not saved here`,
-      meta: { tests: record && place.stale ? `Last Send ${record.verdict}` : record?.report ? `${record.report.passed} of ${record.report.total} passed${earlier ? ', before your edit' : ''}` : undefined },
+      meta: { tests: record && place.stale ? `Last Send ${record.verdict}` : record?.report ? `${record.report.passed} of ${record.report.total} passed${earlier ? ', before your edit' : ''}` : undefined, agent: agent.name },
       documentId: file?.state === 'readable' ? file.documentId : undefined, remote: true,
       actions: file?.state === 'readable' ? [{ id: 'open' },
         ...(!place.stale && !i.filesStale && !file.draft && i.run ? [{ id: 'run' as const }] : [])] : [], details,
@@ -153,10 +155,11 @@ export function clusterGroups(i: Inputs, built: Built): Group[] {
   if (state === 'reading') notes.push({ text: 'Reading agents…' });
   if (state === 'updating') notes.push({ text: 'Updating when the test finishes.', seen });
   if (state === 'busy') notes.push({ text: 'The workspace is busy right now.', seen, check: true });
-  if (state === 'stopped') notes.push({ text: 'The workspace is stopped. Start it to test or chat.', clusters: true });
+  if (i.localUnavailable) notes.push({ text: unavailableCopy.detail, clusters: true });
+  else if (state === 'stopped') notes.push({ text: 'The workspace is stopped. Start it to run tests or try a task.', clusters: true });
   if (state === 'read') notes.push({ text: "Couldn't check just now.", seen, check: true });
   if (i.files?.state === 'complete' && !history && !i.filesStale) notes.push({ text: "Test history is unavailable, so other agents on this cluster aren't shown and results are unknown.", check: true });
-  if (history && state === 'ok' && !local.length && !strays.length) notes.push({ text: 'No agents on this computer yet.' });
+  if (history && state === 'ok' && !local.length && !strays.length) notes.push({ text: 'No agents on this computer yet.', empty: true });
   const groups: Group[] = [{ key: 'local', title: 'This computer', notes, cards: [...local, ...strays], count: local.length + strays.length || undefined }];
   (i.places?.places ?? []).forEach(place => {
     const cards = built.remoteCards.filter(c => c.groupKey === place.key);
@@ -186,6 +189,12 @@ export function agentRows(cards: Card[], place = 'all', name = ''): AgentRow[] {
 export function summaryLabel(cards: { status?: Status }[], partial: boolean) {
   const failed = cards.filter(c => c.status === 'failed').length;
   return `${cards.length} ${cards.length === 1 ? 'agent' : 'agents'}${partial ? ' shown' : ''}${failed ? `, ${failed} failed` : ''}`;
+}
+// The page and the sidebar count the same rows; a filter says how many of them it leaves.
+export function filteredLabel(shown: { status?: Status }[], all: { status?: Status }[], partial: boolean) {
+  if (shown.length === all.length) return summaryLabel(all, partial);
+  const failed = shown.filter(c => c.status === 'failed').length;
+  return `${shown.length} of ${all.length} ${all.length === 1 ? 'agent' : 'agents'}${partial ? ' shown' : ''}${failed ? `, ${failed} failed` : ''}`;
 }
 // Empty means nothing could be hiding: no files, no remembered clusters, no Agents, every read succeeded. A stopped or
 // image-limited workspace still counts as empty; a failed read, a busy list or hidden unowned Agents do not.

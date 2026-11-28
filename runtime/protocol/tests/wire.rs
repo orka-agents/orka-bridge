@@ -11,6 +11,7 @@ fn hello(stage: Stage, accepted: Option<Uuid>, guest: u128) -> Frame {
         guest_nonce: nonce(guest),
         accepted_boot_nonce: accepted,
         run_cleanup: false,
+        navigator_chat: false,
     })
 }
 fn parse(decoder: &mut Decoder, bytes: &[u8]) -> Result<Option<Frame>, ProtocolError> {

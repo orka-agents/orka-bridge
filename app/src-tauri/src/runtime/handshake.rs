@@ -92,5 +92,6 @@ fn exchange(
         nonce,
         serving_hello.as_ref().ok_or(RuntimeError::Unavailable)?,
     )
+    .map(|client| client.with_guest_build(worker.guest_build()))
     .map_err(Into::into)
 }

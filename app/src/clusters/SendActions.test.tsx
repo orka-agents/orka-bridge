@@ -21,16 +21,22 @@ function native(view: unknown = result, preflight: unknown = check) {
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 const card = () => screen.getByRole('region', { name: 'Send and cluster tests' });
 function actionRow() { return card().querySelector<HTMLElement>('.workspace-step-actions')!; }
-async function openDetails() { await userEvent.click(within(card()).getByText('Resources and file hashes')); }
+async function openDetails() { await userEvent.click(within(card()).getByText('How Send works, checks and file hashes')); }
+// After a result the destination checks fold away, so readiness shows as an enabled rerun.
+async function rerunReady() { await waitFor(() => expect(screen.getByRole('button', { name: 'Run cluster tests again' }).matches(':disabled')).toBe(false)); }
 
 test.each(['failed', 'cancelled', 'unknown', 'passed'] as const)('%s result leads with the useful next action and only one secondary', async verdict => {
   const seen = vi.fn(); native({ ...result, report: { verdict, cases: [{ ...row, verdict, ...(verdict === 'cancelled' ? { phase: 'Cancelled', assertions: [] } : {}) }] } });
   render(<Send place={place} source={source} stale={false} onSeeInOverview={seen} />);
-  await screen.findByText(/Ready to send: \d+ checks? passed/);
+  await rerunReady();
+  // The checks fold into Details once a result is shown.
+  expect(screen.getByText(/Ready to send: \d+ checks? passed/).closest('.card-details')).toBeTruthy();
   const buttons = within(actionRow()).getAllByRole('button');
-  expect(buttons.map(b => b.textContent)).toEqual(verdict === 'passed' ? ['See in Overview', 'Run cluster tests again'] : ['Run cluster tests again', 'See in Overview']);
-  expect(buttons[0].className).toContain('button-primary');
-  expect(buttons[1].className).toContain('button-secondary');
+  expect(buttons.map(b => b.textContent)).toEqual(['Run cluster tests again', 'See in Overview']);
+  // A passing result has nothing to fix: running again and Overview are two equal, secondary choices.
+  expect(buttons[0].className).toContain(verdict === 'passed' ? 'button-secondary' : 'button-primary');
+  // A cancelled result offers Overview as a quiet link, as the cancelled board shows.
+  expect(buttons[1].className).toContain(verdict === 'cancelled' ? 'button-quiet' : 'button-secondary');
   expect(screen.getByRole('button', { name: 'Send as a separate agent' }).closest('details')?.open).toBe(false);
   await openDetails();
   expect(screen.getByRole('button', { name: 'Send as a separate agent' })).toBeTruthy();
@@ -74,14 +80,19 @@ test('a file mismatch makes Reload the primary and preserves its handler', async
   await userEvent.click(button); expect(reload).toHaveBeenCalledOnce();
 });
 
-test('an earlier target is labelled and preflight failure offers a check, not Overview as primary', async () => {
+test('an earlier target is labelled and preflight failure keeps the disabled Send primary beside Check again, not Overview', async () => {
   native({ ...result, targetName: 'earlier-team', targetId: '00000000-0000-4000-8000-000000000005' }, { ...check, canSend: false, action: 'blocked' });
   render(<Send place={place} source={source} stale={false} onSeeInOverview={() => {}} />);
   const button = await screen.findByRole('button', { name: 'Check again' });
-  expect(button.className).toContain('button-primary');
-  expect(within(actionRow()).getAllByRole('button')).toHaveLength(2);
+  expect(button.className).toContain('button-secondary');
+  const buttons = within(actionRow()).getAllByRole('button');
+  expect(buttons).toHaveLength(2);
+  expect(buttons[0].className).toContain('button-primary');
+  expect(buttons[0].matches(':disabled')).toBe(true);
   expect(card().querySelector('.long-card-summary')?.textContent).toContain('Earlier result on earlier-team');
   expect(within(card()).getByText('Destination').parentElement?.textContent).toContain('team-dev');
+  // Another destination's result is not an edit of this one.
+  expect(screen.queryByText('Not run since your edit')).toBeNull();
 });
 
 test('returning to an unchanged destination uses its preflight rerun wording, not the retained result target', async () => {
@@ -106,14 +117,26 @@ test('status recovery keeps its prerequisite cluster selection in Details when n
 
 test('Send copy is concise and friendly while recorded raw model/provider remain in Details', async () => {
   native(); render(<Send place={place} source={source} stale={false} />);
-  await screen.findByText(/Ready to send: \d+ checks? passed/);
-  expect(within(card()).getByRole('region', { name: 'What you send' }).textContent).toContain('GPT-5.6 Terra, checked when tests run');
+  await rerunReady();
+  const what = card().querySelector<HTMLElement>('.send-what')!;
+  expect(what.textContent).toContain('GPT-5.6 Terra, checked when tests run');
   expect(screen.queryByText('Team clusters are early in this preview.')).toBeNull();
   const separateHelp = screen.getByText('Sends as a new agent; the old one keeps running.');
   expect(separateHelp.closest('details')?.open).toBe(false);
-  expect(within(card()).getByRole('region', { name: 'What you send' }).contains(separateHelp)).toBe(false);
+  expect(what.contains(separateHelp)).toBe(false);
   expect(screen.queryByText('Using the same agent without changing its configuration.')).toBeNull();
   await openDetails();
   expect(within(card()).getByText('Model sent').parentElement?.textContent).toContain('gpt-5.6-terra');
   expect(within(card()).getByText('team-model')).toBeTruthy();
+});
+test('Details groups how Send works, then the checks, then resources and hashes, with the AI connection as a row like its neighbours', async () => {
+  native();
+  render(<Send place={place} source={source} stale={false} onSeeInOverview={vi.fn()} />);
+  await rerunReady(); await openDetails();
+  const details = within(card()).getByText('How Send works, checks and file hashes').closest('details')!;
+  expect([...details.querySelectorAll('.section-label')].map(label => label.textContent)).toEqual(['How Send works', 'Resources and file hashes']);
+  const rows = [...details.querySelectorAll('dl.cluster-details dt')].map(term => term.textContent);
+  expect(rows).toEqual(['Source', 'This computer', 'Destination', 'AI connection', 'Result destination', 'Model sent']);
+  expect(details.querySelectorAll('dl.cluster-details')).toHaveLength(1);
+  expect(within(details).queryByText(/^AI connection:/)).toBeNull();
 });

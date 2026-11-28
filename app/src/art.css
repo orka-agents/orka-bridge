@@ -1,0 +1,59 @@
+/* Decorative artwork. It sits under the page's content and never takes clicks. On the sidebar pages it stays out of
+   the page's top-left corner: native walks sample the paper there. Chart and pod are drawn in the ink colour of each
+   theme; the orca and sea have their own dark drawings. */
+.page-content { container-type: size; isolation: isolate; }
+
+/* Chart lines, or the pod, are a background of the flat page itself: they fill it from the sidebar's hairline to the
+   window's edge, stay put while the page scrolls and can never add a scrollbar. The files are baked at the boards'
+   strength (chart 16% ink, 20% in dark; pod 10% and 14%); theme.test.ts measures every page text colour over their
+   darkest pixel. Paper fades in over the top-left corner, where native walks sample it. */
+.page-content:is([data-page="Home"], [data-page="Overview"], [data-page="Designer"], [data-page="Clusters"]) {
+  --art-paper: radial-gradient(circle at 0 0, var(--color-page) 40px, transparent 80px);
+  --art-chart: url('./assets/art/chart-faint.png');
+  --art-pod: url('./assets/art/pod-faint.png');
+  background: var(--art-paper), var(--art-chart) 50% 50% / cover no-repeat, var(--color-page);
+}
+/* An empty or filtered-out Overview and the Clusters list show the pod in the bottom right instead. */
+.page-content:is([data-page="Overview"]:has(.overview-empty, .overview-list > .empty-state), [data-page="Clusters"]:has(.places-list):not(.guided *)) {
+  background: var(--art-paper), var(--art-pod) 100% 100% / min(600px, 64%) auto no-repeat, var(--color-page);
+}
+
+/* The breaching orca above the Welcome and Home headlines. */
+.art-orca { width: 320px; max-width: 100%; aspect-ratio: 8 / 5; pointer-events: none; background: url('./assets/art/orca.png') 50% 100% / contain no-repeat; }
+.home .art-orca { width: 240px; }
+
+/* The guided first run draws the chart at full strength from under the title bar to the window's bottom, and ends on
+   the sea along the bottom edge. Text that can sit on the chart keeps 4.5:1 over its darkest line: cards have
+   solid fills, and Welcome clears the chart behind its headline as the board does. A soft patch of paper stays in the page's top-left
+   corner, where native walks sample the paper. The sea is a band of fixed height (taller for Welcome, then the
+   choice, then the rest) whose drawing keeps its proportions and repeats across the window, so it neither stretches
+   nor grows on wide windows. The file holds the drawing and its mirror image, so the repeats join without a seam;
+   the unmirrored drawing is centred. */
+.app-shell.guided > .page-content {
+  --art-chart-guided: url('./assets/art/chart-firstrun.png');
+  --art-sea: url('./assets/art/sea-band.png');
+  --art-paper-corner: radial-gradient(circle at 0 0, var(--color-page) 32px, transparent 64px);
+  --sea-height: clamp(40px, 6.8vh, 96px);
+  background: var(--art-paper-corner), var(--art-chart-guided) 50% 50% / cover no-repeat, var(--color-page);
+}
+.app-shell.guided > .page-content:has(.welcome-screen) {
+  --sea-height: clamp(64px, 13.5vh, 180px);
+  background: var(--art-paper-corner), radial-gradient(ellipse 34% 30% at 50% 40%, var(--color-page) 70%, transparent), var(--art-chart-guided) 50% 50% / cover no-repeat, var(--color-page);
+}
+.app-shell.guided > .page-content:has(div:not([hidden]) > .local-preflight) { --sea-height: clamp(52px, 10vh, 136px); }
+.app-shell.guided > .page-content::after { content: ''; flex: none; height: var(--sea-height); margin-inline: calc(-1 * var(--page-pad)); pointer-events: none; background: var(--art-sea) calc(50% + var(--sea-height) * 1086 / 207) 100% / auto 100% repeat-x; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .art-orca { background-image: url('./assets/art/orca-dark.png'); }
+  :root:not([data-theme="light"]) .page-content { --art-chart: url('./assets/art/chart-faint-dark.png'); --art-pod: url('./assets/art/pod-faint-dark.png'); }
+  :root:not([data-theme="light"]) .app-shell.guided > .page-content { --art-chart-guided: url('./assets/art/chart-firstrun-dark.png'); --art-sea: url('./assets/art/sea-band-dark.png'); }
+}
+:root[data-theme="dark"] .art-orca { background-image: url('./assets/art/orca-dark.png'); }
+:root[data-theme="dark"] .page-content { --art-chart: url('./assets/art/chart-faint-dark.png'); --art-pod: url('./assets/art/pod-faint-dark.png'); }
+:root[data-theme="dark"] .app-shell.guided > .page-content { --art-chart-guided: url('./assets/art/chart-firstrun-dark.png'); --art-sea: url('./assets/art/sea-band-dark.png'); }
+
+/* Narrow windows keep the chart and the orca, smaller. */
+@media (max-width: 820px) {
+  .page-content:is([data-page="Overview"]:has(.overview-empty, .overview-list > .empty-state), [data-page="Clusters"]:has(.places-list):not(.guided *)) { background: var(--color-page); }
+  .art-orca, .home .art-orca { width: 160px; }
+}

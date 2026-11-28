@@ -41,6 +41,10 @@ impl WindowsSession {
     pub fn client_mut(&mut self) -> Result<&mut VmClient, RuntimeError> {
         self.client.as_mut().ok_or(RuntimeError::Closed)
     }
+    /// QEMU exited, or the guest channel failed: either way this VM no longer serves.
+    pub fn lost(&self) -> bool {
+        self.owner.exited() || self.client.as_ref().is_some_and(VmClient::closed)
+    }
     pub fn shutdown(&mut self) -> Result<(), RuntimeError> {
         if self.client.is_none() {
             self.worker.stop()?;
@@ -49,6 +53,15 @@ impl WindowsSession {
             } else {
                 Err(RuntimeError::Closed)
             };
+        }
+        if self.lost() {
+            // QEMU already exited, or the lost guest channel already aborted it: no guest can
+            // acknowledge and nothing graceful is left to arm. The backend stop still observes
+            // the whole Job ending before custody is released; a stop that went this way was
+            // never clean.
+            self.client = None;
+            self.worker.stop()?;
+            return Err(RuntimeError::ShutdownForced);
         }
         // Begin the same original budget before a guest can acknowledge and
         // exit. GuestStream clamps its native I/O to this existing deadline.

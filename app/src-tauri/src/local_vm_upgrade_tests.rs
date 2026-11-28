@@ -188,6 +188,7 @@ impl LocalFactory for DestinationFactory {
                     guest_nonce: Uuid::new_v4(),
                     accepted_boot_nonce: None,
                     run_cleanup: false,
+                    navigator_chat: false,
                 },
                 1,
             )?;

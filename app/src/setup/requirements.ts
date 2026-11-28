@@ -24,11 +24,17 @@ export function formatRequirementGB(bytes: number) {
 }
 
 // A needed amount rounds up, so meeting the shown figure always meets the check.
-function formatNeededGB(bytes: number) {
+export function formatNeededGB(bytes: number) {
   return formatRequirementGB(Math.ceil(bytes / 1e8) * 1e8);
 }
 
-export function setupTime(requirements: WorkspaceRequirements | null | undefined) {
+// `downloaded`: native found the workspace's download already on this computer, so nothing needs downloading.
+export function setupTime(requirements: WorkspaceRequirements | null | undefined, downloaded = false) {
+  if (downloaded) {
+    if (!requirements || requirements.readySeconds === null) return 'Already downloaded';
+    const minutes = Math.max(1, Math.round(requirements.readySeconds / 60));
+    return `Already downloaded, then about ${minutes} minute${minutes === 1 ? '' : 's'} to start`;
+  }
   if (!requirements || requirements.downloadBytes === null) return 'Mostly a download';
   const download = `Mostly a ${formatRequirementGB(requirements.downloadBytes)} download`;
   if (requirements.readySeconds === null) return download;
@@ -37,8 +43,8 @@ export function setupTime(requirements: WorkspaceRequirements | null | undefined
 }
 
 // The card answers "do I have room?" with one disk figure; diskDetail keeps the rest.
-export function setupNeeds(requirements: WorkspaceRequirements) {
-  const download = requirements.downloadBytes === null ? '' : `Downloads about ${formatRequirementGB(requirements.downloadBytes)}. `;
+export function setupNeeds(requirements: WorkspaceRequirements, downloaded = false) {
+  const download = downloaded ? 'Already downloaded. ' : requirements.downloadBytes === null ? '' : `Downloads about ${formatRequirementGB(requirements.downloadBytes)}. `;
   const memory = `${formatRequirementGB(requirements.memoryBytes)} of memory`;
   const needs = requirements.freeDiskBytes === null
     ? `Needs virtualization and ${memory}.`

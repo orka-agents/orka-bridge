@@ -55,7 +55,8 @@ test('remote configured defaults keep their model label and do not claim first-p
   const changed = vi.fn();
   const rows = Array.from({ length: 1000 }, (_, i) => ({ id: i === 0 ? 'listed' : `m-${i}` }));
   render(<AgentParts source={source} readOnly={false} remote catalog={{ ...catalog, defaultModel: 'listed', models: { state: 'ready', items: rows } }} onChange={changed} />);
-  expect(screen.getByRole('option', { name: 'listed' })).toBeTruthy();
+  // The cluster's configured default says it is the AI connection's, not a model choice of the workspace.
+  expect(screen.getByRole('option', { name: 'AI connection default: listed' })).toBeTruthy();
   expect(screen.queryByRole('option', { name: /Workspace default/ })).toBeNull();
   expect(screen.queryByText(/more may be available/)).toBeNull();
   expect(changed).not.toHaveBeenCalled();
@@ -98,7 +99,7 @@ test.each(['builtin', 'tool'] as const)('approval %s is explained but cannot be 
   await user.type(screen.getByRole('searchbox'), 'request_approval');
   const option = screen.getByRole('button', { name: /request_approval/ });
   expect(option.matches(':disabled')).toBe(true);
-  expect(screen.getByText('Approval tools need autonomous coordination, which Bridge does not support for local tests or Chat.')).toBeTruthy();
+  expect(screen.getByText('Approval tools need autonomous coordination, which Bridge does not support for local tests or Try a task.')).toBeTruthy();
   await user.click(option);
   expect(changed).not.toHaveBeenCalled();
 });
@@ -107,7 +108,7 @@ test('a saved approval declaration stays visible and unchanged until explicitly 
   const saved = source.replace('tools: []', 'tools: [{kind: builtin, name: request_approval}]');
   render(<AgentParts source={saved} readOnly={false} onChange={changed} />);
   expect(screen.getByText('Ask for approval')).toBeTruthy();
-  expect(screen.getByText(/Remove all request_approval and reply_in_conversation tools before running local tests or Chat/)).toBeTruthy();
+  expect(screen.getByText(/Remove all request_approval and reply_in_conversation tools before running local tests or Try a task/)).toBeTruthy();
   expect(changed).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Remove Ask for approval' }));
   expect(readForm(changed.mock.calls[0][0]).tools).toEqual([]);
@@ -187,7 +188,8 @@ test('pending soul edits survive File view and block running until the atomic up
   await waitFor(() => expect(run.matches(':disabled')).toBe(false));
   await user.click(screen.getByText('More settings'));
   fireEvent.change(screen.getByRole('textbox', { name: 'Personality' }), { target: { value: 'New text' } });
-  expect(run.matches(':disabled')).toBe(true);
+  // After the edit, Run tests follows the "changed since this run" line.
+  expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'File' }));
   await act(async () => finish(new ArrayBuffer(32)));
   await waitFor(() => expect(saves.length).toBe(1));
@@ -240,7 +242,7 @@ test('workspace loss invalidates catalog and waits for startup without freezing 
   expect(document.querySelector('.instructions-editor')?.textContent).toBe('Role only.\n');
   expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).disabled).toBe(false);
   expect((screen.getByRole('button', { name: 'Run tests' }) as HTMLButtonElement).disabled).toBe(true);
-  await user.click(screen.getByRole('button', { name: 'Chat' }));
+  await user.click(screen.getByRole('button', { name: 'Try a task' }));
   expect(screen.getAllByText('Waiting for the workspace to start.').length).toBeGreaterThan(0);
 });
 test('workspace generation invalidates a late catalog without losing the owned draft', async () => {

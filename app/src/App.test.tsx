@@ -105,9 +105,22 @@ test('navigation_order', () => {
   render(<App />);
   const nav = screen.getByRole('navigation', { name: 'Main' });
   expect(within(nav).getAllByRole('button').map(button => button.getAttribute('aria-label')))
-    .toEqual(['Overview', 'Designer', 'Clusters']);
+    .toEqual(['Home', 'Overview', 'Designer', 'Clusters']);
   expect(screen.getByRole('img', { name: 'Orka' })).toBeTruthy();
   expect(screen.getByText('Bridge')).toBeTruthy();
+});
+
+test('sidebar groups agents under Build and places under Run, with the status card below', () => {
+  render(<App />);
+  const nav = screen.getByRole('navigation', { name: 'Main' });
+  const groups = within(nav).getAllByRole('group');
+  expect(groups.map(group => group.getAttribute('aria-labelledby') && document.getElementById(group.getAttribute('aria-labelledby')!)?.textContent))
+    .toEqual(['Build', 'Run']);
+  expect(within(groups[0]).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual(['Overview', 'Designer']);
+  expect(within(groups[1]).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual(['Clusters']);
+  // The place and its state live in the status card, not in the title bar.
+  expect(within(screen.getByRole('banner')).queryByText('Status unavailable')).toBeNull();
+  expect(screen.getByRole('contentinfo').querySelector('.host-chip')).not.toBeNull();
 });
 
 test('selected_heading', async () => {
@@ -126,6 +139,13 @@ test('selected_heading', async () => {
 test('keyboard_activation', async () => {
   const user = userEvent.setup();
   render(<App />);
+  // The title bar comes first in reading order.
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Collapse sidebar' }));
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Theme: System. Click for Light' }));
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Home' }));
   await user.tab();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Overview' }));
   await user.tab();
@@ -172,8 +192,8 @@ test('Overview reads saved documents without opening, setup or VM commands; Open
   expect(calls.filter(c => c === 'agent_open')).toHaveLength(1);
 });
 
-test('Overview fitting Chat routes to the saved document on This computer', async () => {
-  const action = 'Chat';
+test('Overview fitting Try a task routes to the saved document on This computer', async () => {
+  const action = 'Try a task';
   vi.stubGlobal('isTauri', true);
   const id = '12345678-1234-4234-8234-123456789abc';
   const installation = '22345678-1234-4234-8234-123456789abc';
@@ -199,9 +219,9 @@ test('Overview fitting Chat routes to the saved document on This computer', asyn
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   const row = await screen.findByRole('article', { name: 'reader' });
   await user.click(within(row).getByRole('button', { name: 'Show places for reader' }));
-  await user.click(within(row).getByRole('button', { name: `${action} reader` }));
+  await user.click(within(row).getByRole('button', { name: 'New task with reader' }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
-  if (action === 'Chat') await waitFor(() => expect(screen.getByRole('button', { name: 'Chat', pressed: true })).toBeTruthy());
+  if (action === 'Try a task') await waitFor(() => expect(screen.getByRole('button', { name: 'Try a task', pressed: true })).toBeTruthy());
   else await waitFor(() => expect(calls.filter(call => call.command === 'agent_run')).toEqual([{ command: 'agent_run', args: { documentId: id } }]));
   expect(calls.some(call => call.command === 'send_start')).toBe(false);
 });
@@ -291,14 +311,17 @@ test.each([
   ['ready', 'localVm', 'AI not connected', 'AI not connected'],
   ['failed', 'localVm', "Your workspace didn't start. Your agents are safe.", 'Setup failed'],
   ['closed', 'localVm', 'Workspace stopped', 'Workspace stopped'],
-  ['notIntegrated', null, 'Workspace unavailable', 'Workspace unavailable'],
+  ['notIntegrated', null, 'Not available on this build', 'Not available on this build'],
+  // An earlier choice of this computer chooses nothing on a build that can't run it.
+  ['notIntegrated', 'localVm', 'Not available on this build', 'Not available on this build'],
 ])('chrome reflects %s without invented readiness', async (localVm, selected, detail, tabLine) => {
   mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? { selected, localVm, model: 'locked' } : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   vi.stubGlobal('isTauri', true);
   render(<App />);
   const footer = screen.getByRole('contentinfo');
   expect(await within(footer).findByText(detail)).toBeTruthy();
-  expect(within(screen.getByRole('navigation')).getByText(tabLine)).toBeTruthy();
+  // The tab keeps its checking line until the launch page is decided, a moment after the footer settles.
+  expect(await within(screen.getByRole('navigation')).findByText(tabLine)).toBeTruthy();
   expect(within(footer).queryByText(/saved|GPT|tests passing|\d+ of \d+ passed/i)).toBeNull();
 });
 
@@ -307,9 +330,10 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
   expect(screen.queryByRole('button', { name: /Search/ })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(screen.getByRole('button', { name: 'New agent' }).hasAttribute('disabled')).toBe(false);
-  expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/agent folder|Reopen your agent/);
+  // Sending lives in the agent's Send card, so nothing offers it before an agent opens.
+  expect(screen.queryByRole('button', { name: 'Send to a cluster' })).toBeNull();
   // Browser preview cannot read native selection, so the host is neither "This computer" nor "No cluster selected".
-  expect(within(screen.getByRole('banner')).getByText('Status unavailable')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Status unavailable')).toBeTruthy();
   // The Overview page also has a "This computer" heading, so assert on the host chip.
   expect(document.querySelector('.host-chip')?.textContent).not.toContain('This computer');
 });
@@ -348,7 +372,9 @@ test('model acknowledgment and observed check counts survive navigation', async 
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('Workspace ready')).toBeTruthy();
-  expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('The workspace is ready on this computer.');
+  // The rail's styled tip, kept inside the window, rather than a system tooltip drawn below it.
+  expect(document.querySelector('.host-chip')?.getAttribute('data-tip')).toBe('The workspace is ready on this computer.');
+  expect(document.querySelector('.host-chip')?.hasAttribute('title')).toBe(false);
   expect(document.querySelector('.host-chip')?.textContent).toBe('This computer: The workspace is ready on this computer.');
   expect(document.querySelector('.host-chip .live-dot')?.className).toContain('ready');
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
@@ -398,7 +424,7 @@ test('unconfirmed run cancellation offers native Quit Bridge without another wor
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await user.click(await screen.findByRole('button', { name: 'Quit Bridge' }));
-  expect(await screen.findByText("Couldn't quit Bridge. Use Quit Bridge from its menu.")).toBeTruthy();
+  expect(await screen.findByText("Couldn't quit Bridge. Use Quit Bridge from the Bridge icon in the tray or menu bar.")).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page');
   expect(screen.queryByRole('button', { name: 'Stop the workspace' })).toBeNull();
   expect(localStorage.getItem('bridge.firstTest.v1')).toBeNull();
@@ -677,7 +703,7 @@ test('Overview waits for native busy release even when the report is already com
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   busy = false;
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await screen.findByText('The workspace is stopped. Start it to test or chat.', {}, { timeout: 2000 });
+  await screen.findByText('The workspace is stopped. Start it to run tests or try a task.', {}, { timeout: 2000 });
   expect(lists).toBe(1);
 });
 
@@ -689,7 +715,7 @@ test('Clusters reads setup without engine diagnostics or legacy IPC', async () =
   vi.stubGlobal('isTauri', true);
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
   const user = userEvent.setup(); render(<App />);
-  expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Details' })).toBeTruthy();
   expect(screen.queryByText('Engine diagnostics')).toBeNull();
   expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status', 'workspace_upgrade_status', 'cluster_places', 'overview_files'].includes(command))).toBe(true);
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_requirements')).toEqual([['setup_requirements', {}]]);

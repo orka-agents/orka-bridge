@@ -61,7 +61,7 @@ Designer opens with an example agent and four sections:
 - **Tools:** Choose from Orka's built-in tools or Tool resources available on the target cluster. Tool resources let
   you define custom tools, such as HTTP endpoints.
 - **Tests:** Run real tasks on your local Orka, with pass/fail results, tool calls, execution time, and token usage.
-- **Chat:** Interact with the same agent in a live session.
+- **Try a task:** Give the same agent one task on your local Orka and see the tools it used and what it answered.
 
 Each agent is defined in a Markdown file, stored either in a Git repository Bridge creates or in one you already have.
 

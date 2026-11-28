@@ -12,9 +12,11 @@ let agentName = 'my-agent';
 let quitFails = false;
 let helpFails = false;
 let helpPending: Promise<void> | null = null;
+let requirements: object | null = null;
 const ipc = vi.fn((command: string) => {
   if (command === 'setup_status') { if (unreadable) throw Error('unreadable'); return status; }
-  if (command === 'setup_requirements') return null;
+  if (command === 'setup_requirements') return requirements;
+  if (command === 'workspace_upgrade_status') return { state: 'none', transaction: null, createdAt: null, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, credential: 'absent', busy: false, error: null, repeated: false, canReplace: false, canRestore: false, canCancel: false };
   if (command === 'setup_select_local') return status = { selected: 'localVm', localVm: 'starting', model: 'locked', workspaceProgress: { phase: 'starting', elapsedMs: 18000, bytes: null, totalBytes: null, remainingMs: null } };
   if (command === 'setup_open_help') { if (helpPending) return helpPending; if (helpFails) throw Error('unavailable'); return; }
   if (command === 'quit_bridge') { if (quitFails) throw Error('unavailable'); return; }
@@ -27,7 +29,7 @@ beforeEach(() => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   localStorage.setItem('bridge.firstTest.v1', 'attempted');
   status = { selected: 'localVm', localVm: 'ready', model: 'available' };
-  agentName = 'my-agent'; unreadable = false; quitFails = false; helpFails = false; helpPending = null; ipc.mockClear(); mockIPC(ipc);
+  agentName = 'my-agent'; requirements = null; unreadable = false; quitFails = false; helpFails = false; helpPending = null; ipc.mockClear(); mockIPC(ipc);
 });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
@@ -42,10 +44,35 @@ test('a returning ready workspace has no lifecycle action and keeps its files be
   expect(await within(card).findByText('my-agent')).toBeTruthy();
   expect(within(card).getByText('/agents')).toBeTruthy();
   expect(card.closest('.workspace-setup-grid')).toBeTruthy();
-  expect(screen.getByRole('heading', { name: 'AI', level: 2 })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Connect the AI', level: 2 })).toBeTruthy();
   await user.click(within(card).getByRole('button', { name: "What's inside" }));
-  expect(within(card).getByText(/Uses about 4 GB of memory while Bridge is open. Quit Bridge to free it./)).toBeTruthy();
+  // Without the build's requirements, no figure is guessed.
+  expect(within(card).getByText(/Uses this computer's memory while Bridge is open. Quit Bridge to free it./)).toBeTruthy();
   expect(screen.queryByRole('radio', { name: 'On this computer' })).toBeNull();
+});
+
+test("What's inside names the memory figure the requirements report", async () => {
+  requirements = { memoryBytes: 6 * 1024 ** 3, stateDiskBytes: 32 * 1024 ** 3, downloadBytes: null, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null };
+  const user = await open();
+  const card = await screen.findByRole('region', { name: 'Workspace' });
+  await user.click(within(card).getByRole('button', { name: "What's inside" }));
+  expect(within(card).getByText(/Uses about 6\.4 GB of memory while Bridge is open\./)).toBeTruthy();
+});
+
+// A first setup left without an AI: the workspace is ready but the first test never ran. Its card still manages it.
+test.each([
+  ['no AI connected', 'locked' as const],
+  ['the AI step not finished', 'available' as const],
+])('a ready workspace in first setup keeps What\'s inside and Start a fresh workspace with %s', async (_, model) => {
+  localStorage.setItem('bridge.firstTest.v1', 'pending');
+  status = { selected: 'localVm', localVm: 'ready', model, modelSupported: true, workspaceFreshPlan: { image: { kind: 'cached' } } };
+  const user = await open();
+  const card = await screen.findByRole('region', { name: 'Workspace setup' });
+  expect(within(card).getByRole('list', { name: 'Setup steps' })).toBeTruthy();
+  await user.click(within(card).getByRole('button', { name: "What's inside" }));
+  expect(within(card).getByText(/Uses this computer's memory while Bridge is open/)).toBeTruthy();
+  await user.click(within(card).getByRole('button', { name: 'Start a fresh workspace…' }));
+  expect(await screen.findByRole('region', { name: 'Start a fresh workspace?' })).toBeTruthy();
 });
 
 test('reopening shows observed Starting and elapsed time without another Start command', async () => {
@@ -53,7 +80,9 @@ test('reopening shows observed Starting and elapsed time without another Start c
   await open();
   const card = await screen.findByRole('region', { name: 'Workspace' });
   expect(within(card).getByText('Starting', { selector: '.pill' })).toBeTruthy();
-  expect(within(card).getByText('0:18 so far')).toBeTruthy();
+  expect(within(card).getByText('18 seconds elapsed')).toBeTruthy();
+  expect(within(card).getByRole('progressbar', { name: 'Workspace setup progress' })).toBeTruthy();
+  expect(within(card).getByRole('button', { name: 'Cancel' })).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'AI', level: 2 }).closest('.card')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^Start$/ })).toBeNull();
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
@@ -81,7 +110,7 @@ test.each(['failed', 'cancelled'] as const)('%s workspace restarts on This compu
   status = { selected: 'localVm', localVm, model: 'locked', ...(localVm === 'failed' ? { localVmError: 'retained diagnostic', workspaceFailure: { cause: 'services' as const, operation: 'start' as const, codes: [] } } : {}) };
   const user = await open();
   await user.click(await screen.findByRole('button', { name: 'Restart workspace' }));
-  expect(await screen.findByText('0:18 so far')).toBeTruthy();
+  expect(await screen.findByText('18 seconds elapsed')).toBeTruthy();
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('This computer');
   expect(localStorage.getItem('bridge.firstTest.v1')).not.toBe('pending');
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toHaveLength(1);
@@ -93,11 +122,12 @@ test('stop failure offers Quit Bridge through native cleanup and keeps a rejecte
   const user = await open();
   const card = await screen.findByRole('region', { name: 'Workspace' });
   expect(within(card).getByText("The workspace didn't stop.")).toBeTruthy();
-  expect(within(card).queryByRole('button', { name: /Restart|Try again|Start/ })).toBeNull();
+  expect(within(card).queryByRole('button', { name: /Try again|Start/ })).toBeNull();
+  expect((within(card).getByRole('button', { name: 'Restart workspace' }) as HTMLButtonElement).disabled).toBe(true);
   const quit = within(card).getByRole('button', { name: 'Quit Bridge' });
   expect(quit.classList.contains('button-primary')).toBe(true);
   await user.click(quit);
-  expect(await within(card).findByRole('alert')).toBeTruthy();
+  expect((await within(card).findByRole('alert')).textContent).toBe("Couldn't quit Bridge. Try again or use Quit Bridge from the Bridge icon in the tray or menu bar.");
   expect((quit as HTMLButtonElement).disabled).toBe(false);
   expect(ipc.mock.calls.filter(([command]) => command === 'quit_bridge')).toHaveLength(1);
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
@@ -114,7 +144,10 @@ test('a returning forced stop warns about data loss and offers only Quit Bridge 
   expect(within(card).getByText('Changes that had not reached disk may be lost.')).toBeTruthy();
   expect(within(card).getByText('Quit Bridge and reopen it before trying again.')).toBeTruthy();
   expect(within(card).queryByText(/didn't stop|may still be stopping|agents and files are kept/i)).toBeNull();
-  expect(within(card).queryByRole('button', { name: /Restart|Try again|Start/ })).toBeNull();
+  expect(within(card).getByRole('heading', { name: 'The workspace was forcibly stopped' })).toBeTruthy();
+  expect(within(card).queryByRole('button', { name: /Try again|Start/ })).toBeNull();
+  expect((within(card).getByRole('button', { name: 'Restart workspace' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(within(card).getByRole('button', { name: 'Copy details for help' }).classList.contains('button-quiet')).toBe(true);
   expect(within(card).queryByText('private forced stop diagnostic')).toBeNull();
   const quit = within(card).getByRole('button', { name: 'Quit Bridge' });
   expect(quit.classList.contains('button-primary')).toBe(true);
@@ -147,6 +180,7 @@ test('unavailable integration keeps its explanation instead of promising startup
   status = { selected: 'localVm', localVm: 'notIntegrated', model: 'locked' };
   await open();
   expect(screen.queryByRole('region', { name: 'Workspace' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
   expect(screen.getByText('Workspace setup is not included in this build. Nothing will be downloaded or started.')).toBeTruthy();
 });
 
@@ -197,4 +231,32 @@ test('unreadable workspace status cannot authorize a restart', async () => {
   await act(async () => window.dispatchEvent(new Event('focus')));
   await screen.findByText('The setup choice could not be read or saved.');
   expect((screen.getByRole('button', { name: 'Restart workspace' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+test('each failure starts its details from its own default, not the last failure\'s', async () => {
+  status = { selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'first', workspaceFailure: { cause: 'services', operation: 'start', codes: [] } };
+  const user = await open();
+  const card = await screen.findByRole('region', { name: 'Workspace' });
+  // A failed start opens its details; fold them.
+  await user.click(await within(card).findByRole('button', { name: 'Hide details' }));
+  expect(within(card).getByRole('button', { name: 'Show details' })).toBeTruthy();
+  // The next failed start opens them again.
+  await observe({ selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'second', workspaceFailure: { cause: 'permission', operation: 'start', codes: [] } });
+  expect(await within(screen.getByRole('region', { name: 'Workspace' })).findByRole('button', { name: 'Hide details' })).toBeTruthy();
+  // A failed stop starts folded even though the last one was open.
+  await observe({ selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'third', workspaceFailure: { cause: 'stopUnconfirmed', operation: 'stop', codes: [] } });
+  expect(await within(screen.getByRole('region', { name: 'Workspace' })).findByRole('button', { name: 'Show details' })).toBeTruthy();
+});
+
+test('a stop failure reached straight from a ready workspace never draws its details open', async () => {
+  const user = await open();
+  await screen.findByRole('region', { name: 'Workspace' });
+  const opened: boolean[] = [];
+  const watch = new MutationObserver(() => { const d = document.querySelector('.returning-workspace details'); if (d) opened.push((d as HTMLDetailsElement).open); });
+  watch.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open'] });
+  await observe({ selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'private stop diagnostic', workspaceFailure: { cause: 'stopUnconfirmed', operation: 'stop', codes: [] } });
+  expect(await within(screen.getByRole('region', { name: 'Workspace' })).findByRole('button', { name: 'Show details' })).toBeTruthy();
+  watch.disconnect();
+  expect(opened.includes(true)).toBe(false);
+  void user;
 });

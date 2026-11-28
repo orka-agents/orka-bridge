@@ -76,7 +76,8 @@ test('slow upgrade status does not block or get superseded by recurring setup po
 test.each(['fresh', 'consumed'] as const)('Manage retains ordinary %s failure restart and details', async state => {
   const ipc = fixture(() => ({ ...current, state }), 'failed'); render(<App />); await openLocalSetup();
   const restart = await screen.findByRole('button', { name: 'Restart workspace' });
-  fireEvent.click(screen.getByRole('button', { name: 'Show details' }));
+  // A failed start opens its details, as the board shows.
+  expect(screen.getByRole('button', { name: 'Hide details' })).toBeTruthy();
   expect(screen.getByText('Services did not start', { selector: 'pre' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Restore previous workspace' })).toBeTruthy();
   fireEvent.click(restart); await waitFor(() => expect(ipc.mock.calls.map(([c]) => c)).toContain('setup_select_local'));

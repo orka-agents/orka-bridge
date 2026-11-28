@@ -122,7 +122,7 @@ test('forced-stop Quit failure is recoverable without exposing native text', asy
   const user = userEvent.setup();
   render(<Recovery failure={{ cause: 'forcedStop', operation: 'stop', codes: [] }} disabled={false} onRetry={() => {}} />);
   await user.click(screen.getByRole('button', { name: 'Quit Bridge' }));
-  expect(await screen.findByText("Couldn't quit Bridge. Use Quit Bridge from its menu.")).toBeTruthy();
+  expect(await screen.findByText("Couldn't quit Bridge. Use Quit Bridge from the Bridge icon in the tray or menu bar.")).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Quit Bridge' }).matches(':disabled')).toBe(false);
   expect(screen.queryByText(/PRIVATE/)).toBeNull();
 });
@@ -169,10 +169,14 @@ test('AI failure marks its setup step and every shell status without losing the 
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Bridge could not confirm the AI connection'));
-  expect(screen.getByText("Couldn't start").closest('li')?.className).toBe('step-failed');
+  // The step waits on the creator; what failed is said in the AI card beside the steps.
+  const row = screen.getByText('Connect the AI', { selector: 'li b' }).closest('li')!;
+  expect(row.className).toBe('step-current');
+  expect(within(row).getByText('Needs you')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: "The AI couldn't connect" }).closest('.setup-side')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('Setting up, step 3 of 4')).toBeTruthy();
   expect(screen.getByRole('contentinfo').textContent).toContain('AI not connected');
-  expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('The workspace is ready on this computer.');
+  expect(document.querySelector('.host-chip')?.getAttribute('data-tip')).toBe('The workspace is ready on this computer.');
   expect(document.querySelector('.host-chip .live-dot')?.className).toContain('ready');
   expect(screen.getByRole('alert').textContent).toContain('Your workspace and agent files are kept');
 });

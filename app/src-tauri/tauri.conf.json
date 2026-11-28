@@ -29,7 +29,7 @@
         "identifier": "engine",
         "description": "Typed engine and setup access from the main window only.",
         "windows": ["main"],
-        "permissions": ["engine", "setup"]
+        "permissions": ["engine", "setup", "navigator", "core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize", "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-is-maximized", "core:window:allow-close"]
       }],
       "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'; form-action 'none'",
       "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; frame-src 'none'; form-action 'none'"

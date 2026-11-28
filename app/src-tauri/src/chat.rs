@@ -1,12 +1,14 @@
 //! Native, memory-only conversations. No renderer paths, specs or transport authority.
 use crate::{
     agent_folder::{AgentFolder, DocumentId},
+    chat_cluster::{ChatPermission, ClusterChannel, ClusterWire, Refusal},
     engine::run::{ParsedAgent, ResourceId},
     local_vm::{LocalVm, LocalVmStatus},
     runtime::types::RuntimeError,
 };
 use bridge_runtime_protocol::{
-    ChatMethod, ChatRequest, ModelConnection, ModelPhase, OrkaReply, Uuid, MAX_ORKA_BODY,
+    ChatFamily, ChatMethod, ChatRequest, ModelConnection, ModelPhase, ModelSelection, OrkaReply,
+    Uuid, CHAT_FAMILY, MAX_ORKA_BODY, NAVIGATOR_FAMILY, ORKA_NAMESPACE,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -16,7 +18,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     sync::{watch, OwnedMutexGuard},
@@ -51,6 +53,20 @@ pub enum ChatError {
     ContextUnavailable,
     WorkspaceChanged,
     Interrupted,
+    /// The cluster refused a request; the snapshot's `denied` names the permission.
+    Permission,
+    /// The cluster's Orka does not keep Sessions, so it cannot hold a conversation.
+    SessionsUnsupported,
+    /// The selected cluster is not connected in this run, or its access could not be rechecked.
+    ClusterUnavailable,
+    /// This computer's workspace image predates the Navigator; nothing was sent to it.
+    WorkspaceOutdated,
+    /// This computer's workspace stopped serving its channel; it needs a restart.
+    WorkspaceUnavailable,
+    /// This place's conversation was started on another AI connection; start a new one.
+    PlaceChanged,
+    /// The selected cluster's access can no longer authenticate and needs reconnecting.
+    AccessLost,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +85,14 @@ pub struct ChatTurn {
     pub context_retained: bool,
     pub termination_unconfirmed: bool,
     pub stop_unconfirmed: bool,
+    /// Unix milliseconds when the turn was admitted.
+    pub started_at: u64,
+    /// Unix milliseconds when a terminal Task phase was first observed.
+    pub finished_at: Option<u64>,
+    /// Stop arrived after this turn's Task had already finished, so nothing was stopped.
+    /// Sent only when true, so replies without it keep their exact shape.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub finished_before_stop: bool,
 }
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ChatVersion {
@@ -84,12 +108,21 @@ pub struct ChatSnapshot {
     pub can_send: bool,
     pub versions: Vec<ChatVersion>,
     pub error: Option<ChatError>,
+    /// With `Permission`: what the cluster refused. Null otherwise.
+    pub denied: Option<ChatPermission>,
+    /// Latched once a cluster refused to delete a replaced conversation's resources.
+    pub kept_on_cluster: bool,
+    /// The conversation was started on another AI connection of this cluster: shown, not continued.
+    pub read_only: bool,
 }
 struct Entry {
     view: ChatSnapshot,
     context: Option<Context>,
     lease: Option<Arc<OwnedMutexGuard<()>>>,
     stop: watch::Sender<bool>,
+    /// The model this conversation last thought with, and whether on a cluster. Display only.
+    thinks: Option<(ModelSelection, bool)>,
+    used: u64,
 }
 impl Entry {
     fn new(id: DocumentId) -> Self {
@@ -101,14 +134,39 @@ impl Entry {
                 can_send: true,
                 versions: vec![],
                 error: None,
+                denied: None,
+                kept_on_cluster: false,
+                read_only: false,
             },
             context: None,
             lease: None,
             stop: watch::channel(false).0,
+            thinks: None,
+            used: 0,
         }
+    }
+    /// The view for a selected AI connection: a cluster conversation started on another one is
+    /// read-only until New.
+    fn snapshot(&self, provider: Option<&str>) -> ChatSnapshot {
+        let mut view = self.view.clone();
+        view.read_only = !view.busy
+            && matches!(
+                (provider, self.context.as_ref().map(|c| &c.binding)),
+                (Some(selected), Some(Binding::Cluster { provider, .. })) if provider != selected
+            );
+        if view.read_only {
+            view.can_send = false;
+        }
+        view
     }
 }
 impl Entry {
+    fn newest_turn(&mut self) -> Option<&mut ChatTurn> {
+        self.view
+            .versions
+            .last_mut()
+            .and_then(|v| v.turns.last_mut())
+    }
     fn finish(&mut self, safe: bool, success: bool) {
         // Publish completion under the same lock as Stop admission.
         if success && safe {
@@ -118,11 +176,50 @@ impl Entry {
         self.view.can_send = safe && self.view.state == ChatState::Ready;
     }
 }
+/// What a conversation's Agent is built from. Both are read natively; the renderer
+/// supplies only the message.
+pub enum ChatSource {
+    /// A saved agent file, captured when the message is sent.
+    Document(Arc<AgentFolder>),
+    /// The Navigator's fixed instructions with this summary of the saved agents.
+    Navigator(String),
+}
+impl ChatSource {
+    fn family(&self) -> ChatFamily {
+        match self {
+            Self::Document(_) => CHAT_FAMILY,
+            Self::Navigator(_) => NAVIGATOR_FAMILY,
+        }
+    }
+}
+/// Where a conversation's requests go: the local workspace's VM channel, or the selected
+/// cluster's confirmed Orka connection. One state machine drives both.
+#[derive(Clone)]
+pub enum Channel {
+    Local(Arc<LocalVm>),
+    Cluster(Arc<ClusterChannel>),
+}
 #[derive(Clone, PartialEq)]
-struct Binding {
-    installation: Uuid,
-    boot: Uuid,
-    connection: ModelConnection,
+enum Binding {
+    Local {
+        installation: Uuid,
+        boot: Uuid,
+        connection: ModelConnection,
+    },
+    /// A remembered place, its watched namespace and the chosen AI connection.
+    Cluster {
+        key: String,
+        namespace: String,
+        provider: String,
+    },
+}
+impl Binding {
+    fn provider(&self) -> &str {
+        match self {
+            Self::Local { connection, .. } => &connection.selection.provider,
+            Self::Cluster { provider, .. } => provider,
+        }
+    }
 }
 struct Planned {
     body: Value,
@@ -130,9 +227,9 @@ struct Planned {
     sent: bool,
 }
 impl Planned {
-    fn new(prefix: &str, spec: Value) -> Self {
+    fn new(prefix: &str, namespace: &str, spec: Value) -> Self {
         Self {
-            body: json!({"name":format!("{prefix}{}",Uuid::new_v4().simple()),"namespace":"orka-system","spec":spec}),
+            body: json!({"name":format!("{prefix}{}",Uuid::new_v4().simple()),"namespace":namespace,"spec":spec}),
             receipt: None,
             sent: false,
         }
@@ -153,31 +250,102 @@ struct Context {
     cursor: u64,
     deleted: bool,
     stopping: bool,
+    /// A cluster conversation's channel, kept for Reconnect, Stop and cleanup.
+    cluster: Option<Arc<ClusterChannel>>,
+    /// This conversation's earlier acknowledged Tasks, for cleanup on a cluster.
+    earlier: Vec<ResourceId>,
+    /// A refusal ended it before it held a turn: the next message starts a fresh one.
+    broken: bool,
+}
+/// Where a conversation lives. Each place keeps its own conversation per source, so switching
+/// the selected place never shows, continues or confirms another place's turns.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Place {
+    ThisComputer,
+    /// A remembered cluster, by its place key.
+    Cluster(String),
+}
+type Key = (DocumentId, Place);
+/// Conversations kept in memory per owner. Beyond it, the least recently used one that is idle
+/// and holds nothing to settle is dropped, its cluster resources following the rule for New.
+pub const MAX_CONVERSATIONS: usize = 8;
+impl Channel {
+    pub fn place(&self) -> Place {
+        match self {
+            Self::Local(_) => Place::ThisComputer,
+            Self::Cluster(cluster) => Place::Cluster(cluster.key.clone()),
+        }
+    }
+    fn provider(&self) -> Option<&str> {
+        match self {
+            Self::Local(_) => None,
+            Self::Cluster(cluster) => Some(&cluster.provider),
+        }
+    }
 }
 pub struct ChatOwner(
-    Mutex<HashMap<DocumentId, Entry>>,
+    Mutex<HashMap<Key, Entry>>,
     tokio::runtime::Handle,
+    /// The local workspace's epoch; replacing the workspace retires only local conversations.
+    AtomicU64,
+    /// Recency for the in-memory cap.
     AtomicU64,
 );
 impl ChatOwner {
     pub fn new(runtime: tokio::runtime::Handle) -> Arc<Self> {
-        Arc::new(Self(Mutex::default(), runtime, AtomicU64::new(0)))
+        Arc::new(Self(
+            Mutex::default(),
+            runtime,
+            AtomicU64::new(0),
+            AtomicU64::new(0),
+        ))
     }
-    /// Forget local conversations without sending cleanup to either workspace.
-    pub fn retire_for_workspace_replacement(&self) {
-        let mut entries = self.0.lock().unwrap();
-        for entry in entries.values() {
-            entry.stop.send_replace(true);
-        }
-        self.2.fetch_add(1, Ordering::Relaxed);
-        entries.clear();
-    }
-    pub fn status(&self, id: DocumentId) -> ChatSnapshot {
+    /// The model this place's conversation last thought with, and whether on a cluster.
+    pub fn thinks_with_on(&self, id: DocumentId, place: &Place) -> Option<(ModelSelection, bool)> {
         self.0
             .lock()
             .unwrap()
-            .get(&id)
-            .map(|e| e.view.clone())
+            .get(&(id, place.clone()))
+            .and_then(|e| e.thinks.clone())
+    }
+    /// The model the local conversation last thought with (this computer).
+    pub fn thinks_with(&self) -> Option<ModelSelection> {
+        self.thinks_with_on(crate::navigator::CONVERSATION, &Place::ThisComputer)
+            .map(|(selection, _)| selection)
+    }
+    /// Forget local conversations without sending cleanup to either workspace. Cluster
+    /// conversations do not depend on the workspace and are kept.
+    pub fn retire_for_workspace_replacement(&self) {
+        let mut entries = self.0.lock().unwrap();
+        for ((_, place), entry) in entries.iter() {
+            if *place == Place::ThisComputer {
+                entry.stop.send_replace(true);
+            }
+        }
+        self.2.fetch_add(1, Ordering::Relaxed);
+        entries.retain(|(_, place), _| *place != Place::ThisComputer);
+    }
+    /// An empty conversation for a place that can't be read now, saying why.
+    pub fn unavailable(id: DocumentId, error: ChatError) -> ChatSnapshot {
+        let mut view = Entry::new(id).view;
+        view.can_send = false;
+        view.error = Some(error);
+        view
+    }
+    pub fn status(&self, id: DocumentId) -> ChatSnapshot {
+        self.status_at(id, &Place::ThisComputer, None)
+    }
+    /// The conversation of `channel`'s place. A cluster conversation started on another AI
+    /// connection is shown read-only until New.
+    pub fn status_on(&self, id: DocumentId, channel: &Channel) -> ChatSnapshot {
+        self.status_at(id, &channel.place(), channel.provider())
+    }
+    fn status_at(&self, id: DocumentId, place: &Place, provider: Option<&str>) -> ChatSnapshot {
+        self.0
+            .lock()
+            .unwrap()
+            .get(&(id, place.clone()))
+            .map(|e| e.snapshot(provider))
             .unwrap_or_else(|| Entry::new(id).view)
     }
     pub fn send(
@@ -186,55 +354,153 @@ impl ChatOwner {
         folder: Arc<AgentFolder>,
         message: String,
     ) -> Result<ChatSnapshot, ChatError> {
+        self.send_on(Channel::Local(vm), folder, message)
+    }
+    /// One message on the selected place: the local workspace or a connected cluster.
+    pub fn send_on(
+        self: &Arc<Self>,
+        channel: Channel,
+        folder: Arc<AgentFolder>,
+        message: String,
+    ) -> Result<ChatSnapshot, ChatError> {
+        let id = folder.document_id();
+        self.admit(channel, id, ChatSource::Document(folder), message)
+    }
+    /// One message to the Navigator's single conversation, built from the bundled
+    /// instructions and `saved_agents`, a native summary of the saved agents.
+    pub fn send_navigator(
+        self: &Arc<Self>,
+        vm: Arc<LocalVm>,
+        saved_agents: String,
+        message: String,
+    ) -> Result<ChatSnapshot, ChatError> {
+        self.send_navigator_on(Channel::Local(vm), saved_agents, message)
+    }
+    pub fn send_navigator_on(
+        self: &Arc<Self>,
+        channel: Channel,
+        saved_agents: String,
+        message: String,
+    ) -> Result<ChatSnapshot, ChatError> {
+        self.admit(
+            channel,
+            crate::navigator::CONVERSATION,
+            ChatSource::Navigator(saved_agents),
+            message,
+        )
+    }
+    fn admit(
+        self: &Arc<Self>,
+        channel: Channel,
+        id: DocumentId,
+        source: ChatSource,
+        message: String,
+    ) -> Result<ChatSnapshot, ChatError> {
         if message.trim().is_empty() || message.len() > MAX_ORKA_BODY {
             return Err(ChatError::InvalidMessage);
         }
-        let id = folder.document_id();
         let mut entries = self.0.lock().unwrap();
-        // Retirement shares this lock: capture the lease and launch epoch together,
-        // and admit nothing in the gap before the replacement VM is ready.
-        let lease = vm.try_authoring().ok_or(ChatError::Busy)?;
-        if vm.status() != LocalVmStatus::Ready || !vm.authoring_current(&lease) {
-            return Err(ChatError::Busy);
+        let key = (id, channel.place());
+        if entries
+            .get(&key)
+            .is_some_and(|e| e.snapshot(channel.provider()).read_only)
+        {
+            return Err(ChatError::PlaceChanged);
         }
-        let e = entries.entry(id).or_insert_with(|| Entry::new(id));
+        let lease = match &channel {
+            // Retirement shares this lock: capture the lease and launch epoch together,
+            // and admit nothing in the gap before the replacement VM is ready.
+            Channel::Local(vm) => {
+                let lease = vm.try_authoring().ok_or(ChatError::Busy)?;
+                if vm.status() != LocalVmStatus::Ready || !vm.authoring_current(&lease) {
+                    return Err(ChatError::Busy);
+                }
+                lease
+            }
+            // A cluster conversation holds no workspace authority; its lease only marks a
+            // retained context that Reconnect or Stop must settle.
+            Channel::Cluster(_) => Arc::new(tokio::sync::Mutex::new(()))
+                .try_lock_owned()
+                .map_err(|_| ChatError::Busy)?,
+        };
+        if !entries.contains_key(&key) {
+            self.make_room(&mut entries, &key);
+        }
+        let e = entries.entry(key.clone()).or_insert_with(|| Entry::new(id));
         if e.view.busy || e.lease.is_some() {
             return Err(ChatError::Busy);
         }
         if e.view.state == ChatState::ContextUnavailable {
             return Err(ChatError::ContextUnavailable);
         }
+        e.used = self.3.fetch_add(1, Ordering::Relaxed);
         e.lease = Some(Arc::new(lease));
         e.view.busy = true;
         e.view.can_send = false;
         e.view.state = ChatState::Preparing;
         e.view.error = None;
+        e.view.denied = None;
         e.stop = watch::channel(false).0;
-        self.launch(vm, id, e, Some((folder, message)));
+        self.launch(channel, key, e, Some((source, message)));
         Ok(e.view.clone())
+    }
+    /// Drops the least recently used idle conversation with nothing to settle when the cap is
+    /// reached. Its cluster resources are deleted or kept exactly as New would.
+    fn make_room(self: &Arc<Self>, entries: &mut HashMap<Key, Entry>, incoming: &Key) {
+        if entries.len() < MAX_CONVERSATIONS {
+            return;
+        }
+        let oldest = entries
+            .iter()
+            .filter(|(key, e)| *key != incoming && !e.view.busy && e.lease.is_none())
+            .min_by_key(|(_, e)| e.used)
+            .map(|(key, _)| key.clone());
+        if let Some(key) = oldest {
+            if let Some(mut dropped) = entries.remove(&key) {
+                if let Some(context) = dropped.context.take() {
+                    self.clean_up(key, context);
+                }
+            }
+        }
     }
     pub fn reconnect(
         self: &Arc<Self>,
         vm: Arc<LocalVm>,
         id: DocumentId,
     ) -> Result<ChatSnapshot, ChatError> {
-        self.resume(vm, id, false)
+        self.resume(Channel::Local(vm), id, false)
     }
     pub fn stop(
         self: &Arc<Self>,
         vm: Arc<LocalVm>,
         id: DocumentId,
     ) -> Result<ChatSnapshot, ChatError> {
-        self.resume(vm, id, true)
+        self.resume(Channel::Local(vm), id, true)
+    }
+    /// Reconnect or Stop the conversation of `channel`'s place, wherever its turn runs.
+    pub fn reconnect_on(
+        self: &Arc<Self>,
+        channel: Channel,
+        id: DocumentId,
+    ) -> Result<ChatSnapshot, ChatError> {
+        self.resume(channel, id, false)
+    }
+    pub fn stop_on(
+        self: &Arc<Self>,
+        channel: Channel,
+        id: DocumentId,
+    ) -> Result<ChatSnapshot, ChatError> {
+        self.resume(channel, id, true)
     }
     fn resume(
         self: &Arc<Self>,
-        vm: Arc<LocalVm>,
+        channel: Channel,
         id: DocumentId,
         stop: bool,
     ) -> Result<ChatSnapshot, ChatError> {
         let mut entries = self.0.lock().unwrap();
-        let e = entries.get_mut(&id).ok_or(ChatError::ContextUnavailable)?;
+        let key = (id, channel.place());
+        let e = entries.get_mut(&key).ok_or(ChatError::ContextUnavailable)?;
         if e.view.busy {
             if stop {
                 e.stop.send_replace(true);
@@ -243,49 +509,113 @@ impl ChatOwner {
             return Ok(e.view.clone());
         }
         if e.lease.is_none() {
+            // A Stop pressed as the turn finished is answered, never dropped: it had finished.
+            if stop {
+                if let Some(turn) = e.newest_turn().filter(|t| t.finished_at.is_some()) {
+                    turn.finished_before_stop = true;
+                    return Ok(e.view.clone());
+                }
+            }
             return Err(ChatError::ContextUnavailable);
         }
+        e.used = self.3.fetch_add(1, Ordering::Relaxed);
         e.stop = watch::channel(stop).0;
         e.view.busy = true;
         e.view.error = None;
+        e.view.denied = None;
         if stop {
             e.view.state = ChatState::RequestingStop;
         }
-        self.launch(vm, id, e, None);
+        // A retained cluster conversation keeps the channel it was admitted on.
+        let channel = match e.context.as_ref().and_then(|c| c.cluster.clone()) {
+            Some(cluster) => Channel::Cluster(cluster),
+            None => channel,
+        };
+        self.launch(channel, key, e, None);
         Ok(e.view.clone())
     }
-    pub fn new_conversation(&self, id: DocumentId) -> Result<ChatSnapshot, ChatError> {
+    pub fn new_conversation(self: &Arc<Self>, id: DocumentId) -> Result<ChatSnapshot, ChatError> {
+        self.new_at(id, Place::ThisComputer)
+    }
+    /// New on `channel`'s place only; other places' conversations are untouched.
+    pub fn new_conversation_on(
+        self: &Arc<Self>,
+        channel: &Channel,
+        id: DocumentId,
+    ) -> Result<ChatSnapshot, ChatError> {
+        self.new_at(id, channel.place())
+    }
+    fn new_at(self: &Arc<Self>, id: DocumentId, place: Place) -> Result<ChatSnapshot, ChatError> {
         let mut entries = self.0.lock().unwrap();
-        let e = entries.entry(id).or_insert_with(|| Entry::new(id));
+        let key = (id, place);
+        if !entries.contains_key(&key) {
+            self.make_room(&mut entries, &key);
+        }
+        let e = entries.entry(key.clone()).or_insert_with(|| Entry::new(id));
         if e.view.busy || e.lease.is_some() {
             return Err(ChatError::Busy);
         }
-        e.context = None;
+        e.used = self.3.fetch_add(1, Ordering::Relaxed);
+        if let Some(previous) = e.context.take() {
+            self.clean_up(key, previous);
+        }
+        e.thinks = None;
         e.view.state = ChatState::Ready;
         e.view.can_send = true;
         e.view.error = None;
+        e.view.denied = None;
         Ok(e.view.clone())
     }
-    fn edit(&self, id: DocumentId, epoch: u64, f: impl FnOnce(&mut ChatSnapshot)) {
+    /// Deletes what a replaced cluster conversation created, when the role allows. Each
+    /// resource is identified by its generated name and, for the Task and Agent, the UID
+    /// acknowledged at creation; a refusal leaves everything and is said once. Local
+    /// conversations are only forgotten, as before.
+    fn clean_up(self: &Arc<Self>, key: Key, context: Context) {
+        let Some(cluster) = context.cluster.clone() else {
+            return;
+        };
+        let owner = self.clone();
+        let epoch = self.2.load(Ordering::Relaxed);
+        self.1.spawn(async move {
+            let kept = clean_up_on(&cluster, &context).await;
+            if kept {
+                owner.edit(&key, epoch, |s| s.kept_on_cluster = true);
+            }
+        });
+    }
+    /// Local edits are fenced by the workspace epoch; cluster conversations outlive it.
+    fn edit(&self, key: &Key, epoch: u64, f: impl FnOnce(&mut ChatSnapshot)) {
         let mut entries = self.0.lock().unwrap();
-        if self.2.load(Ordering::Relaxed) == epoch {
-            if let Some(entry) = entries.get_mut(&id) {
+        if key.1 != Place::ThisComputer || self.2.load(Ordering::Relaxed) == epoch {
+            if let Some(entry) = entries.get_mut(key) {
                 f(&mut entry.view);
             }
         }
     }
+    fn set_thinks(&self, key: &Key, epoch: u64, thinks: (ModelSelection, bool)) {
+        let mut entries = self.0.lock().unwrap();
+        if key.1 != Place::ThisComputer || self.2.load(Ordering::Relaxed) == epoch {
+            if let Some(entry) = entries.get_mut(key) {
+                entry.thinks = Some(thinks);
+            }
+        }
+    }
+    fn current(&self, key: &Key, epoch: u64) -> bool {
+        key.1 != Place::ThisComputer || self.2.load(Ordering::Relaxed) == epoch
+    }
     fn launch(
         self: &Arc<Self>,
-        vm: Arc<LocalVm>,
-        id: DocumentId,
+        channel: Channel,
+        id: Key,
         entry: &mut Entry,
-        send: Option<(Arc<AgentFolder>, String)>,
+        send: Option<(ChatSource, String)>,
     ) {
         let owner = self.clone();
         let mut worker = Worker {
             owner: owner.clone(),
-            vm,
-            id,
+            channel,
+            wire: None,
+            id: id.clone(),
             epoch: self.2.load(Ordering::Relaxed),
             context: entry.context.take(),
             lease: entry.lease.take().unwrap(),
@@ -296,31 +626,64 @@ impl ChatOwner {
             preflight: send.is_some(),
         };
         self.1.spawn(async move {
-            let mut result = worker.run(send).await;
+            let mut result = worker.connect().await;
+            if result.is_ok() {
+                result = worker.run(send).await;
+            }
             if result == Err(ChatError::Interrupted) && !worker.preflight {
                 result = worker.stop_task().await;
+            }
+            if let Some(wire) = worker.wire.take() {
+                wire.close().await;
             }
             let mut entries = owner.0.lock().unwrap();
             // Retirement can remove and recreate the same document while this
             // detached worker is awaiting a response. Never restore its old lease.
-            if owner.2.load(Ordering::Relaxed) != worker.epoch {
+            if !owner.current(&id, worker.epoch) {
                 return;
             }
             let Some(e) = entries.get_mut(&id) else {
                 return;
             };
+            // A refusal that created nothing ends the turn plainly, never as unconfirmed; the
+            // next message starts a fresh conversation instead of resuming this one.
+            let refused = worker.safe
+                && result.as_ref().err().is_some_and(|error| {
+                    matches!(
+                        error,
+                        ChatError::Permission
+                            | ChatError::SessionsUnsupported
+                            | ChatError::WorkspaceOutdated
+                            | ChatError::WorkspaceUnavailable
+                            | ChatError::ClusterUnavailable
+                            | ChatError::AccessLost
+                    )
+                });
+            // Before preflight passes, the previous conversation is still the one held.
+            if refused && !worker.preflight {
+                if let Some(context) = worker.context.as_mut() {
+                    context.broken = true;
+                }
+            }
             if let Err(error) = result {
                 e.view.error = Some(error);
-                e.view.state = if worker.preflight
-                    && matches!(
-                        error,
-                        ChatError::InvalidMessage
-                            | ChatError::Source
-                            | ChatError::UnsupportedTool
-                            | ChatError::Model
-                            | ChatError::Connection
-                            | ChatError::Interrupted
-                    ) {
+                e.view.state = if refused
+                    || worker.preflight
+                        && matches!(
+                            error,
+                            ChatError::InvalidMessage
+                                | ChatError::Source
+                                | ChatError::UnsupportedTool
+                                | ChatError::Model
+                                | ChatError::Connection
+                                | ChatError::Interrupted
+                                | ChatError::Permission
+                                | ChatError::SessionsUnsupported
+                                | ChatError::ClusterUnavailable
+                                | ChatError::AccessLost
+                                | ChatError::WorkspaceOutdated
+                                | ChatError::WorkspaceUnavailable
+                        ) {
                     ChatState::Ready
                 } else if worker.safe || error == ChatError::WorkspaceChanged {
                     ChatState::ContextUnavailable
@@ -333,6 +696,12 @@ impl ChatOwner {
                     ChatState::ObservationLost
                 };
             }
+            // Stop admitted after the worker's last request: the Task had already finished.
+            if result.is_ok() && *worker.stop.borrow() && !worker.stopping {
+                if let Some(turn) = e.newest_turn().filter(|t| t.finished_at.is_some()) {
+                    turn.finished_before_stop = true;
+                }
+            }
             e.context = worker.context;
             e.lease = if worker.safe || result == Err(ChatError::WorkspaceChanged) {
                 drop(worker.lease);
@@ -340,14 +709,16 @@ impl ChatOwner {
             } else {
                 Some(worker.lease)
             };
-            e.finish(worker.safe, result.is_ok());
+            e.finish(worker.safe, result.is_ok() || refused);
         });
     }
 }
 struct Worker {
     owner: Arc<ChatOwner>,
-    vm: Arc<LocalVm>,
-    id: DocumentId,
+    channel: Channel,
+    /// A cluster conversation's connection for this one worker run.
+    wire: Option<Arc<dyn ClusterWire>>,
+    id: Key,
     epoch: u64,
     context: Option<Context>,
     lease: Arc<OwnedMutexGuard<()>>,
@@ -359,10 +730,10 @@ struct Worker {
 }
 impl Worker {
     fn state(&self, state: ChatState) {
-        self.owner.edit(self.id, self.epoch, |s| s.state = state);
+        self.owner.edit(&self.id, self.epoch, |s| s.state = state);
     }
     fn turn(&self, f: impl FnOnce(&mut ChatTurn)) {
-        self.owner.edit(self.id, self.epoch, |s| {
+        self.owner.edit(&self.id, self.epoch, |s| {
             if let Some(t) = s.versions.last_mut().and_then(|v| v.turns.last_mut()) {
                 f(t);
             }
@@ -391,21 +762,28 @@ impl Worker {
             if Instant::now() >= self.deadline {
                 return Err(ChatError::Connection);
             }
-            let (work, vm, lease) = (work.clone(), self.vm.clone(), self.lease.clone());
+            let Channel::Local(vm) = &self.channel else {
+                return Err(ChatError::WorkspaceChanged);
+            };
+            let (work, vm, lease) = (work.clone(), vm.clone(), self.lease.clone());
             let (owner, epoch) = (self.owner.clone(), self.epoch);
             let binding = self
                 .context
                 .as_ref()
                 .filter(|_| retained)
                 .map(|c| c.binding.clone());
-            match self
-                .vm
+            match vm
+                .clone()
                 .with_client(move |id, client| {
                     // Check admission *inside* the serialized borrow: startup resets its epoch.
                     if owner.2.load(Ordering::Relaxed) != epoch
                         || !vm.authoring_current(&lease)
-                        || binding
-                            .is_some_and(|b| id != b.installation || client.boot_nonce() != b.boot)
+                        || binding.is_some_and(|b| match b {
+                            Binding::Local {
+                                installation, boot, ..
+                            } => id != installation || client.boot_nonce() != boot,
+                            Binding::Cluster { .. } => true,
+                        })
                     {
                         return Err(ChatError::WorkspaceChanged);
                     }
@@ -419,21 +797,57 @@ impl Worker {
             }
         }
     }
-    async fn binding(&self, retained: bool) -> Result<Binding, ChatError> {
+    /// Opens a cluster conversation's connection for this run. The local channel needs none.
+    async fn connect(&mut self) -> Result<(), ChatError> {
+        if let Channel::Cluster(cluster) = &self.channel {
+            self.wire = Some(open(cluster).await?);
+        }
+        Ok(())
+    }
+    fn namespace(&self) -> &str {
+        match &self.channel {
+            Channel::Local(_) => ORKA_NAMESPACE,
+            Channel::Cluster(cluster) => &cluster.namespace,
+        }
+    }
+    fn cluster(&self) -> Option<&Arc<ClusterChannel>> {
+        match &self.channel {
+            Channel::Local(_) => None,
+            Channel::Cluster(cluster) => Some(cluster),
+        }
+    }
+    async fn binding(&self, retained: bool, navigator: bool) -> Result<Binding, ChatError> {
         let previous = self
             .context
             .as_ref()
             .filter(|_| retained)
             .map(|c| c.binding.clone());
+        if let Some(cluster) = self.cluster() {
+            let binding = Binding::Cluster {
+                key: cluster.key.clone(),
+                namespace: cluster.namespace.clone(),
+                provider: cluster.provider.clone(),
+            };
+            // A retained context only ever resumes on the channel it was admitted on.
+            return match previous {
+                Some(previous) if previous != binding => Err(ChatError::WorkspaceChanged),
+                _ => Ok(binding),
+            };
+        }
         self.borrow(retained, move |installation, client| {
             if let Some(binding) = &previous {
                 return Ok(binding.clone());
             }
-            let model = client.model_status().map_err(|_| ChatError::Connection)?;
+            // A guest that predates the Navigator's names stops serving its channel on the
+            // first such request, so none is ever sent to it.
+            if navigator && !client.navigator_chat() {
+                return Err(ChatError::WorkspaceOutdated);
+            }
+            let model = client.model_status().map_err(|_| lost(client))?;
             if model.phase != ModelPhase::Ready {
                 return Err(ChatError::Model);
             }
-            Ok(Binding {
+            Ok(Binding::Local {
                 installation,
                 boot: client.boot_nonce(),
                 connection: model.connection.ok_or(ChatError::Model)?,
@@ -442,12 +856,41 @@ impl Worker {
         .await
     }
     async fn request(&self, r: ChatRequest) -> Result<OrkaReply, ChatError> {
-        self.borrow(true, move |_, client| {
-            client
-                .chat_request(r.clone())
-                .map_err(|_| ChatError::Connection)
-        })
-        .await
+        let Some(cluster) = self.cluster() else {
+            return self
+                .borrow(true, move |_, client| {
+                    if r.navigator() && !client.navigator_chat() {
+                        return Err(ChatError::WorkspaceOutdated);
+                    }
+                    client.chat_request(r.clone()).map_err(|_| lost(client))
+                })
+                .await;
+        };
+        // The same admission checks the local borrow makes before every request.
+        if !self.stopping && *self.stop.borrow() {
+            return Err(ChatError::Interrupted);
+        }
+        if Instant::now() >= self.deadline {
+            return Err(ChatError::Connection);
+        }
+        let wire = self.wire.as_ref().ok_or(ChatError::ClusterUnavailable)?;
+        let sent = crate::chat_cluster::send(&**wire, &cluster.namespace, &cluster.provider, &r);
+        match tokio::time::timeout_at(self.deadline, sent).await {
+            Err(_) => Err(ChatError::Connection),
+            Ok(Ok(reply)) => Ok(reply),
+            Ok(Err(Refusal::Failed(error))) => Err(error),
+            Ok(Err(Refusal::Denied(permission))) => {
+                self.owner
+                    .edit(&self.id, self.epoch, |s| s.denied = Some(permission));
+                Err(ChatError::Permission)
+            }
+        }
+    }
+    /// The chosen AI connection's default model, which the Navigator thinks with on a cluster.
+    async fn default_model(&self) -> Result<String, ChatError> {
+        let cluster = self.cluster().ok_or(ChatError::Model)?;
+        let reply = self.get(&format!("providers/{}", cluster.provider)).await?;
+        crate::chat_cluster::default_model(&reply, &cluster.namespace, &cluster.provider)
     }
     async fn get(&self, path: &str) -> Result<OrkaReply, ChatError> {
         self.request(request(ChatMethod::Get, path, None, None))
@@ -464,14 +907,39 @@ impl Worker {
             _ => Err(ChatError::Response),
         }
     }
-    async fn run(&mut self, send: Option<(Arc<AgentFolder>, String)>) -> Result<(), ChatError> {
+    async fn run(&mut self, send: Option<(ChatSource, String)>) -> Result<(), ChatError> {
         // Identify the boot before sending *any* retained name, including during reconnect.
-        let binding = self.binding(send.is_none()).await?;
-        if let Some((folder, message)) = send {
-            let source = tokio::task::spawn_blocking(move || folder.capture_agent())
-                .await
-                .map_err(|_| ChatError::Source)?
-                .map_err(|_| ChatError::Source)?;
+        let navigator = matches!(send, Some((ChatSource::Navigator(_), _)));
+        let binding = self.binding(send.is_none(), navigator).await?;
+        if let Binding::Local { connection, .. } = &binding {
+            self.owner
+                .set_thinks(&self.id, self.epoch, (connection.selection.clone(), false));
+        }
+        if let Some((origin, message)) = send {
+            let family = origin.family();
+            let source = match origin {
+                ChatSource::Document(folder) => {
+                    tokio::task::spawn_blocking(move || folder.capture_agent())
+                        .await
+                        .map_err(|_| ChatError::Source)?
+                        .map_err(|_| ChatError::Source)?
+                }
+                // A Navigator conversation keeps the instructions it started with, so a newly
+                // saved agent does not cost it its Session. A new model starts a new one.
+                ChatSource::Navigator(saved) => {
+                    match self.context.as_ref().filter(|c| c.binding == binding) {
+                        Some(c) => c.source.clone(),
+                        None => match &binding {
+                            Binding::Local { connection, .. } => {
+                                crate::navigator::agent_source(&connection.selection.model, &saved)
+                            }
+                            Binding::Cluster { .. } => {
+                                crate::navigator::agent_source(&self.default_model().await?, &saved)
+                            }
+                        },
+                    }
+                }
+            };
             let parsed = ParsedAgent::parse(&source).map_err(|_| ChatError::Source)?;
             if parsed.has_unknown_local_builtin() {
                 return Err(ChatError::Source);
@@ -479,12 +947,21 @@ impl Worker {
             if parsed.has_unsupported_local_tool() {
                 return Err(ChatError::UnsupportedTool);
             }
+            if let Binding::Cluster { provider, .. } = &binding {
+                let selection = ModelSelection {
+                    vendor: None,
+                    provider: provider.clone(),
+                    model: parsed.model().to_owned(),
+                };
+                self.owner
+                    .set_thinks(&self.id, self.epoch, (selection, true));
+            }
             let fresh = self
                 .context
                 .as_ref()
-                .is_none_or(|c| c.source != source || c.binding != binding);
+                .is_none_or(|c| c.broken || c.source != source || c.binding != binding);
             let session = if fresh {
-                format!("bridge-chat-{}", Uuid::new_v4().simple())
+                format!("{}{}", family.session, Uuid::new_v4().simple())
             } else {
                 self.context.as_ref().unwrap().session.clone()
             };
@@ -493,8 +970,9 @@ impl Worker {
             }
             let agent = if fresh {
                 Planned::new(
-                    "bridge-chat-agent-",
-                    parsed.spec(&binding.connection.selection.provider),
+                    family.agent,
+                    self.namespace(),
+                    parsed.spec(binding.provider()),
                 )
             } else {
                 let c = self.context.as_ref().unwrap();
@@ -511,17 +989,26 @@ impl Worker {
             if fresh {
                 task_spec["sessionRef"]["create"] = json!(true);
             }
-            let task = Planned::new("bridge-chat-task-", task_spec);
+            let task = Planned::new(family.task, self.namespace(), task_spec);
             // Validate both *whole* create bodies before the first mutation.
-            agent
-                .request("agents")
-                .validate()
-                .map_err(|_| ChatError::Source)?;
-            task.request("tasks")
-                .validate()
-                .map_err(|_| ChatError::InvalidMessage)?;
+            let check = |r: ChatRequest| match self.cluster() {
+                None => r.validate(),
+                Some(c) => r.validate_cluster(&c.namespace, &c.provider),
+            };
+            check(agent.request("agents")).map_err(|_| ChatError::Source)?;
+            check(task.request("tasks")).map_err(|_| ChatError::InvalidMessage)?;
             // Preflight rejection must leave the preceding conversation usable.
             self.preflight = false;
+            let mut earlier = Vec::new();
+            if fresh {
+                // A replaced cluster conversation's resources are deleted when the role allows.
+                if let Some(previous) = self.context.take() {
+                    self.owner.clean_up(self.id.clone(), previous);
+                }
+            } else if let Some(previous) = self.context.take() {
+                earlier = previous.earlier;
+                earlier.extend(previous.task.receipt);
+            }
             self.context = Some(Context {
                 source,
                 binding,
@@ -531,13 +1018,17 @@ impl Worker {
                 cursor: 0,
                 deleted: false,
                 stopping: false,
+                cluster: self.cluster().cloned(),
+                earlier,
+                broken: false,
             });
-            self.owner.edit(self.id, self.epoch, |s| {
+            self.owner.edit(&self.id, self.epoch, |s| {
                 if fresh {
                     s.versions.push(ChatVersion::default());
                 }
                 s.versions.last_mut().unwrap().turns.push(ChatTurn {
                     message,
+                    started_at: unix_millis(),
                     ..ChatTurn::default()
                 });
             });
@@ -580,7 +1071,21 @@ impl Worker {
                 ))
                 .await
             {
-                Ok(reply) if reply.status == 201 => return self.ack(agent, reply.body),
+                Ok(reply) if reply.status == 201 => {
+                    // An Orka without Sessions drops the reference and runs a one-off Task.
+                    if !agent
+                        && self.cluster().is_some()
+                        && reply.body["spec"].get("sessionRef").is_none()
+                    {
+                        return self.without_sessions(reply.body).await;
+                    }
+                    return self.ack(agent, reply.body);
+                }
+                // A refused create created nothing.
+                Err(ChatError::Permission) => {
+                    self.safe = true;
+                    return Err(ChatError::Permission);
+                }
                 Ok(reply)
                     if (400..500).contains(&reply.status)
                         && reply.status != 408
@@ -616,6 +1121,7 @@ impl Worker {
         self.ack(agent, reply.body)
     }
     fn ack(&mut self, agent: bool, value: Value) -> Result<(), ChatError> {
+        let namespace = self.namespace().to_owned();
         let c = self.context.as_mut().unwrap();
         let p = if agent { &mut c.agent } else { &mut c.task };
         p.receipt = Some(
@@ -623,12 +1129,31 @@ impl Worker {
                 &value,
                 &p.body["spec"],
                 p.name(),
-                "orka-system",
+                &namespace,
                 if agent { "Agent" } else { "Task" },
             )
             .map_err(|_| ChatError::Identity)?,
         );
         Ok(())
+    }
+    /// The Task this cluster created can never join the conversation: delete it when it is
+    /// exactly ours, and end the conversation with the precise reason.
+    async fn without_sessions(&mut self, value: Value) -> Result<(), ChatError> {
+        let namespace = self.namespace().to_owned();
+        let c = self.context.as_mut().unwrap();
+        let mut spec = c.task.body["spec"].clone();
+        if let Some(spec) = spec.as_object_mut() {
+            spec.remove("sessionRef");
+        }
+        if let Ok(task) = ResourceId::acknowledge(&value, &spec, c.task.name(), &namespace, "Task")
+        {
+            let _ = self
+                .request(request(ChatMethod::Delete, &task.path(), None, None))
+                .await;
+        }
+        self.context.as_mut().unwrap().deleted = true;
+        self.safe = true;
+        Err(ChatError::SessionsUnsupported)
     }
     async fn stop_task(&mut self) -> Result<(), ChatError> {
         self.stopping = true;
@@ -715,9 +1240,14 @@ impl Worker {
                             Some(phase) => phase.as_str().ok_or(ChatError::Response)?,
                         }
                         .to_owned();
-                        self.turn(|t| t.phase = phase.clone());
                         let terminal =
                             matches!(phase.as_str(), "Succeeded" | "Failed" | "Cancelled");
+                        self.turn(|t| {
+                            t.phase = phase.clone();
+                            if terminal && t.finished_at.is_none() {
+                                t.finished_at = Some(unix_millis());
+                            }
+                        });
                         self.state(if phase == "WaitingForInput" || phase == "InputRequired" {
                             ChatState::WaitingForInput
                         } else {
@@ -774,7 +1304,7 @@ impl Worker {
             let p = &reply.body;
             let latest = p["latestSeq"].as_u64().ok_or(ChatError::Response)?;
             if reply.status != 200
-                || p["namespace"] != "orka-system"
+                || p["namespace"] != self.namespace()
                 || p["streamType"] != "task"
                 || p["streamID"] != task.name
                 || p["afterSeq"] != after
@@ -786,12 +1316,13 @@ impl Worker {
                 .as_array()
                 .filter(|e| e.len() <= 1000)
                 .ok_or(ChatError::Response)?;
+            let namespace = self.namespace().to_owned();
             for event in events {
                 let c = self.context.as_mut().unwrap();
                 let next = c.cursor.checked_add(1).ok_or(ChatError::Response)?;
                 if event["seq"] != next
                     || next > latest
-                    || event["namespace"] != "orka-system"
+                    || event["namespace"] != namespace
                     || event["streamType"] != "task"
                     || event["streamID"] != task.name
                     || event
@@ -849,7 +1380,7 @@ impl Worker {
         if reply.status != 200 {
             return Err(ChatError::Response);
         }
-        if reply.body["name"] != c.session || reply.body["namespace"] != "orka-system" {
+        if reply.body["name"] != c.session || reply.body["namespace"] != self.namespace() {
             return Err(ChatError::Identity);
         }
         if !reply.body["activeTask"]
@@ -893,7 +1424,7 @@ impl Worker {
             .map(|m| m.content.as_str());
         let turn = {
             let entries = self.owner.0.lock().unwrap();
-            if self.owner.2.load(Ordering::Relaxed) != self.epoch {
+            if !self.owner.current(&self.id, self.epoch) {
                 return Err(ChatError::WorkspaceChanged);
             }
             entries
@@ -927,6 +1458,76 @@ impl Worker {
         Ok(true)
     }
 }
+/// Deletes a replaced cluster conversation's Task, Session and Agent, in that order, on a
+/// fresh connection. Only generated names of this conversation are addressed, and the Task and
+/// Agent only while they still carry the UID acknowledged at creation. Returns true when the
+/// cluster refused a delete, so the resources stay.
+/// Opening rereads kubeconfig through one shared slot, so a cleanup and the next message can
+/// briefly contend for it. A refusal that persists is the cluster's answer.
+async fn open(cluster: &ClusterChannel) -> Result<Arc<dyn ClusterWire>, ChatError> {
+    for _ in 0..7 {
+        if let Ok(wire) = cluster.open.open().await {
+            return Ok(wire);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    cluster.open.open().await
+}
+async fn clean_up_on(cluster: &ClusterChannel, context: &Context) -> bool {
+    let Ok(wire) = open(cluster).await else {
+        return false;
+    };
+    let call = |r: ChatRequest| {
+        let wire = wire.clone();
+        async move { crate::chat_cluster::send(&*wire, &cluster.namespace, &cluster.provider, &r).await }
+    };
+    let mut paths = Vec::new();
+    let tasks = context.earlier.iter().chain(context.task.receipt.as_ref());
+    for receipt in tasks.chain(context.agent.receipt.as_ref()) {
+        if receipt.kind() == "Agent" && context.task.sent {
+            // A conversation's Session exists once its first Task was sent.
+            paths.push(format!("sessions/{}", context.session));
+        }
+        match call(request(ChatMethod::Get, &receipt.path(), None, None)).await {
+            Ok(reply)
+                if reply.status == 200 && reply.body["metadata"]["uid"] == receipt.uid.as_str() =>
+            {
+                paths.push(receipt.path())
+            }
+            Err(Refusal::Denied(_)) => return finish(&*wire, true).await,
+            _ => {}
+        }
+    }
+    let mut kept = false;
+    for path in paths {
+        if let Err(Refusal::Denied(_)) = call(request(ChatMethod::Delete, &path, None, None)).await
+        {
+            kept = true;
+        }
+    }
+    finish(&*wire, kept).await
+}
+async fn finish(wire: &dyn ClusterWire, kept: bool) -> bool {
+    wire.close().await;
+    kept
+}
+/// A failed local request is a lost connection, or a workspace that stopped serving entirely.
+fn lost(client: &crate::runtime::client::VmClient) -> ChatError {
+    if client.closed() {
+        ChatError::WorkspaceUnavailable
+    } else {
+        ChatError::Connection
+    }
+}
+fn unix_millis() -> u64 {
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
 #[derive(Deserialize)]
 struct TranscriptMessage {
     id: String,
@@ -959,7 +1560,11 @@ mod tests {
             }],
         });
         let stop = entry.stop.subscribe();
-        owner.0.lock().unwrap().insert(id, entry);
+        owner
+            .0
+            .lock()
+            .unwrap()
+            .insert((id, Place::ThisComputer), entry);
         assert!(vm.try_authoring().is_none());
         owner.retire_for_workspace_replacement();
         assert!(*stop.borrow());
@@ -975,8 +1580,9 @@ mod tests {
         let id = DocumentId::SAMPLE;
         let worker = Worker {
             owner: owner.clone(),
-            vm: vm.clone(),
-            id,
+            channel: Channel::Local(vm.clone()),
+            wire: None,
+            id: (id, Place::ThisComputer),
             epoch: owner.2.load(std::sync::atomic::Ordering::Relaxed),
             context: None,
             lease: Arc::new(vm.try_authoring().unwrap()),
@@ -986,7 +1592,11 @@ mod tests {
             safe: true,
             preflight: true,
         };
-        owner.0.lock().unwrap().insert(id, Entry::new(id));
+        owner
+            .0
+            .lock()
+            .unwrap()
+            .insert((id, Place::ThisComputer), Entry::new(id));
         owner.retire_for_workspace_replacement();
         // Missing entries as well as a recreated document must reject old edits.
         worker.state(ChatState::Working);
@@ -998,7 +1608,7 @@ mod tests {
         assert!(fresh.versions.is_empty());
         // Current-epoch edits retain their original semantics.
         owner.edit(
-            id,
+            &(id, Place::ThisComputer),
             owner.2.load(std::sync::atomic::Ordering::Relaxed),
             |s| s.state = ChatState::Working,
         );
@@ -1014,9 +1624,16 @@ mod tests {
         // Exercise detached finalization without requiring a running VM.
         {
             let mut entries = owner.0.lock().unwrap();
-            let entry = entries.entry(id).or_insert_with(|| Entry::new(id));
+            let entry = entries
+                .entry((id, Place::ThisComputer))
+                .or_insert_with(|| Entry::new(id));
             entry.lease = Some(Arc::new(vm.try_authoring().unwrap()));
-            owner.launch(vm.clone(), id, entry, Some((folder, "old message".into())));
+            owner.launch(
+                Channel::Local(vm.clone()),
+                (id, Place::ThisComputer),
+                entry,
+                Some((ChatSource::Document(folder), "old message".into())),
+            );
         }
         owner.retire_for_workspace_replacement();
         owner.new_conversation(id).unwrap();
@@ -1035,6 +1652,60 @@ mod tests {
         assert_eq!(fresh.state, ChatState::Ready);
         assert!(fresh.error.is_none());
         assert!(fresh.can_send && !fresh.busy && fresh.versions.is_empty());
+    }
+
+    #[test]
+    fn turn_times_serialize_as_unix_milliseconds_with_null_until_finished() {
+        let turn = ChatTurn {
+            started_at: 1_700_000_000_000,
+            ..ChatTurn::default()
+        };
+        let value = serde_json::to_value(&turn).unwrap();
+        assert_eq!(value["startedAt"], 1_700_000_000_000u64);
+        assert!(value["finishedAt"].is_null());
+        let done = ChatTurn {
+            finished_at: Some(1_700_000_004_000),
+            ..turn
+        };
+        assert_eq!(
+            serde_json::to_value(&done).unwrap()["finishedAt"],
+            1_700_000_004_000u64
+        );
+        assert!(unix_millis() > 1_700_000_000_000);
+    }
+
+    #[test]
+    fn each_source_creates_only_its_own_family_of_names() {
+        let folder = Arc::new(AgentFolder::new(None));
+        assert_eq!(ChatSource::Document(folder).family(), CHAT_FAMILY);
+        assert_eq!(
+            ChatSource::Navigator(String::new()).family(),
+            NAVIGATOR_FAMILY
+        );
+        let planned = Planned::new(NAVIGATOR_FAMILY.agent, ORKA_NAMESPACE, json!({}));
+        assert!(planned.name().starts_with("bridge-nav-agent-"));
+        assert!(planned.request("agents").validate().is_ok());
+    }
+
+    #[tokio::test]
+    async fn navigator_rejects_empty_messages_before_admission_and_starts_unbound() {
+        let owner = ChatOwner::new(tokio::runtime::Handle::current());
+        let vm = LocalVm::unavailable();
+        assert!(owner.thinks_with().is_none());
+        assert_eq!(
+            owner
+                .send_navigator(vm.clone(), "- web-reader".into(), " \n ".into())
+                .unwrap_err(),
+            ChatError::InvalidMessage
+        );
+        assert!(owner.0.lock().unwrap().is_empty());
+        // The Navigator's conversation is a fixed key that never names a saved file.
+        assert_ne!(crate::navigator::CONVERSATION, DocumentId::SAMPLE);
+        assert!(owner
+            .status(crate::navigator::CONVERSATION)
+            .versions
+            .is_empty());
+        assert!(vm.try_authoring().is_some());
     }
 
     #[test]

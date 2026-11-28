@@ -54,12 +54,12 @@ test('creates during setup, previews the native location and both files, and ope
   expect(calls).not.toContain('agent_run'); expect(calls).not.toContain('workspace_catalog');
 });
 
-test.each(['Chat', 'File'])('creation from %s opens empty Instructions with an incomplete test, never a format error', async previousView => {
+test.each(['Try a task', 'File'])('creation from %s opens empty Instructions with an incomplete test, never a format error', async previousView => {
   const calls: string[] = [];
   native((command, args) => {
     calls.push(command);
     if (command === 'agent_create') return id;
-    if (command === 'agent_chat_status') return { documentId: args.documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+    if (command === 'agent_chat_status') return { documentId: args.documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null, denied: null, keptOnCluster: false, readOnly: false };
   });
   const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: previousView }));
@@ -73,10 +73,10 @@ test.each(['Chat', 'File'])('creation from %s opens empty Instructions with an i
   expect(screen.queryByText(/test list could not be read/i)).toBeNull();
   expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).matches(':disabled')).toBe(true);
-  await user.click(screen.getByRole('button', { name: 'Chat' }));
-  expect(screen.getByText(/write instructions in Agent view before chatting/i)).toBeTruthy();
-  await screen.findByText('Chat is unavailable.');
-  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Hello{Enter}');
+  await user.click(screen.getByRole('button', { name: 'Try a task' }));
+  expect(screen.getByText(/write instructions in Agent view before trying a task/i)).toBeTruthy();
+  expect(screen.queryByText('Try a task is unavailable.')).toBeNull();
+  await user.type(screen.getByRole('textbox', { name: /one task$/ }), 'Hello{Enter}');
   expect(calls).not.toContain('agent_run');
   expect(calls).not.toContain('agent_chat_send');
 });
@@ -123,6 +123,35 @@ test('naming details are available on request without hiding either storage choi
   expect(screen.getAllByRole('radio')).toHaveLength(2);
   await user.click(screen.getByText('Naming details'));
   expect(naming.open).toBe(true);
+});
+
+test('an invalid name gets the rule in words beside the field, not the engine\'s bubble, and creates nothing', async () => {
+  let creates = 0;
+  native(command => { if (command === 'agent_create') creates++; });
+  const user = userEvent.setup(); render(<Example />);
+  await user.click(await screen.findByRole('button', { name: 'New agent' }));
+  const field = screen.getByRole('textbox', { name: 'Name' });
+  expect(field.closest('form')?.noValidate).toBe(true);
+  await user.type(field, 'Bad Name');
+  expect(field.getAttribute('aria-invalid')).toBeNull();
+  // The folder preview never shows a path that can't be created.
+  expect(document.querySelector('.new-agent-path')?.textContent).not.toContain('Bad Name');
+  expect(document.querySelector('.new-agent-path li')?.textContent).toBe('<name>.agent.md');
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+  const error = await screen.findByText('Use only lowercase letters, numbers and hyphens, with no spaces.');
+  expect(error.classList.contains('field-error')).toBe(true);
+  expect(field.getAttribute('aria-invalid')).toBe('true');
+  expect(field.getAttribute('aria-describedby')).toBe('new-agent-name-error new-agent-name-hint');
+  expect(document.activeElement).toBe(field);
+  await user.clear(field); await user.type(field, '-helper');
+  expect(screen.getByText('Begin and end with a letter or number.')).toBeTruthy();
+  await user.clear(field);
+  expect(screen.getByText('Enter a name.')).toBeTruthy();
+  await user.type(field, 'helper');
+  expect(document.querySelector('.new-agent-path li')?.textContent).toBe('helper.agent.md');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(field.getAttribute('aria-invalid')).toBeNull();
+  expect(creates).toBe(0);
 });
 
 test('cancel preserves the mounted draft and creates nothing', async () => {

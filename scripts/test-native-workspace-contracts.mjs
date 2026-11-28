@@ -7,10 +7,13 @@ const read = async name => (await readFile(new URL(name, import.meta.url), 'utf8
 const source = await read('./native-recovery-windows.mjs');
 const refusalExpression = source.match(/const refusal = await evaluate\(`([^`]+)`\);/)[1];
 const retry = { textContent: 'Try again', disabled: true, title: 'Open the matching Bridge version.' };
-const refusalCard = { innerText: 'Open the matching Bridge version.', getClientRects: () => [1], querySelectorAll: () => [retry] };
-const refusal = Function('document', `return ${refusalExpression}`)({ querySelectorAll: selector => selector === '.workspace-failure' ? [refusalCard] : [retry] });
+const freshAction = { textContent: 'Start a fresh workspace', disabled: false };
+const refusalCard = { innerText: 'Open the matching Bridge version.', getClientRects: () => [1], querySelectorAll: () => [retry, freshAction] };
+const refusal = Function('document', `return ${refusalExpression}`)({ querySelectorAll: selector => selector === '.workspace-failure' ? [refusalCard] : [retry, freshAction] });
 assert.equal(refusal.disabled, true, 'first-setup image refusal must find its actual disabled Try again control');
 assert.equal(refusal.title, 'Open the matching Bridge version.');
+assert.equal(refusal.fresh, true, 'first-setup image refusal must offer Start a fresh workspace in its own card');
+assert.equal(refusal.replace, false, 'a fresh workspace is not the update that keeps the old workspace');
 const recoverySource = await read('../app/src/setup/recovery-info.ts');
 const causes = Function(`return ${recoverySource.match(/const causes = (\[[^\n]+\]) as const/)[1]}`)();
 const captureSetup = source.slice(source.indexOf('  async function captureSetup('), source.indexOf('  const actionFixtures'));
@@ -20,7 +23,7 @@ const setupCapture = vm.runInNewContext(`(${captureSetup})`, {
   frameTree: { frame: { id: 'fixture' } }, samplePair: { agent: '', tests: '' },
   call: async () => ({ executionContextId: 1 }), evaluate: async script => { setupInjection = script; throw setupStop; },
 });
-await assert.rejects(setupCapture('dark', 'setup-fit', ['setup-transfer', 'installing', null, false, 'Downloading']), error => error === setupStop);
+await assert.rejects(setupCapture('dark', 'setup-fit', ['setup-transfer', 'installing', null, false, 'Installing cluster files']), error => error === setupStop);
 const setupValues = new Map([['bridge.firstTest.v1', 'attempted']]);
 vm.runInNewContext(setupInjection, { window: {}, localStorage: {
   setItem: (key, value) => setupValues.set(key, value), removeItem: key => setupValues.delete(key),
@@ -77,12 +80,15 @@ assert.ok(start >= 0, 'workspace presentation acceptance gate missing');
 const gate = Function(`${source.slice(start, source.indexOf('  async function captureWorkspace(', start))}; return assertWorkspacePresentation;`)();
 const probe = { heading: 'This computer', pill: 'Ready', text: 'Agents Files', buttons: [], primary: [], firstTest: 'attempted', bar: false, choices: false, runs: 0, grid: true, detailsOpen: false, width: 540, height: 640 };
 gate('ready', probe, 'compact');
-gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting', text: 'Agents Files 0:18 so far' }, 'compact');
+gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting', text: 'Agents Files 18 seconds elapsed', bar: true, buttons: ['Cancel'] }, 'compact');
 gate('stop-failed', { ...probe, pill: "Couldn't stop", text: "Agents Files The workspace didn't stop.", buttons: ['Quit Bridge'], primary: ['Quit Bridge'] }, 'compact');
 for (const mutation of [{ buttons: ['Stop'] }, { buttons: ['Start'] }, { grid: false }, { firstTest: undefined }, { text: 'Files only' }, { detailsOpen: true }]) {
   assert.throws(() => gate('ready', { ...probe, ...mutation }, 'compact'));
 }
 assert.throws(() => gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting' }, 'compact'));
+assert.throws(() => gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting', text: 'Agents Files 18 seconds elapsed', bar: true }, 'compact'));
+assert.throws(() => gate('ready', { ...probe, bar: true }, 'compact'));
+assert.throws(() => gate('ready', { ...probe, buttons: ['Cancel'] }, 'compact'));
 assert.throws(() => gate('stop-failed', { ...probe, text: "The workspace didn't stop.", buttons: ['Restart workspace'], primary: ['Restart workspace'] }, 'compact'));
 for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps1']) {
   const driver = await read(`./${name}`);
@@ -94,7 +100,41 @@ for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps
     ? /theme\s*==\s*"dark"\s*\?\s*\[\s*9\s*,\s*9\s*,\s*10\s*\]\s*:\s*\[\s*255\s*,\s*255\s*,\s*255\s*\]/
     : /if\s*\(\s*\$script:theme\s*-eq\s*'dark'\s*\)\s*\{\s*@\(\s*9\s*,\s*9\s*,\s*10\s*\)\s*\}\s*else\s*\{\s*@\(\s*255\s*,\s*255\s*,\s*255\s*\)\s*\}/;
   assert.match(driver, palette, `${name}: light/dark Orka paper branches are missing or reversed`);
+  // The window edge is chrome around the page panel; the paper sample sits in the panel's bare left padding.
+  const sample = name.endsWith('.swift')
+    ? ['gutter = CGPoint(x: nav.maxX + 16, y: home.minY + 8)', 'x: ((gutter.x - rect.minX) * CGFloat(image.width) / rect.width).rounded(.down)', 'scroll?.location = CGPoint(x: gutter.x, y: rect.midY)', 'heading.minY >= pageTop']
+    : ["Find-Control $script:window 'Clusters' $button", '$bitmap.GetPixel([int]($nav.Current.BoundingRectangle.Right + 16 - $r.X), [int]($homeButton.Current.BoundingRectangle.Top + 8 - $r.Y))'];
+  for (const text of sample) assert.ok(driver.includes(text), `${name}: page paper must be sampled beside the actual sidebar: ${text}`);
 }
+// A fresh profile opens on guided Welcome, without the sidebar. On a healthy setup screen guidance ends only when a
+// cluster is in use: the walks use the loopback fixture cluster, never Continue on this computer, then forget it
+// and choose this computer again, and sample guided pages under their title-bar row.
+{
+  const mac = await read('./native-lifecycle-macos.swift'), windows = await read('./native-lifecycle-windows.ps1');
+  const order = (text, steps) => steps.every((step, index) => text.indexOf(step) >= 0 && (index === 0 || text.indexOf(step) > text.indexOf(steps[index - 1])));
+  assert.ok(!mac.includes('Show all of Bridge') && !windows.includes('Show all of Bridge'), 'the guided title bar has no Show all of Bridge');
+  assert.ok(mac.includes('if !nodes(main).contains(where: { pressable($0, "Get started") }) { press(find(main, "Clusters") { pressable($0, "Clusters") }) }')
+    && mac.includes('"--env", "KUBECONFIG=\\(kubeconfig)"')
+    && order(mac, ['hasPrefix("On a cluster you already have")', 'pressable($0, "Continue")', 'pressableAction($0, "fixture-cluster")', 'pressable($0, "Use this cluster")',
+      'check(!FileManager.default.fileExists(atPath: selected), "Leaving guidance selected a workspace")', 'pressable($0, "Remove cluster")', 'pressable($0, "Use this computer")',
+      'check(!FileManager.default.fileExists(atPath: selected), "Returning to this computer selected a workspace")', 'press(find(main, "Designer")']),
+    'Mac lifecycle must leave guidance through the fixture cluster, forget it, and never select a workspace before Designer');
+  assert.ok(windows.includes("if (!$control) { $control = Find-Control $script:window 'Get started' $button }") && windows.includes('$env:KUBECONFIG = $env:BRIDGE_WALK_KUBECONFIG')
+    && order(windows, ["StartsWith('On a cluster you already have'", "'Guided Continue missing'", "Find-Action $script:window 'fixture-cluster'", "Find-Control $script:window 'Use this cluster' $button",
+      "throw 'Leaving guidance selected a workspace'", "Find-Control $script:window 'Remove cluster' $button", "Find-Control $script:window 'Use this computer' $button",
+      "throw 'Returning to this computer selected a workspace'", "Wait-For 'Designer button missing'"])
+    && windows.includes('$bitmap.GetPixel([int]($row.Left + 8 - $r.X), [int]($row.Bottom + 12 - $r.Y))'), 'Windows lifecycle must leave guidance through the fixture cluster, forget it, sample guided pages, and never select a workspace');
+}
+const windowsLifecycle = await read('./native-lifecycle-windows.ps1');
+// Disclosures and radios act through their UIA patterns before any pointer fallback.
+assert.ok(windowsLifecycle.includes('[System.Windows.Automation.ExpandCollapsePattern]::Pattern') && windowsLifecycle.includes('[System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) { $pattern.Select(); return }'), 'Windows lifecycle must expand disclosures and select radios through UIA patterns');
+// The pointer fallback accepts a hit on Tauri's resize child only for a point clear of the window's resize border.
+assert.ok(windowsLifecycle.includes("$first.Current.Name -eq 'TAURI_DRAG_RESIZE_WINDOW' -and $inside") && windowsLifecycle.includes('$centre.X -ge $frame.Left + 8 -and $centre.X -le $frame.Right - 8'), 'Windows lifecycle may treat only the resize child as transparent, and only inside its border');
+const clickPoint = windowsLifecycle.slice(windowsLifecycle.indexOf('function Get-ClickPoint('), windowsLifecycle.indexOf('function Press('));
+// A coordinate click without UIA's clickable point must still prove, by hit test, that it lands on the control.
+assert.ok(clickPoint.includes('$Element.TryGetClickablePoint([ref]$point)') && clickPoint.includes('[System.Windows.Automation.AutomationElement]::FromPoint($centre)')
+  && clickPoint.includes('[System.Windows.Automation.Automation]::Compare($hit, $Element)') && clickPoint.includes('throw "Native control is covered at its visible centre')
+  && windowsLifecycle.includes('{ $Element } else { Get-ClickPoint $Element }') && !windowsLifecycle.includes('$Element.GetClickablePoint()'), 'Windows lifecycle clicks must be hit-tested on the control');
 const captures = JSON.parse(await read('./native-model-captures.json'));
 // Upgrade frames share the destination journey but have their own exact matrix gate.
 const destinationCaptures = new Set(captures['destinations-workspace'].filter(name => !name.startsWith('local-upgrade-')));
@@ -106,7 +146,9 @@ for (const size of ['wide', 'minimum']) {
   for (const view of ['tests', 'chat']) assert.ok(destinationCaptures.has(`local-designer-waiting-${view}-${size}`), `allocated Designer waiting capture missing: ${view}/${size}`);
 }
 assert.ok(destinationCaptures.has('local-workspace-inside'));
-assert.equal(captures.model.length, 208, '202 incoming model frames plus six existing Overview list/evidence captures must remain intact');
+// The two-card first setup has no Meet card, so its two local-setup-meet frames left the manifest with it.
+assert.equal(captures.model.length, 208, '200 incoming model frames plus six existing Overview list/evidence captures and their two narrow Run tests frames must remain intact');
+assert.ok(!captures.model.some(name => name.startsWith('local-setup-meet-')), 'the two-card first setup has no Meet frames');
 assert.equal(destinationCaptures.size, 51, '18 cluster/catalog frames plus33 workspace/setup/Designer frames');
 for (const size of ['minimum', 'wide']) assert.ok(destinationCaptures.has(`local-workspace-setup-forced-stop-${size}`), 'first-run forced-stop capture missing');
 assert.ok(captures.model.every(name => !destinationCaptures.has(name)), 'native journeys must be disjoint');
@@ -213,27 +255,39 @@ assert.ok(manualError, 'actual Setup manual owner-refresh error missing');
 const refreshedExpression = source.match(/const refreshedText = ([^;]+);/)?.[1];
 assert.ok(refreshedExpression, 'Windows manual-refresh capture expectation missing');
 const model = await read('./native-model-macos.swift');
-// Drive the actual early-message call's delta and seek loop bound from a bottom
-// viewport. A reversed wheel sign must fail rather than exhausting retries below.
+// Drive the actual earlier-tasks call's delta and seek loop bound. At 540x640 the folded list is followed by
+// Instructions and settings, so the page's end is not the list: measured in run 45897379875 at 540 wide, the long
+// task's first line starts 517pt below the top of the page area and the list ends 1054pt below it, in a 596pt window,
+// so both fit only between 458 and 517pt of scroll. The walk first places the list by its own bounds, then the seek
+// may only take short downward steps; a reversed sign or a jump to the page's end must fail.
 function earlySeek(driver) {
   const helper = driver.match(/func seek\([\s\S]*?\n\}/)?.[0];
-  const call = driver.match(/seek\("Remember the checksum ALPHA\.", (-?\d+)([^\n]*)/);
-  assert.ok(helper && call, 'actual long-early seek and helper must exist');
+  const call = driver.match(/seek\("Earlier tasks: 1", (-?\d+)(, diagnosticPrefix[^\n]*)/);
+  assert.ok(helper && call, 'actual earlier-tasks seek and helper must exist');
   const bound = Number(helper.match(/for (?:_|attempt) in 0\.\.<(\d+)/)?.[1]);
   assert.equal(bound, 6, 'recovery must retain the existing six attempts');
   assert.match(helper, /scroll\(pixels\)/, 'misses must use the caller delta');
-  let position = 1000;
-  const captures = [];
-  for (let attempt = 0; attempt < bound; attempt++) {
-    captures.push(position);
-    if (position === 0) return { captures, helper, call };
-    position = Math.max(0, Math.min(1000, position - Number(call[1])));
-  }
-  assert.fail('long-early seek cannot recover from the bottom');
+  const message = 517, list = 1054, window = 596, end = 1700;
+  // Unplaced (from the top) and already placed (list 12pt inside the lower edge) starts.
+  return [0, list - window + 12].map(start => {
+    let position = start;
+    const captures = [];
+    for (let attempt = 0; attempt < bound; attempt++) {
+      captures.push(position);
+      if (position >= list - window) {
+        if (position > message) assert.fail('earlier-tasks seek overshot the long task\'s first line');
+        return { captures, helper, call };
+      }
+      position = Math.max(0, Math.min(end, position - Number(call[1])));
+    }
+    assert.fail('earlier-tasks seek cannot recover from the top');
+  }).reduce((first, placed) => ({ ...first, placed: placed.captures }));
 }
 const earlyRecovery = earlySeek(model);
-assert.deepEqual(earlyRecovery.captures, [1000, 0], 'large upward recovery must capture bottom then top');
-assert.throws(() => earlySeek(model.replace(/seek\("Remember the checksum ALPHA\.", \d+/, 'seek("Remember the checksum ALPHA.", -100')), /cannot recover/);
+assert.deepEqual(earlyRecovery.placed, [470], 'a placed list is captured at once');
+assert.ok(model.includes('let delta = list.maxY - (window()!.1.maxY - 12)'), 'the walk places the folded list by its own bounds before seeking it');
+assert.throws(() => earlySeek(model.replace(/seek\("Earlier tasks: 1", -?\d+(?=, diagnosticPrefix)/, 'seek("Earlier tasks: 1", 100')), /cannot recover/);
+assert.throws(() => earlySeek(model.replace(/seek\("Earlier tasks: 1", -?\d+(?=, diagnosticPrefix)/, 'seek("Earlier tasks: 1", -4000')), /overshot/);
 assert.ok(earlyRecovery.call[2].includes(String.raw`diagnosticPrefix: "chat-long-early-\(size)-seek"`), 'only explicit early caller opts into per-size diagnostics');
 assert.match(earlyRecovery.helper, /diagnosticPrefix: String\? = nil/);
 assert.ok(earlyRecovery.helper.indexOf('if let prefix = diagnosticPrefix') > earlyRecovery.helper.indexOf('capture("local-probe", [])'));

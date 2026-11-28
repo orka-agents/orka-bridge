@@ -43,7 +43,7 @@ test('keyboard context picker searches native metadata without selecting or disc
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'kubectl context' }));
   expect(ipc.mock.calls).toEqual([['cluster_contexts', {}], ['cluster_discover', { contextId: context.id }]]);
-  expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  expect(onPlace).not.toHaveBeenCalled();
   expect(screen.getByRole('button', { name: 'kubectl context', description: context.name })).toBeTruthy();
   expect(screen.queryByText('Access confirmed')).toBeNull();
 });
@@ -93,7 +93,7 @@ test('retrying a context-list read preserves a remembered working connection', a
   const ipc = vi.fn((command: string) => {
     if (command === 'cluster_reconnect') return target;
     if (command === 'cluster_use') return { status: 'connected', providers: [provider], failure: null };
-    if (command === 'cluster_places') return { places: [remembered], selectedKey: remembered.key, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [remembered], selectedKey: remembered.key, persistenceState: 'complete', accessLost: false };
     if (command === 'overview_places') return { places: [remembered], unobserved: [], historyState: 'complete' };
     if (command === 'cluster_contexts') { if (++reads === 1) throw { check: 'configuration', result: 'unknown' }; return [context]; }
     throw Error('Unexpected command ' + command);
@@ -127,9 +127,13 @@ test('pending discovery uses Running and a failed check leaves one primary retry
   expect(screen.queryByRole('button', { name: 'Reload kubeconfig' })).toBeNull();
   expect(document.querySelectorAll('.cluster-card .button-primary')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: 'Details' }));
-  expect(screen.getByText('Check: credentials')).toBeTruthy();
-  expect(screen.getByText('Result: unknown')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Reload kubeconfig' }).classList.contains('button-secondary')).toBe(true);
+  // Words on screen; the raw check and result names stay in Copy details for help.
+  expect(screen.getByText('Step: Signing in to the cluster')).toBeTruthy();
+  expect(screen.getByText('Result: The reason is unknown.')).toBeTruthy();
+  expect(screen.queryByText(/credentials|Result: unknown/)).toBeNull();
+  // In Details, copying for help leads and Reload kubeconfig is the quiet follow-up.
+  expect(screen.getByRole('button', { name: 'Copy details for help' }).classList.contains('button-secondary')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Reload kubeconfig' }).classList.contains('button-quiet')).toBe(true);
   ipc.mockImplementation(() => []);
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   await screen.findByText('No cluster with Orka was found using this context.');

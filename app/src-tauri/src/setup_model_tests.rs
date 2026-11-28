@@ -17,6 +17,8 @@ const SECRET: &[u8] = b"synthetic-model-only";
 mod account_tests;
 #[path = "setup_model_key_tests.rs"]
 mod key_tests;
+#[path = "setup_model_preflight_tests.rs"]
+mod preflight_tests;
 #[path = "setup_model_reset_tests.rs"]
 mod reset_tests;
 
@@ -769,7 +771,9 @@ fn pending_without_id_retries_only_the_installed_generation_without_capture() {
         })
     });
     let result =
-        setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+        setup.connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
+            panic!("no recapture")
+        });
     drop(client);
     let traffic = worker.join().unwrap();
     assert!(result.unwrap().ready);
@@ -856,7 +860,9 @@ fn pending_known_failure_disconnects_and_clears_before_a_fresh_connect() {
         })
     });
     let result =
-        setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+        setup.connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
+            panic!("no recapture")
+        });
     drop(client);
     let traffic = worker.join().unwrap();
     assert!(result.unwrap().ready);
@@ -922,7 +928,9 @@ fn pending_after_acknowledged_clear_reconciles_before_reloading_sign_in() {
         })
     });
     let result =
-        setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+        setup.connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
+            panic!("no recapture")
+        });
     drop(client);
     assert!(result.unwrap().ready);
     assert_eq!(worker.join().unwrap().frames.len(), 5);
@@ -1021,10 +1029,16 @@ fn older_image_refuses_reconnect_without_poisoning_its_existing_control_channel(
     });
     assert_eq!(
         setup
-            .connect_stored_model(install, &mut client, &vault, || panic!("no capture"))
+            .connect_stored_model(
+                install,
+                Some("gpt-5.6-terra"),
+                &mut client,
+                &vault,
+                || panic!("no capture")
+            )
             .unwrap_err()
             .kind,
-        "modelReconnect"
+        "modelReconnectImage"
     );
     assert!(
         client.model_status().is_ok(),
@@ -1045,8 +1059,10 @@ fn unknown_transport_other_is_not_mislabeled_as_a_guest_refusal() {
 fn previous_boot_failures_keep_finite_operation_and_class_without_secrets() {
     for (case, expected) in [
         (0, "modelStatus:unsupported"),
-        (1, "modelStatusPreconditions:refused"),
+        (1, "modelStatusPreconditions:unsupported"),
         (2, "disconnectRetainedModel:refused"),
+        // Not settled yet is worth another check, not a refusal.
+        (3, "modelStatusPreconditions:busy"),
     ] {
         let (_tmp, setup, install, vault) = associated();
         let root = setup.root.as_deref().unwrap();
@@ -1068,6 +1084,13 @@ fn previous_boot_failures_keep_finite_operation_and_class_without_secrets() {
                     state.retained_cleanup = false;
                     ResultBody::ModelState(state)
                 }
+                RequestBody::ModelStatus {} if case == 3 => {
+                    let ResultBody::ModelState(mut state) = idle() else {
+                        unreachable!()
+                    };
+                    state.phase = ModelPhase::Unknown;
+                    ResultBody::ModelState(state)
+                }
                 RequestBody::ModelStatus {} => idle(),
                 RequestBody::ModelDisconnectRetained { .. } => ResultBody::Error {
                     code: ErrorCode::Unavailable,
@@ -1078,7 +1101,13 @@ fn previous_boot_failures_keep_finite_operation_and_class_without_secrets() {
         let error = setup
             .sign_out_model(install, Some(&mut client), &vault)
             .unwrap_err();
-        assert_eq!(error.kind, "modelReconnect");
+        // Only the image without retained cleanup is told it may need a newer image.
+        let kind = if case == 1 {
+            "modelReconnectImage"
+        } else {
+            "modelReconnect"
+        };
+        assert_eq!(error.kind, kind);
         assert_eq!(error.model_detail().as_deref(), Some(expected));
         drop(client);
         worker.join().unwrap();
@@ -1123,7 +1152,13 @@ fn new_boot_cleanup_refusal_preserves_slot_and_binding_before_any_secret_load() 
             })
         });
         assert!(setup
-            .connect_stored_model(install, &mut client, &vault, || panic!("no capture"))
+            .connect_stored_model(
+                install,
+                Some("gpt-5.6-terra"),
+                &mut client,
+                &vault,
+                || panic!("no capture")
+            )
             .is_err());
         drop(client);
         worker.join().unwrap();
@@ -1164,7 +1199,9 @@ fn new_boot_reconnect_cleans_retained_connection_before_loading_saved_sign_in() 
             })
         });
         let result =
-            setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+            setup.connect_stored_model(install, Some("gpt-5.6-terra"), &mut client, &vault, || {
+                panic!("no recapture")
+            });
         drop(client);
         let traffic = worker.join().unwrap();
         assert!(result.unwrap().ready);
@@ -1232,24 +1269,177 @@ fn lost_delivery_ack_is_one_publication_and_durable_pending_even_with_fresh_clie
     assert_eq!(traffic.frames.len(), 3);
     assert_eq!(traffic.publications(), 1);
     assert!(traffic.bytes > SECRET.len());
-    let reopened = SetupStore::new(Some(_tmp.path().to_owned()));
-    let (mut fresh, worker) = peer(Uuid::new_v4(), |_| panic!("pending cannot replay"));
-    assert!(reopened
-        .connect_model(install, selection(), &mut fresh, &vault)
-        .is_err());
-    drop(fresh);
-    worker.join().unwrap().assert_empty();
     let binding = read_binding(setup.root.as_deref().unwrap())
         .unwrap()
         .unwrap();
     assert_eq!(binding.phase, Phase::Pending);
-    assert!(binding.connection.is_none());
-    assert!(reopened.model_binding_status().unwrap().unknown);
+    assert!(binding.only_delivering());
+    assert!(setup.model_binding_status().unwrap().unknown);
+    // The same boot never delivers again: its guest may hold that credential.
     assert_eq!(vault.counts(), (1, 1, 0));
+    // A later boot: the guest kept the credential in memory only, so the attempt left nothing
+    // behind. Bridge forgets it without asking that guest anything about it, and the next
+    // attempt delivers once, under its own Pending barrier.
+    let reopened = SetupStore::new(Some(_tmp.path().to_owned()));
+    let later = Uuid::new_v4();
+    let (mut fresh, worker) = peer(later, |request| match &request.body {
+        RequestBody::ModelStatus {} => Some(idle()),
+        RequestBody::CredentialStatus {} => {
+            Some(ResultBody::CredentialState(credential(None, false)))
+        }
+        RequestBody::CredentialPublish { .. } => None,
+        _ => panic!("no connect after lost publication acknowledgement"),
+    });
+    assert!(reopened
+        .connect_model(install, selection(), &mut fresh, &vault)
+        .is_err());
+    drop(fresh);
+    assert_eq!(worker.join().unwrap().publications(), 1);
+    let binding = read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.phase, Phase::Pending);
+    assert_eq!(binding.nonce, Some(later));
+    assert!(binding.only_delivering());
+    assert!(reopened.model_binding_status().unwrap().unknown);
     assert_eq!(
         vault.slots.lock().unwrap().get(&binding.slot).unwrap(),
         SECRET
     );
+}
+
+#[test]
+fn a_delivery_the_guest_refused_leaves_nothing_pending() {
+    let (_tmp, setup, install, vault) = associated();
+    let (mut client, worker) = peer(Uuid::new_v4(), |request| match &request.body {
+        RequestBody::ModelStatus {} => Some(idle()),
+        RequestBody::CredentialStatus {} => {
+            Some(ResultBody::CredentialState(credential(None, false)))
+        }
+        RequestBody::CredentialPublish { .. } => Some(ResultBody::Error {
+            code: ErrorCode::Unavailable,
+        }),
+        _ => panic!("no connect after a refused delivery"),
+    });
+    let error = setup
+        .connect_model(install, selection(), &mut client, &vault)
+        .unwrap_err();
+    assert_eq!(error.kind, "modelDelivery");
+    // The guest still answers and holds no new credential: the attempt never reached it.
+    let binding = read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.phase, Phase::Stored);
+    assert_eq!((binding.nonce, binding.delivering), (None, false));
+    let status = setup.model_binding_status().unwrap();
+    assert!(status.associated && !status.unknown);
+    // Removal needs nothing from the guest.
+    setup
+        .sign_out_model(install, Some(&mut client), &vault)
+        .unwrap();
+    drop(client);
+    assert_eq!(worker.join().unwrap().publications(), 1);
+    assert!(read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn a_connect_sent_without_an_answer_is_never_guessed_on_a_later_boot() {
+    let (_tmp, setup, install, vault) = associated();
+    let root = setup.root.as_ref().unwrap().clone();
+    let generation = Uuid::new_v4();
+    // The connect went out, and its answer was lost with the workspace.
+    let (mut client, worker) = peer(Uuid::new_v4(), move |request| match &request.body {
+        RequestBody::ModelStatus {} => Some(idle()),
+        RequestBody::CredentialStatus {} => {
+            Some(ResultBody::CredentialState(credential(None, false)))
+        }
+        RequestBody::CredentialPublish { .. } => Some(ResultBody::CredentialState(credential(
+            Some(generation),
+            true,
+        ))),
+        RequestBody::ModelConnect { .. } => {
+            let binding = read_binding(&root).unwrap().unwrap();
+            assert!(!binding.delivering, "durable before the connect is sent");
+            None
+        }
+        _ => panic!("unexpected request"),
+    });
+    assert!(setup
+        .connect_model(install, selection(), &mut client, &vault)
+        .is_err());
+    drop(client);
+    worker.join().unwrap();
+    let before = fs::read(setup.root.as_ref().unwrap().join("model-v1")).unwrap();
+    // A later boot cannot name what kmx may keep, so neither Connect nor Remove can clear it:
+    // both refuse at once, without traffic, as a cleanup the workspace cannot do.
+    let (mut fresh, worker) = peer(Uuid::new_v4(), |_| panic!("nothing to ask"));
+    for result in [
+        setup.connect_model(install, selection(), &mut fresh, &vault),
+        setup.sign_out_model(install, Some(&mut fresh), &vault),
+    ] {
+        let error = result.unwrap_err();
+        assert_eq!(error.kind, "modelReconnect");
+        assert_eq!(error.cleanup, Some(("connectionUnknown", "refused")));
+    }
+    drop(fresh);
+    worker.join().unwrap().assert_empty();
+    assert_eq!(
+        fs::read(setup.root.as_ref().unwrap().join("model-v1")).unwrap(),
+        before
+    );
+    assert_eq!(vault.counts().2, 0);
+}
+
+#[test]
+fn removing_an_unanswered_attempt_in_the_same_boot_asks_the_guest_what_it_holds() {
+    for (phase, installed, removed) in [
+        (ModelPhase::Idle, true, true),
+        (ModelPhase::Idle, false, true),
+        (ModelPhase::Unknown, true, false),
+    ] {
+        let (_tmp, setup, install, vault) = associated();
+        let generation = Uuid::new_v4();
+        let cleared = Arc::new(std::sync::Mutex::new(false));
+        let seen = cleared.clone();
+        let (mut client, worker) = peer(Uuid::new_v4(), move |request| match &request.body {
+            RequestBody::ModelStatus {} => Some(ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
+                diagnostic: None,
+                phase,
+                connection: None,
+                credential: credential(Some(generation), installed),
+            })),
+            RequestBody::CredentialStatus {} => Some(ResultBody::CredentialState(credential(
+                Some(generation),
+                installed,
+            ))),
+            RequestBody::CredentialClear {
+                expected_generation,
+            } => {
+                assert_eq!(*expected_generation, generation);
+                *seen.lock().unwrap() = true;
+                Some(ResultBody::CredentialState(credential(
+                    Some(Uuid::new_v4()),
+                    false,
+                )))
+            }
+            _ => panic!("unexpected request"),
+        });
+        // Pending in this boot with no acknowledged identity, as a lost delivery leaves it.
+        let root = setup.root.as_deref().unwrap();
+        let mut binding = read_binding(root).unwrap().unwrap();
+        binding.phase = Phase::Pending;
+        binding.nonce = Some(client.boot_nonce());
+        write_binding(root, &binding).unwrap();
+        let result = setup.sign_out_model(install, Some(&mut client), &vault);
+        assert_eq!(result.is_ok(), removed, "{phase:?} {installed}");
+        assert_eq!(*cleared.lock().unwrap(), removed && installed);
+        assert_eq!(read_binding(root).unwrap().is_none(), removed);
+        drop(client);
+        worker.join().unwrap();
+    }
 }
 
 #[test]

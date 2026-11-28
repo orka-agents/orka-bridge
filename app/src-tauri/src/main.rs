@@ -5,6 +5,7 @@ use bridge_engine::agents::Agents;
 use bridge_engine::chat::{ChatError, ChatOwner, ChatSnapshot};
 use bridge_engine::engine::{types::*, EngineState};
 use bridge_engine::local_vm::{self, LocalVm, LocalVmStatus};
+use bridge_engine::navigator::{self, NavigatorSnapshot};
 use bridge_engine::send::{SendOwner, SendStatus};
 use bridge_engine::setup::{SetupError, SetupSnapshot, SetupStore};
 use bridge_engine::shutdown::TerminalShutdown;
@@ -319,6 +320,7 @@ impl From<bridge_engine::setup::ModelSetupState> for ModelReply {
 #[tauri::command]
 async fn setup_connect_model(
     vendor: Option<bridge_runtime_protocol::ModelVendor>,
+    model: Option<String>,
     state: tauri::State<'_, Arc<SetupStore>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
 ) -> Result<ModelReply, SetupError> {
@@ -326,9 +328,18 @@ async fn setup_connect_model(
         vm.connect_saved_key_model(Arc::clone(state.inner()), vendor)
             .await?
     } else {
-        vm.connect_model(Arc::clone(state.inner())).await?
+        vm.connect_model(Arc::clone(state.inner()), model).await?
     };
     Ok(model.into())
+}
+
+/// Host-only: checks the GitHub CLI sign-in and the Copilot model with GitHub while
+/// the workspace is still on its way. Saves nothing and touches no workspace.
+#[tauri::command]
+async fn setup_check_model(
+    state: tauri::State<'_, Arc<SetupStore>>,
+) -> Result<bridge_engine::setup::CopilotCheck, SetupError> {
+    Arc::clone(state.inner()).check_copilot_async().await
 }
 
 #[tauri::command]
@@ -448,48 +459,214 @@ async fn job_run_start(
     )
 }
 
+type Clusters<'a> = tauri::State<'a, bridge_engine::clusters::commands::ClusterSession>;
+/// The selected place for one command: the local workspace, or the cluster named by the
+/// renderer's opaque ids for a target and AI connection already confirmed in this run.
+fn chat_channel(
+    vm: &Arc<LocalVm>,
+    clusters: &bridge_engine::clusters::commands::ClusterSession,
+    target_id: Option<String>,
+    provider_id: Option<String>,
+) -> Result<bridge_engine::chat::Channel, ChatError> {
+    match (target_id, provider_id) {
+        (None, None) => Ok(bridge_engine::chat::Channel::Local(vm.clone())),
+        (Some(target), Some(provider)) => {
+            bridge_engine::clusters::chat::channel(clusters, &target, &provider)
+                .map(bridge_engine::chat::Channel::Cluster)
+        }
+        _ => Err(ChatError::Model),
+    }
+}
+/// The selected place's conversation, or an empty one saying why that place can't be read.
+fn chat_status(
+    owner: &ChatOwner,
+    id: DocumentId,
+    channel: Result<bridge_engine::chat::Channel, ChatError>,
+) -> ChatSnapshot {
+    match channel {
+        Ok(channel) => owner.status_on(id, &channel),
+        Err(error) => ChatOwner::unavailable(id, error),
+    }
+}
 #[tauri::command]
 fn agent_chat_status(
     document_id: DocumentId,
+    target_id: Option<String>,
+    provider_id: Option<String>,
     state: tauri::State<'_, Arc<ChatOwner>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: Clusters<'_>,
 ) -> ChatSnapshot {
-    state.status(document_id)
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id);
+    chat_status(&state, document_id, channel)
 }
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn agent_chat_send(
     document_id: DocumentId,
     message: String,
+    target_id: Option<String>,
+    provider_id: Option<String>,
     agents: tauri::State<'_, Arc<Agents>>,
     state: tauri::State<'_, Arc<ChatOwner>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: Clusters<'_>,
 ) -> Result<ChatSnapshot, ChatError> {
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id)?;
     let folder = document_folder(agents.inner().clone(), document_id)
         .await
         .map_err(|_| ChatError::Source)?;
-    state.send(vm.inner().clone(), folder, message)
+    state.send_on(channel, folder, message)
 }
 #[tauri::command]
 fn agent_chat_reconnect(
     document_id: DocumentId,
+    target_id: Option<String>,
+    provider_id: Option<String>,
     state: tauri::State<'_, Arc<ChatOwner>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: Clusters<'_>,
 ) -> Result<ChatSnapshot, ChatError> {
-    state.reconnect(vm.inner().clone(), document_id)
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id)?;
+    state.reconnect_on(channel, document_id)
 }
 #[tauri::command]
 fn agent_chat_stop(
     document_id: DocumentId,
+    target_id: Option<String>,
+    provider_id: Option<String>,
     state: tauri::State<'_, Arc<ChatOwner>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: Clusters<'_>,
 ) -> Result<ChatSnapshot, ChatError> {
-    state.stop(vm.inner().clone(), document_id)
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id)?;
+    state.stop_on(channel, document_id)
 }
 #[tauri::command]
 fn agent_chat_new(
     document_id: DocumentId,
+    target_id: Option<String>,
+    provider_id: Option<String>,
     state: tauri::State<'_, Arc<ChatOwner>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: Clusters<'_>,
 ) -> Result<ChatSnapshot, ChatError> {
-    state.new_conversation(document_id)
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id)?;
+    state.new_conversation_on(&channel, document_id)
+}
+
+/// The Navigator's conversation owner, apart from Try a task's so neither command set can
+/// read, send to or stop the other's conversation. It also remembers whether the installed
+/// workspace image's guest advertised the Navigator's names; a replaced workspace forgets it.
+struct NavigatorChat(Arc<ChatOwner>, Arc<std::sync::Mutex<Option<bool>>>);
+impl NavigatorChat {
+    fn snapshot(
+        &self,
+        channel: &bridge_engine::chat::Channel,
+        chat: ChatSnapshot,
+    ) -> NavigatorSnapshot {
+        let mut snapshot = navigator::snapshot(&self.0, &channel.place(), chat);
+        snapshot.workspace_too_old = matches!(channel, bridge_engine::chat::Channel::Local(_))
+            && *self.1.lock().unwrap() == Some(false);
+        snapshot
+    }
+    /// Reads the running guest's advertised capability once per installed image, from the hello
+    /// it already sent; nothing is sent to the guest. A busy or stopped workspace is read later.
+    async fn observe(&self, vm: &Arc<LocalVm>) {
+        if self.1.lock().unwrap().is_some() {
+            return;
+        }
+        if let Ok(seen) = vm.with_client(|_, client| client.navigator_chat()).await {
+            *self.1.lock().unwrap() = Some(seen);
+        }
+    }
+}
+#[tauri::command]
+async fn navigator_status(
+    target_id: Option<String>,
+    provider_id: Option<String>,
+    state: tauri::State<'_, NavigatorChat>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: Clusters<'_>,
+) -> Result<NavigatorSnapshot, ChatError> {
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id);
+    if let Ok(local @ bridge_engine::chat::Channel::Local(_)) = &channel {
+        state.observe(vm.inner()).await;
+        let chat = state.0.status_on(navigator::CONVERSATION, local);
+        return Ok(state.snapshot(local, chat));
+    }
+    let chat = chat_status(&state.0, navigator::CONVERSATION, channel.clone());
+    Ok(match channel {
+        Ok(channel) => state.snapshot(&channel, chat),
+        Err(_) => navigator::NavigatorSnapshot {
+            chat,
+            thinks_with: None,
+            workspace_too_old: false,
+        },
+    })
+}
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn navigator_send(
+    message: String,
+    target_id: Option<String>,
+    provider_id: Option<String>,
+    agents: tauri::State<'_, Arc<Agents>>,
+    state: tauri::State<'_, NavigatorChat>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: Clusters<'_>,
+) -> Result<NavigatorSnapshot, ChatError> {
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id)?;
+    let agents = agents.inner().clone();
+    let saved = tauri::async_runtime::spawn_blocking(move || navigator::saved_agents(&agents))
+        .await
+        .map_err(|_| ChatError::Source)?;
+    let owner = state.0.clone();
+    owner
+        .send_navigator_on(channel.clone(), saved, message)
+        .map(|chat| state.snapshot(&channel, chat))
+}
+#[tauri::command]
+fn navigator_reconnect(
+    target_id: Option<String>,
+    provider_id: Option<String>,
+    state: tauri::State<'_, NavigatorChat>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: Clusters<'_>,
+) -> Result<NavigatorSnapshot, ChatError> {
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id)?;
+    state
+        .0
+        .reconnect_on(channel.clone(), navigator::CONVERSATION)
+        .map(|chat| state.snapshot(&channel, chat))
+}
+#[tauri::command]
+fn navigator_stop(
+    target_id: Option<String>,
+    provider_id: Option<String>,
+    state: tauri::State<'_, NavigatorChat>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: Clusters<'_>,
+) -> Result<NavigatorSnapshot, ChatError> {
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id)?;
+    state
+        .0
+        .stop_on(channel.clone(), navigator::CONVERSATION)
+        .map(|chat| state.snapshot(&channel, chat))
+}
+#[tauri::command]
+fn navigator_new(
+    target_id: Option<String>,
+    provider_id: Option<String>,
+    state: tauri::State<'_, NavigatorChat>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    clusters: Clusters<'_>,
+) -> Result<NavigatorSnapshot, ChatError> {
+    let channel = chat_channel(vm.inner(), clusters.inner(), target_id, provider_id)?;
+    state
+        .0
+        .new_conversation_on(&channel, navigator::CONVERSATION)
+        .map(|chat| state.snapshot(&channel, chat))
 }
 
 #[tauri::command]
@@ -636,6 +813,19 @@ async fn workspace_upgrade_remove<R: tauri::Runtime>(
     vm.remove_workspace_credential(data, local, transaction)
         .await
         .map_err(|_| "The saved connection could not be removed.")
+}
+/// Start a fresh workspace. The renderer supplies nothing: paths, the workspace and the saved
+/// AI connection are all native-selected. A refusal is a state in the reply, not an error.
+#[tauri::command]
+async fn workspace_fresh_start<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    store: tauri::State<'_, Arc<SetupStore>>,
+) -> Result<bridge_engine::workspace_fresh::FreshStatusDto, &'static str> {
+    let (data, local, _) = upgrade_paths(&app)?;
+    Ok(vm
+        .start_fresh_workspace(data, local, store.inner().clone())
+        .await)
 }
 #[tauri::command]
 async fn workspace_upgrade_cancel(
@@ -831,6 +1021,38 @@ fn main() {
                 app.path().app_data_dir().ok(),
                 app.path().app_local_data_dir().ok(),
             ));
+            // An interrupted fresh workspace finishes, or is undone, before anything opens one.
+            let fresh = match (app.path().app_data_dir(), app.path().app_local_data_dir()) {
+                (Ok(data), Ok(local)) => bridge_engine::workspace_fresh::recover_startup(
+                    &data,
+                    &local,
+                    &store,
+                    &bridge_engine::runtime::credential_store::OsCredentialStore,
+                ),
+                _ => Ok(None),
+            };
+            // A first install that never finished starts again from scratch, as a fresh
+            // workspace would: nothing else can open it.
+            let (fresh, discarded) = match (
+                fresh,
+                app.path().app_data_dir(),
+                app.path().app_local_data_dir(),
+            ) {
+                (Ok(status), Ok(data), Ok(local))
+                    if status.as_ref().is_none_or(|status| !status.blocks_launch()) =>
+                {
+                    match bridge_engine::workspace_fresh::discard_unfinished_install(
+                        &data,
+                        &local,
+                        &store,
+                        &bridge_engine::runtime::credential_store::OsCredentialStore,
+                    ) {
+                        Ok(cleaning) => (Ok(status), cleaning),
+                        Err(unfinished) => (Ok(Some(unfinished)), false),
+                    }
+                }
+                (fresh, _, _) => (fresh, false),
+            };
             let recovery = match (app.path().app_data_dir(), app.path().app_local_data_dir()) {
                 (Ok(data), Ok(local)) => {
                     bridge_engine::workspace_upgrade::recover_startup(&data, &local)
@@ -842,16 +1064,33 @@ fn main() {
                 app.path().app_data_dir().ok(),
                 app.path().app_local_data_dir().ok(),
             );
-            let vm = if recovery.is_ok() {
+            // A settled fresh workspace never blocks a launch; an unfinished one keeps the
+            // workspace stopped and says what Bridge found (seed_fresh blocks it).
+            let vm = if recovery.is_ok() && fresh.is_ok() {
                 vm
             } else {
                 vm.for_recovery()
             };
+            let fresh_cleanup = match fresh {
+                Ok(Some(dto)) => {
+                    let cleaning = matches!(
+                        dto,
+                        bridge_engine::workspace_fresh::FreshStatusDto::Replaced {
+                            cleaning: true,
+                            ..
+                        }
+                    );
+                    vm.seed_fresh(dto);
+                    cleaning
+                }
+                _ => false,
+            } || discarded;
             vm.set_workspace_replaced(recovery.as_ref().copied().unwrap_or(true));
             if let (Ok(data), Ok(local)) =
                 (app.path().app_data_dir(), app.path().app_local_data_dir())
             {
                 vm.seed_upgrade_status(&data, &local);
+                vm.set_fresh_root(data, local);
             }
             #[cfg(debug_assertions)]
             startup_marker("local VM configured");
@@ -864,6 +1103,9 @@ fn main() {
             app.manage(vm.clone());
             let chat = ChatOwner::new(tauri::async_runtime::handle().inner().clone());
             app.manage(chat.clone());
+            let nav = ChatOwner::new(tauri::async_runtime::handle().inner().clone());
+            let image_offers_navigator = Arc::new(std::sync::Mutex::new(None));
+            app.manage(NavigatorChat(nav.clone(), image_offers_navigator.clone()));
             let session = bridge_engine::clusters::commands::ClusterSession::with_storage(
                 app.path().app_local_data_dir().ok(),
             );
@@ -883,11 +1125,19 @@ fn main() {
                 app.path().app_local_data_dir().ok(),
             );
             app.manage(run.clone());
-            let (chat, run) = (Arc::downgrade(&chat), Arc::downgrade(&run));
+            let (chat, nav, run) = (
+                Arc::downgrade(&chat),
+                Arc::downgrade(&nav),
+                Arc::downgrade(&run),
+            );
             vm.on_workspace_replaced(Arc::new(move || {
                 if let Some(chat) = chat.upgrade() {
                     chat.retire_for_workspace_replacement();
                 }
+                if let Some(nav) = nav.upgrade() {
+                    nav.retire_for_workspace_replacement();
+                }
+                *image_offers_navigator.lock().unwrap() = None;
                 if let Some(run) = run.upgrade() {
                     run.retire_for_workspace_replacement();
                 }
@@ -901,7 +1151,11 @@ fn main() {
             )?;
             #[cfg(debug_assertions)]
             startup_marker("ready");
+            let paths = (app.path().app_data_dir(), app.path().app_local_data_dir());
             tauri::async_runtime::spawn(async move {
+                if let (true, Ok(data), Ok(local)) = (fresh_cleanup, paths.0, paths.1) {
+                    vm.clean_fresh_workspace(data, local);
+                }
                 if local_vm::resume_selected(store, &vm).await.is_err() {
                     eprintln!("The saved setup choice could not be read.");
                 }
@@ -920,6 +1174,7 @@ fn main() {
             setup_open_help,
             setup_example,
             setup_connect_model,
+            setup_check_model,
             setup_connect_key,
             setup_remove_model,
             setup_reset_model,
@@ -933,6 +1188,11 @@ fn main() {
             agent_chat_reconnect,
             agent_chat_stop,
             agent_chat_new,
+            navigator_status,
+            navigator_send,
+            navigator_reconnect,
+            navigator_stop,
+            navigator_new,
             agents_list,
             overview_files,
             overview_agents,
@@ -954,6 +1214,7 @@ fn main() {
             workspace_upgrade_transfer,
             workspace_upgrade_remove,
             workspace_upgrade_cancel,
+            workspace_fresh_start,
             cluster_places,
             cluster_reconnect,
             cluster_select,

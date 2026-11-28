@@ -4,8 +4,9 @@ import { type Status, StatusPill } from './DesignSystem';
 import { Disclosure } from './Disclosure';
 import { type TestCase, TestStory } from './TestStory';
 
-type Props = { definitions?: TestDefinition[]; report?: RunSnapshot['report']; stale: boolean; running?: boolean; vendor?: RunSnapshot['vendor'] };
-export function DesignerTests({ definitions, report, stale, running, vendor }: Props) {
+/** closed starts every row folded, for a card reduced to its head line while the Send card leads. */
+type Props = { definitions?: TestDefinition[]; report?: RunSnapshot['report']; stale: boolean; running?: boolean; vendor?: RunSnapshot['vendor']; closed?: boolean };
+export function DesignerTests({ definitions, report, stale, running, vendor, closed = false }: Props) {
   const order = { failed: 0, unknown: 1, passed: 2, cancelled: 3 };
   const rows: { definition: TestDefinition; result?: TestCase }[] = report?.cases.map(result => ({
     definition: { id: result.id, title: validTestTitle(result.title) ? result.title : undefined, question: result.question }, result,
@@ -17,10 +18,10 @@ export function DesignerTests({ definitions, report, stale, running, vendor }: P
   if (!rows.length) return <p className="muted">{running ? 'Waiting for test results.' : definitions ? 'No test results yet.' : 'The test list could not be read. Open the test file in Details to check its format.'}</p>;
   return <div className={`test-results designer-test-list${stale ? ' result-stale' : ''}`}>
     {rows.map(({ definition: d, result }) => {
-      const state: Status = stale && result ? 'stale' : !result ? 'not-started' : result.verdict === 'unknown' ? 'stale' : result.verdict === 'cancelled' ? 'not-started' : result.verdict;
+      const state: Status = stale && result ? 'stale' : !result ? 'not-started' : result.verdict === 'unknown' ? 'needs-you' : result.verdict === 'cancelled' ? 'not-started' : result.verdict;
       const label = stale && result ? 'Earlier result' : !result ? running ? 'Awaiting result' : 'Not started' : result.phase === 'NotRun' ? 'Not run' : result.verdict === 'cancelled' ? 'Cancelled' : result.verdict === 'unknown' ? 'Unknown' : undefined;
-      return <Disclosure className="test-result" data-result-id={d.id} key={`${d.id}:${result?.verdict ?? 'idle'}:${stale}`} defaultOpen={!!result && result.verdict !== 'passed'} label={<>
-        <span className="test-name">{d.title ? <><span>{d.title}</span><code>{d.id}</code></> : <code>{d.id}</code>}</span>
+      return <Disclosure className="test-result" data-result-id={d.id} key={`${d.id}:${result?.verdict ?? 'idle'}:${stale}:${closed}`} defaultOpen={!closed && !!result && result.verdict !== 'passed'} label={<>
+        <span className="test-name"><code>{d.id}</code>{d.title && <span>{d.title}</span>}</span>
         <StatusPill state={state}>{label}</StatusPill>
       </>}>
         {result ? <TestStory result={result} stale={stale} vendor={vendor} /> : <div className="test-preview"><h5 className="section-label">Question</h5><p className="reading">{d.question}</p></div>}
