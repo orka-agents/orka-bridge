@@ -86,6 +86,8 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   const [details, setDetails] = useState(false);
   // Set when the creator asks to see the provider choices again under a Copilot failure on the setup card.
   const [anotherChoice, setAnotherChoice] = useState(false);
+  // Learned from native's refusal: this workspace can't use your own API key. A new workspace remounts the card.
+  const [keysUnsupported, setKeysUnsupported] = useState(false);
   const [removed, setRemoved] = useState(false);
   const [connected, setConnected] = useState(false);
   const [attempted, setAttempted] = useState(false);
@@ -216,6 +218,9 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
       if (['modelCaptureUnavailable', 'modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(result.category)) setAttempted(false);
       // A refused preflight saved nothing: this attempt adds no sign-in to remove.
       if (isPreflightCategory(result.category)) { setAttempted(before.attempted); setRemoved(before.removed); }
+      // The workspace's image predates API keys: native refused before saving or sending anything, so there is no
+      // saved key to remove or check again, and this workspace stays without keys until it is replaced.
+      if (result.category === 'modelKeyUnsupported') { setAttempted(before.attempted); setRemoved(before.removed); setKeysUnsupported(true); }
       setError(result);
       // Consecutive refusals: the workspace said no to removing the previous connection. Any other outcome starts over,
       // so an uncertain one still gets its Check again.
@@ -368,6 +373,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     : <p className="muted">Bridge checks your GitHub sign-in, then lists the models your Copilot plan offers.</p>;
   // What the selected choice means: on first setup it sits inside the selected option; elsewhere it follows both options.
   const choiceDetail = <>
+    {keyMode && keysUnsupported && !error && <p className="muted">The workspace on this computer can't use your own API key yet. Choose GitHub Copilot instead.</p>}
     {keyMode ? keyForm : !connecting && <p className="muted">Use GitHub Copilot. GitHub CLI must be installed and signed in to github.com.</p>}
     {keyMode ? <p>Model <code>{company.model}</code>, a good default.</p> : copilotModelLine}
     {!enabled && keyMode ? <p className="muted">Bridge can't queue a key. Enter it once the workspace is ready.</p>
@@ -418,6 +424,8 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
       {queued && <><span className="status-description">{checking ? 'Checking your GitHub sign-in. Connects when the workspace is ready.' : catalog && model ? `GitHub Copilot is ready: ${catalog.account ? `signed in as ${catalog.account}, ` : ''}model ${model}. Connects when the workspace is ready.` : 'Connects when the workspace is ready.'}</span>{catalog && model && (!compact || expanded) && <Button type="button" kind="quiet" aria-label="Change model" onClick={() => { setQueued(false); setPicking(true); }}>Change</Button>}{(!compact || expanded) && <Button type="button" kind="secondary" aria-label={compact ? undefined : 'Cancel queued connection'} onClick={() => { setQueued(false); checkRequest.current++; setChecking(false); if (compact) { setExpanded(false); changeButton.current?.focus(); } }}>{compact ? "Don't connect automatically" : 'Cancel'}</Button>}</>}
     </div>
     : freshAction ? <Button key="model-fresh" ref={retry} type="button" kind="primary" disabled={paused || !!busy} onClick={onFreshWorkspace}>Start a fresh workspace</Button>
+    // Without keys on this workspace, the way forward is the other route, not another try with a key.
+    : keyMode && keysUnsupported && !hasSignIn && !ready ? <Button key="model-copilot" ref={retry} type="button" kind="primary" disabled={paused || !!busy} onClick={() => chooseKind('copilot')}>Use GitHub Copilot</Button>
     : !ready && !removalFailed && <Button key="model-connect" ref={retry} type="button" kind={primary ? 'primary' : 'secondary'} className={awaitingKey && primary ? 'model-connect-waiting' : undefined} aria-describedby={awaitingKey ? fieldError ? 'model-key-error' : 'model-key-help' : undefined} disabled={(!enabled && (!queueable || keyMode)) || paused || !!busy || (keyMode && !hasKey && !hasSignIn) || (!keyMode && noModels && !error)} onClick={choose}>
       {error && failedAction === 'connect' && error.category !== 'modelCopilotModelNotOffered' ? 'Check again' : 'Connect the AI'}
     </Button>}
