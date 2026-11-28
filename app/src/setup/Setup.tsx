@@ -6,7 +6,7 @@ import Places from '../clusters/Places';
 import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
 import type { Place } from '../overview/api';
-import { armFirstTest, firstTestAttempted, firstTestPending, rearmFirstTest, retireFirstTest } from './first-test';
+import { armFirstTest, firstTestAttempted, firstTestPending, rearmFirstTest, rearmFirstTestForFresh, retireFirstTest } from './first-test';
 import Model, { type ModelState } from './Model';
 import Preflight from './Preflight';
 import { canQueueModel, setupView, workspaceExited } from './progress';
@@ -211,11 +211,16 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     const request = ++epoch.current;
     void setupStatus().then(result => {
       if (request !== epoch.current) return;
-      const returning = returningSession.current;
       if (result.ok) {
+        // A fresh workspace (also one native finished at launch) is a new first setup: its first test runs again, once.
+        const fresh = result.status.workspaceFresh;
+        if (fresh?.state === 'replaced' && rearmFirstTestForFresh(fresh.transaction)) {
+          returningSession.current = false;
+          if (!initialStatus.current) setWorkspace(false);
+        }
         if (initialStatus.current) {
           // A saved choice also exists mid-setup. Only a retired first-test intent proves a returning session.
-          setWorkspace(result.status.selected === 'localVm' && result.status.localVm !== 'notIntegrated' && returning); initialStatus.current = false;
+          setWorkspace(result.status.selected === 'localVm' && result.status.localVm !== 'notIntegrated' && returningSession.current); initialStatus.current = false;
         }
         workspaceReplaced.current ||= !!result.status.workspaceReplaced;
         if (workspaceReplaced.current) result.status.workspaceReplaced = true;
@@ -398,8 +403,8 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     if (result.state === 'replaced') {
       // The new workspace sets up as on a new computer: the ordinary first-setup screen, its AI card ready to connect.
       setWorkspace(false); setRetriedFailure(undefined); setFreshGeneration(value => value + 1);
-      // A new workspace runs its first test automatically again, once the AI is connected.
-      rearmFirstTest();
+      // A new workspace runs its first test automatically again, once the AI is connected; once per replacement.
+      if (!rearmFirstTestForFresh(result.transaction)) rearmFirstTest();
     }
     setCheck(value => value + 1);
   }

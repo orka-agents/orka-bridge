@@ -353,6 +353,23 @@ test('an unfinished fresh workspace is what This computer waits on, in the list 
   expect(screen.getAllByText('Fresh workspace not finished').length).toBeGreaterThan(0);
 });
 
+test('a fresh workspace finished at launch re-arms the first test once for its transaction', async () => {
+  status = { selected: 'localVm', localVm: 'preparing', model: 'locked', modelSupported: true, workspaceFresh: { state: 'replaced', transaction, ai: 'removed', reclaimable: [], cleaning: false } };
+  const first = render(<App />);
+  await openLocalSetup();
+  // A new first setup: the setup card, not the returning workspace, and its first test pending again.
+  expect(await screen.findByRole('region', { name: 'Workspace setup' })).toBeTruthy();
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('pending');
+  expect(localStorage.getItem('bridge.firstTest.freshTransaction.v1')).toBe(transaction);
+  first.unmount();
+  // That first test was tried; reopening with the same transaction doesn't re-arm it again.
+  localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  render(<App />);
+  await openLocalSetup();
+  expect(await screen.findByRole('region', { name: 'Workspace' })).toBeTruthy();
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
+});
+
 test('folders Bridge did not expect are named, with what to do', async () => {
   const found = ['C:\\Users\\you\\AppData\\Local\\ai.orka.bridge\\local-vm-v1', retired];
   status = { selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: 'Bridge must finish starting a fresh workspace before starting the local cluster.', workspaceFailure: { operation: 'verify', cause: 'unknown', codes: [] }, workspaceFresh: { state: 'conflict', found } };

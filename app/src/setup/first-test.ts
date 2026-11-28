@@ -13,6 +13,16 @@ export function armFirstTest() {
 export function rearmFirstTest() {
   try { localStorage.setItem(preference, 'pending'); } catch { /* No durable claim means no automatic side effect. */ }
 }
+// The fresh workspace whose first test was re-armed, so each replacement re-arms once, including one native finished at launch.
+export const freshRearmPreference = 'bridge.firstTest.freshTransaction.v1';
+export function rearmFirstTestForFresh(transaction: string) {
+  try {
+    if (localStorage.getItem(freshRearmPreference) === transaction) return false;
+    localStorage.setItem(freshRearmPreference, transaction);
+    localStorage.setItem(preference, 'pending');
+    return true;
+  } catch { return false; }
+}
 export function retireFirstTest() {
   try { if (localStorage.getItem(preference) === 'pending') localStorage.setItem(preference, 'attempted'); } catch { /* An unreadable preference cannot admit a test. */ }
 }
