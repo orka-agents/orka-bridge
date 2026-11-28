@@ -34,6 +34,9 @@ pub struct Orka {
     pub closes: u32,
     /// Refuse this many opens first, as a busy kubeconfig slot would.
     pub refuse_opens: u32,
+    /// Hold Session reads until notified, after the Task has finished: the last moment of a turn.
+    pub session_gate: Option<Arc<tokio::sync::Notify>>,
+    pub session_waiting: bool,
 }
 impl Orka {
     pub fn requests(&self, method: &str) -> Vec<&String> {
@@ -307,6 +310,15 @@ struct Wire {
 impl ClusterWire for Wire {
     fn exchange(&self, request: WireRequest) -> WireFuture<'_, Result<(u16, Vec<u8>), ChatError>> {
         Box::pin(async move {
+            let gate = request
+                .uri
+                .starts_with("/api/v1/sessions/")
+                .then(|| self.orka.lock().unwrap().session_gate.clone())
+                .flatten();
+            if let Some(gate) = gate {
+                self.orka.lock().unwrap().session_waiting = true;
+                gate.notified().await;
+            }
             let method = match request.method {
                 ChatMethod::Get => reqwest::Method::GET,
                 ChatMethod::Post => reqwest::Method::POST,

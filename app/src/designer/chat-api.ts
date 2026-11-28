@@ -13,7 +13,7 @@ export const chatErrors = {
   response: 'The task could not be read. Reconnect to check what happened.',
   contextUnavailable: 'The task could not be confirmed. You can run a new task.',
   workspaceChanged: 'The workspace changed. Run the task again if you still need it.',
-  interrupted: 'The task was interrupted. It may still be running.',
+  interrupted: 'Stopped before the task was created. Nothing ran.',
   permission: 'Your access to this cluster doesn’t allow this task. Ask the cluster’s administrator for access.',
   sessionsUnsupported: 'This cluster’s Orka is too old for Try a task. It needs Orka v0.4.0 or later.',
   clusterUnavailable: 'Bridge couldn’t reach the selected cluster. Reconnect it in Clusters, then try again.',
@@ -37,7 +37,8 @@ export function snapshotErrorMessage(snapshot: ChatSnapshot, errors: Record<keyo
   if (!snapshot.error) return undefined;
   return snapshot.error === 'permission' && snapshot.denied ? deniedMessage(snapshot.denied) : errors[snapshot.error];
 }
-export type ChatTurn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean; startedAt: number; finishedAt: number | null };
+// `finishedBeforeStop`: Stop arrived after this turn's Task had already finished, so nothing was stopped.
+export type ChatTurn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean; startedAt: number; finishedAt: number | null; finishedBeforeStop?: boolean };
 export type ChatSnapshot = {
   documentId: string; state: typeof chatStates[number]; busy: boolean; canSend: boolean; versions: { turns: ChatTurn[] }[]; error: keyof typeof chatErrors | null;
   // With error `permission` on a cluster: what it refused. `keptOnCluster` latches once a cluster refused to delete a replaced conversation.
@@ -59,6 +60,7 @@ export function isChatSnapshot(value: unknown): value is ChatSnapshot {
     && Array.isArray(value.versions) && value.versions.every(version => object(version) && Array.isArray(version.turns) && version.turns.every(turn =>
       object(turn) && typeof turn.message === 'string' && (turn.answer === null || typeof turn.answer === 'string') && typeof turn.phase === 'string'
       && ['contextRetained', 'terminationUnconfirmed', 'stopUnconfirmed'].every(key => typeof turn[key] === 'boolean')
+      && (turn.finishedBeforeStop === undefined || typeof turn.finishedBeforeStop === 'boolean')
       && millis(turn.startedAt) && (turn.finishedAt === null || millis(turn.finishedAt))
       && Array.isArray(turn.tools) && turn.tools.every(tool => object(tool) && typeof tool.name === 'string' && typeof tool.callId === 'string' && typeof tool.phase === 'string')));
 }

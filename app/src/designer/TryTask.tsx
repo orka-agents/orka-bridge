@@ -37,7 +37,8 @@ function outcome(turn: ChatTurn, live?: ChatSnapshot['state'], lost?: string): O
   if (live === 'observationLost') return { state: 'stale', word: 'Result unknown', note: lost ?? states.observationLost };
   if (live === 'waitingForInput') return { state: 'needs-you', word: 'Needs you', note: states.waitingForInput };
   if (live && busyStates.includes(live) && !terminal.includes(turn.phase)) return { state: 'running', word: 'Running' };
-  const stopped = turn.terminationUnconfirmed ? states.stopRequested : turn.stopUnconfirmed ? states.stopUnconfirmed : undefined;
+  const stopped = turn.terminationUnconfirmed ? states.stopRequested : turn.stopUnconfirmed ? states.stopUnconfirmed
+    : turn.finishedBeforeStop ? 'This task had already finished when Stop arrived, so nothing was stopped.' : undefined;
   if (turn.phase === 'Succeeded') return { state: 'passed', word: 'Succeeded', note: stopped };
   if (turn.phase === 'Failed') return { state: 'failed', word: 'Failed', note: stopped };
   if (turn.phase === 'Cancelled') return { state: 'stale', word: 'Cancelled', note: stopped ?? 'The cluster reported this task cancelled; worker termination is unconfirmed.' };

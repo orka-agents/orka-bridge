@@ -106,6 +106,16 @@ test('a held, unconfirmed task offers Reconnect and Stop instead of a new task',
   expect(commands()).toEqual(['agent_chat_reconnect']);
   expect(within(result()).getByRole('button', { name: 'Stop' })).toBeTruthy();
 });
+test('a Stop that arrived after the task finished says so instead of passing silently', async () => {
+  snapshot = { ...idle, versions: [{ turns: [{ ...turn, finishedBeforeStop: true }] }] };
+  await open();
+  expect(result().getAttribute('aria-label')).toBe('Task result: Succeeded');
+  expect(within(result()).getByText('This task had already finished when Stop arrived, so nothing was stopped.')).toBeTruthy();
+});
+test('Stop before the task was created says nothing ran', async () => {
+  snapshot = { ...idle, error: 'interrupted' }; await open();
+  expect(screen.getByRole('alert').textContent).toBe('Stopped before the task was created. Nothing ran.');
+});
 test('a task whose cluster access can no longer authenticate says to reconnect the cluster, not that the connection was lost', async () => {
   snapshot = { ...idle, state: 'observationLost', canSend: false, error: 'accessLost', versions: [{ turns: [{ ...turn, answer: null, phase: 'Running', finishedAt: null }] }] };
   await open();

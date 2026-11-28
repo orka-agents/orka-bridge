@@ -89,6 +89,8 @@ pub struct ChatTurn {
     pub started_at: u64,
     /// Unix milliseconds when a terminal Task phase was first observed.
     pub finished_at: Option<u64>,
+    /// Stop arrived after this turn's Task had already finished, so nothing was stopped.
+    pub finished_before_stop: bool,
 }
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ChatVersion {
@@ -157,6 +159,12 @@ impl Entry {
     }
 }
 impl Entry {
+    fn newest_turn(&mut self) -> Option<&mut ChatTurn> {
+        self.view
+            .versions
+            .last_mut()
+            .and_then(|v| v.turns.last_mut())
+    }
     fn finish(&mut self, safe: bool, success: bool) {
         // Publish completion under the same lock as Stop admission.
         if success && safe {
@@ -499,6 +507,13 @@ impl ChatOwner {
             return Ok(e.view.clone());
         }
         if e.lease.is_none() {
+            // A Stop pressed as the turn finished is answered, never dropped: it had finished.
+            if stop {
+                if let Some(turn) = e.newest_turn().filter(|t| t.finished_at.is_some()) {
+                    turn.finished_before_stop = true;
+                    return Ok(e.view.clone());
+                }
+            }
             return Err(ChatError::ContextUnavailable);
         }
         e.used = self.3.fetch_add(1, Ordering::Relaxed);
@@ -678,6 +693,12 @@ impl ChatOwner {
                 } else {
                     ChatState::ObservationLost
                 };
+            }
+            // Stop admitted after the worker's last request: the Task had already finished.
+            if result.is_ok() && *worker.stop.borrow() && !worker.stopping {
+                if let Some(turn) = e.newest_turn().filter(|t| t.finished_at.is_some()) {
+                    turn.finished_before_stop = true;
+                }
             }
             e.context = worker.context;
             e.lease = if worker.safe || result == Err(ChatError::WorkspaceChanged) {
