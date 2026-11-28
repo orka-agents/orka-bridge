@@ -121,7 +121,9 @@ test('debug requirements without a download retain RAM checks and disk facts wit
 test('release welcome exposes unavailability before Get started without replacing the workflow copy', async () => {
   const ipc = native({ ...unselected, localVm: 'notIntegrated' }, null); render(<App />);
   expect(await screen.findByRole('button', { name: 'Get started' })).toBeTruthy();
-  expect(screen.getByText('Workspace setup is not included in this build. Nothing will be downloaded or started.')).toBeTruthy();
+  expect(screen.getByText("This build can't run agents on this computer. Next, you connect a cluster you already have.")).toBeTruthy();
+  // Nothing is downloaded here, so no download line contradicts it.
+  expect(screen.queryByText(/Mostly a/)).toBeNull();
   expect(screen.getByText('Share it')).toBeTruthy();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });

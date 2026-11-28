@@ -44,6 +44,15 @@ test.each(['Starting the local cluster', 'Getting your workspace ready…', 'Sto
   expect(within(agent).queryByRole('button', { name: /^New task|^Run tests/ })).toBeNull();
 });
 
+test('a build without the local cluster says so and names the cluster route instead of a stopped workspace', async () => {
+  const choose = vi.fn();
+  ipc(files(), unavailable); render(<Overview {...props} localUnavailable onChooseWorkspace={choose} />);
+  expect(await screen.findByText("This computer can't run agents on this build. Use a cluster you already have.")).toBeTruthy();
+  expect(screen.queryByText(/The workspace is stopped/)).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Open Clusters' }));
+  expect(choose).toHaveBeenCalled();
+});
+
 test('setup status blocks readiness actions even if the last live inventory is complete', async () => {
   ipc(); const view = render(<Overview {...props} />); await expanded();
   view.rerender(<Overview {...props} workspaceNote="Starting the local cluster" />);

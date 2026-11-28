@@ -71,6 +71,8 @@ export const scenarios = {
   navTaskFails: 'Navigator: proposes a task that fails',
   navAgent: 'Navigator: proposes an agent',
   navTooOld: 'Navigator: workspace too old for the Navigator',
+  noWorkspace: 'First run on a build without the local cluster',
+  noWorkspaceChosen: 'A build without the local cluster, this computer chosen earlier',
 } as const;
 export type Scenario = keyof typeof scenarios;
 type Gh = 'missing' | 'signedOut' | 'signedIn';
@@ -94,7 +96,9 @@ const now = () => Date.now() * speed;
 // The first-run scenarios start as a new computer does and differ only where they say.
 const copilotScenario = scenario.startsWith('copilot');
 const firstRun = scenario === 'firstDownloadFails' || scenario === 'firstTestFails' || scenario === 'firstTestStale' || scenario === 'firstTestUnknown' || copilotScenario;
-const fresh = scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow' || firstRun;
+// noWorkspace…: a build without the local cluster (a Linux build) reports this computer as not integrated.
+const noWorkspace = scenario === 'noWorkspace' || scenario === 'noWorkspaceChosen';
+const fresh = scenario === 'noWorkspace' || scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow' || firstRun;
 // firstDownloadFails: the first download stops partway with a network failure; Try again then succeeds.
 let downloadFails = scenario === 'firstDownloadFails';
 let selected: 'localVm' | null = fresh ? null : 'localVm';
@@ -160,7 +164,7 @@ function phase(): Phase {
   startedAt = null; reopened = false;
   return { localVm: 'ready', progress: null };
 }
-const ready = () => phase().localVm === 'ready';
+const ready = () => !noWorkspace && phase().localVm === 'ready';
 
 function status() {
   const p = phase();
@@ -516,11 +520,13 @@ function sendStatus(id: string) {
 const contexts = kubeContexts(uuid);
 const targets = contextTargets(uuid, contexts);
 const contextProvider = { id: uuid('contexts-provider'), name: 'team-model', ready: true };
-let usedTarget: (typeof targets)[number] | null = null;
+// noWorkspaceChosen reopens with team-dev remembered from an earlier run, to connect again before use.
+let usedTarget: (typeof targets)[number] | null = scenario === 'noWorkspaceChosen' ? targets[0] : null;
+let rememberedAt = scenario === 'noWorkspaceChosen' ? Date.now() - 3_600_000 : null;
 function usedPlace() {
   if (!usedTarget) return null;
   const { target } = usedTarget;
-  return { key: `${target.context_name}/${target.service_namespace}/${target.service_name}`, context: target.context_name, service: `${target.service_namespace}/${target.service_name}`, namespace: target.watched_namespace, stale: false, observedAt: Date.now(), checkedAt: Date.now(), agents: [] };
+  return { key: `${target.context_name}/${target.service_namespace}/${target.service_name}`, context: target.context_name, service: `${target.service_namespace}/${target.service_name}`, namespace: target.watched_namespace, stale: rememberedAt !== null, observedAt: rememberedAt ?? Date.now(), checkedAt: rememberedAt ?? Date.now(), agents: [] };
 }
 async function contextReply(command: string, args?: Record<string, unknown>): Promise<unknown> {
   const place = usedPlace();
@@ -532,9 +538,13 @@ async function contextReply(command: string, args?: Record<string, unknown>): Pr
       const item = targets.find(candidate => candidate.target.id === args?.targetId);
       if (!item) throw { check: 'configuration', result: 'unknown' };
       if (item.serviceAccount && !args?.saName) return { status: 'needServiceAccount', providers: [], failure: null };
-      usedTarget = item; clusterConfirmed = true;
+      usedTarget = item; clusterConfirmed = true; rememberedAt = null;
       return { status: 'connected', providers: [contextProvider], failure: null };
     }
+    case 'cluster_reconnect':
+      await wait(0.8);
+      if (!place || !usedTarget || args?.key !== place.key) throw { check: 'configuration', result: 'unknown' };
+      return usedTarget.target;
     case 'cluster_service_accounts': await wait(0.3); return { names: ['bridge-user', 'default', 'orka-reader'], truncated: false };
     case 'cluster_service_account_preview': await wait(0.3); return { status: 'allowed', checks: orkaPermissions.map(([resource, verb]) => ({ resource, verb, status: 'allowed' })) };
     case 'cluster_places': return { places: place ? [place] : [], selectedKey: place?.key ?? null, persistenceState: 'complete' };
@@ -547,7 +557,17 @@ async function contextReply(command: string, args?: Record<string, unknown>): Pr
 }
 
 async function scenarioReply(command: string, args?: Record<string, unknown>): Promise<unknown> {
-  if (scenario === 'clusterContexts') {
+  if (noWorkspace) {
+    switch (command) {
+      case 'setup_requirements': case 'setup_preflight': return null;
+      // Native keeps a choice of this computer, but nothing can start here.
+      case 'setup_status': return { selected, localVm: 'notIntegrated', localVmError: null, model: 'locked', modelSupported: false };
+      case 'setup_select_local': selected = 'localVm'; return { selected, localVm: 'notIntegrated', localVmError: null, model: 'locked', modelSupported: false };
+      case 'setup_change_local': selected = null; return { selected, localVm: 'notIntegrated', localVmError: null, model: 'locked', modelSupported: false };
+      case 'workspace_catalog': throw 'catalogUnavailable';
+    }
+  }
+  if (scenario === 'clusterContexts' || noWorkspace) {
     const reply = await contextReply(command, args);
     if (reply !== unscripted) return reply;
   }

@@ -9,17 +9,19 @@ import { type Card, type ExplainCard, parseReply, sourceLabel } from './cards';
 import { type CardRecord, selectConversationPlace, updateConversation, useConversation } from './conversation-store';
 import { NAVIGATOR_ID, type NavigatorResult, type ThinksWith, navigatorCall, navigatorErrors } from './navigator-api';
 import Prose from './Prose';
+import { unavailableCopy } from '../setup/availability';
 import TaskCard, { runLine, type TaskPlace } from './TaskCard';
 import './home.css';
 
 // What stands between the person and the Navigator. It thinks with the model of the selected place: the workspace on
 // this computer, or a connected cluster's chosen AI connection (`place`).
-export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string };
+export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'unavailable' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string };
 export type HomePage = 'Overview' | 'Designer' | 'Clusters';
 type Props = {
   active: boolean; revision: number; gate: NavigatorGate;
   onOpenPage: (page: HomePage) => void; onOpenAgent: (documentId: string) => void; onAgentCreated: () => void;
-  onThisComputer: () => void; blockedFor?: (documentId: string) => string | undefined;
+  /** Absent where this computer can't run agents (a build without the local cluster), so it is never offered. */
+  onThisComputer?: () => void; blockedFor?: (documentId: string) => string | undefined;
   /** Opens the list of clusters, rather than the selected one. */
   onManageClusters?: () => void;
   /** A cluster connected in this run that the Navigator can switch to, when this computer can't run it. */
@@ -53,11 +55,16 @@ function Hero({ lede = true }: { lede?: boolean }) {
 }
 
 // A disabled message box under a card that says why, and what to do.
-function Gated({ gate, onOpenPage, onThisComputer, onManageClusters }: Props & { gate: Exclude<NavigatorGate, { kind: 'ready' }> }) {
+function Gated({ gate, onOpenPage, onThisComputer, onManageClusters, switchTo }: Props & { gate: Exclude<NavigatorGate, { kind: 'ready' }> }) {
   const card = gate.kind === 'noModel' ? {
     title: 'Connect the AI first', line: 'no model connected',
     body: 'The Navigator thinks with the model your Orka is connected to. This computer has none yet. Overview, Designer and Clusters still work.',
     actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Connect the AI</Button><Button type="button" kind="secondary" onClick={() => onOpenPage('Clusters')}>Switch to another Orka</Button></>,
+  } : gate.kind === 'unavailable' ? {
+    title: unavailableCopy.title, line: 'not available on this computer',
+    body: `This build can't run agents on this computer, so the Navigator thinks with a cluster's AI connection. ${switchTo ? `It can think with ${switchTo.name}.` : 'Connect a cluster you already have in Clusters.'} Overview and Designer still work.`,
+    actions: switchTo ? <><Button type="button" kind="primary" onClick={switchTo.choose}>Switch to {switchTo.name}</Button>{onManageClusters && <Button type="button" kind="secondary" onClick={onManageClusters}>Open Clusters</Button>}</>
+      : <Button type="button" kind="primary" onClick={onManageClusters ?? (() => onOpenPage('Clusters'))}>Open Clusters</Button>,
   } : gate.kind === 'waiting' ? {
     title: 'Waiting for the workspace to start.', line: 'waiting for the workspace',
     body: 'The Navigator thinks with the model in the workspace on this computer, so it can answer once the workspace is ready. Overview, Designer and Clusters still work.',
@@ -65,11 +72,11 @@ function Gated({ gate, onOpenPage, onThisComputer, onManageClusters }: Props & {
   } : gate.kind === 'unreachable' ? {
     title: `Can’t reach ${gate.name ?? 'the selected cluster'}. Check your network or VPN.`, line: `can’t reach ${gate.name ?? 'the cluster'}`,
     body: `The Navigator thinks with the model on the Orka you have selected, so it can’t answer until ${gate.name ?? 'the cluster'} is reachable. Nothing on the cluster has changed. Your agent files are on this computer and still open in Designer.`,
-    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Check again</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>{onManageClusters && <Button type="button" kind="quiet" onClick={onManageClusters}>Open Clusters</Button>}</>,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Check again</Button>{onThisComputer && <Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>}{onManageClusters && <Button type="button" kind="quiet" onClick={onManageClusters}>Open Clusters</Button>}</>,
   } : {
     title: `Choose an AI connection for ${gate.name}.`, line: 'no AI connection chosen',
     body: `The Navigator thinks with the AI connection you choose for ${gate.name}, so it can answer once one is chosen in Clusters. Nothing on ${gate.name} has changed.`,
-    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button></>,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>{onThisComputer && <Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>}</>,
   };
   return <section className="home home-start" aria-labelledby="page-title">
     <Hero lede={false} />

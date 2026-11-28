@@ -30,7 +30,7 @@ globally to install dependencies.
 
 For quick UI work without a VM, start the dev server from `app/` with `npm run dev` and open `http://127.0.0.1:1420/?scenario=fresh`. In development builds only, a `scenario` query loads a scripted stand-in for the native commands (`app/src/preview/backend.ts`), so screens can be walked and captured in any browser. Scenarios are `fresh`, `ready`, `connected`, `restart`, `ghMissing`, `ghSignedOut`, `runFails` and `vmFailed`. Add `speed=20` to shorten waits, `clean` to hide the scenario toolbar and `page=Home`, `Overview`, `Designer` or `Clusters` to open that page. Like the app, the preview opens on Welcome while nothing is set up (`fresh`, `ghMissing`, `ghSignedOut`, `vmFailed`), on Clusters while setup is in progress (`restart`), and on Home once a workspace is ready (`ready`, `connected`, `runFails`, `clusterReady`). The preview is not native verification: it never runs a VM, an agent or a model.
 
-These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer, `memoryLow`, the `first…` and the `copilot…` ones open on Welcome in the guided first run, and the rest open on Home; the steps say where the state appears, starting from Clusters unless they name another page.
+These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer, `memoryLow`, `noWorkspace`, the `first…` and the `copilot…` ones open on Welcome in the guided first run, and the rest open on Home; the steps say where the state appears, starting from Clusters unless they name another page.
 
 | Scenario | State | Where it appears |
 | --- | --- | --- |
@@ -79,6 +79,8 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `navTask` | A proposed task card; Edit, then Create task runs it to Succeeded; Stop task while it runs cancels it | Opens there |
 | `navTaskFails` | As `navTask`, but the task fails | Opens there, then Create task |
 | `navAgent` | A proposed agent card; Create agent writes the file | Opens there |
+| `noWorkspace` | First run on a build without the local cluster, as on Linux: On this computer is unavailable and the cluster is chosen; every page names the cluster route | Get started, then Details on This computer |
+| `noWorkspaceChosen` | The same build reopened after this computer was chosen earlier, with `team-dev` remembered: Bridge opens on Home, not on a setup that can't move | Opens on Home; Clusters → `team-dev` → Use, then Use this cluster |
 | `navTooOld` | The workspace on this computer is too old for the Navigator: the message box and starters are disabled, with Open Designer (and Switch to a cluster connected in this run) | Opens there |
 
 The Navigator answers in every scenario with the AI connected, with scripted replies chosen by the question: a link or checksum gets a task card, "agent" an agent card, "new to Orka" an explanation, and a repo, monitor or charter question an explanation with no card, as Bridge can't set those up yet. It runs on the selected place: in `clusterReady`, choose `team-dev` in the Orka switcher and the Navigator and Try a task run there; in `clusterUnreachable` it shows the can't-reach card.

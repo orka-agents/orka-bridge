@@ -15,6 +15,7 @@ import { type CheckStepState, Meet, SetupProgress } from './Steps';
 import { cancelLocal, type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
 import Workspace from './Workspace';
+import { localUnavailable, unavailableCopy } from './availability';
 import Upgrade, { UpgradeObservation, type UpgradeObservationState } from './Upgrade';
 import { upgradeCall, type UpgradeStatus } from './upgrade-api';
 import './welcome.css';
@@ -27,9 +28,6 @@ import { type FreshStatus, freshDetails, startFresh } from './fresh';
 
 const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting', 'closing'].includes(state);
 const failureKey = (status?: SetupStatus) => status?.workspaceFailure ? `${status.workspaceFailure.operation}/${status.workspaceFailure.cause}` : undefined;
-const runtimeCopy = {
-  notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
-};
 export type UpgradeNotice = 'recovery' | 'required' | 'error' | 'unknown' | 'checking' | 'busy';
 // showCluster opens a remembered cluster's card, or Add a cluster without one, as the Clusters list does; showLocal opens This computer.
 export type LocalClusterControl = { showPlaces: () => void; showLocal: () => void; showCluster: (place?: Place, selected?: boolean) => void };
@@ -155,7 +153,10 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const [requirements, setRequirements] = useState<WorkspaceRequirements | null>();
   const [preflightBlocked, setPreflightBlocked] = useState(true);
   const [preflightFailed, setPreflightFailed] = useState(false);
-  const [location, setLocation] = useState<'local' | 'cluster'>('local');
+  const [chosenLocation, setLocation] = useState<'local' | 'cluster'>('local');
+  // A build without the local cluster can't choose this computer: the cluster is the only choice.
+  const localOff = localUnavailable(status);
+  const location = localOff ? 'cluster' : chosenLocation;
   const epoch = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -399,7 +400,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); }, showLocal() { openLocal(); }, showCluster(item?: Place, selected = false) { chooseCluster(item, selected); } }));
   const titleId = active ? 'page-title' : undefined;
   if (!status && !error || launchPending) return <><h1 id={titleId}>Clusters</h1><p role="status">Checking the workspace…</p></>;
-  if (welcome && status) return <Welcome titleId={titleId} onStart={start} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} requirements={requirements} />;
+  if (welcome && status) return <Welcome titleId={titleId} onStart={start} unavailable={localOff} requirements={requirements} />;
   const selected = status?.selected === 'localVm';
   const modelRecovery = ['failed', 'resetFailed', 'removalFailed', 'resetting'].includes(modelState);
   // A failed connection keeps the stage's name; the AI card beside the steps says what went wrong.
@@ -420,7 +421,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const savedConnection = workspace && upgrade?.state === 'eligible' && upgrade.credential === 'eligible';
   // With no other clusters, Add a cluster is the page's next step unless This computer still needs setting up.
   const noClusters = !snapshotUnavailable && snapshot?.persistenceState === 'complete' && snapshot.places.length === 0;
-  const localNext = !modelRecovery && !error && !!status && !placesView.done && (selected || noClusters);
+  const localNext = !modelRecovery && !error && !!status && !localOff && !placesView.done && (selected || noClusters);
   const showPayoff = !workspace && !payoffDismissed && eligiblePayoff;
   // Outside the guided first run, a first workspace that is getting ready is two cards: the workspace and the AI, as the board shows.
   const twoCards = !guided && !workspace && selected && !!status && ['preparing', 'installing', 'starting'].includes(status.localVm) && !upgradePanel;
@@ -437,20 +438,21 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     {view === 'places' && <Places modelRecovery={modelRecovery} recoveryRef={setPlaceRecovery} snapshot={snapshot} unavailable={snapshotUnavailable} status={error ? undefined : status} view={placesView} place={currentPlace} onLocal={openLocal} onCluster={chooseCluster} />}
     {showPayoff && firstPass && <FirstPass snapshot={firstPass} titleId={titleId} onOpen={openExample} />}
     <div hidden={view !== 'local' || !!showPayoff}>
-      {cluster && <Button type="button" kind="secondary" onClick={chooseComputer}>Use this computer</Button>}
+      {cluster && !localOff && <Button type="button" kind="secondary" onClick={chooseComputer}>Use this computer</Button>}
       <div className={workspace ? `setup workspace-setup-grid returning-grid${updateBlocked || status?.localVm === 'failed' ? ' returning-grid-wide' : ''}` : selected ? `setup workspace-setup-grid${status?.localVm === 'failed' ? ' workspace-setup-failed' : ''}${twoCards ? ' returning-grid setup-cards' : ''}` : 'workspace-choice local-preflight'}>
         {!selected && !workspace && <>
           <section className="card">
             <p className="workspace-choice-step muted">Step 1 of 4 · Choose where agents run</p>
             <fieldset className="workspace-options">
               <legend className="workspace-sr-only">Where agents run</legend>
-              <div className={`workspace-option${location === 'local' ? ' workspace-selected' : ''}`}>
-                <input id="workspace-local" name="workspace-location" type="radio" value="local" checked={location === 'local'} onChange={() => { setPreflightBlocked(true); setLocation('local'); }} />
-                <label htmlFor="workspace-local">On this computer</label><span className="chip">Recommended</span>
+              <div className={`workspace-option${location === 'local' ? ' workspace-selected' : ''}${localOff ? ' workspace-option-off' : ''}`}>
+                <input id="workspace-local" name="workspace-location" type="radio" value="local" checked={location === 'local'} disabled={localOff} aria-describedby={localOff ? 'workspace-local-off' : undefined} onChange={() => { setPreflightBlocked(true); setLocation('local'); }} />
+                <label htmlFor="workspace-local">On this computer</label>{localOff ? <span className="chip">{unavailableCopy.line}</span> : <span className="chip">Recommended</span>}
                 <div className="workspace-option-detail">
-                  <p className="workspace-option-req">{requirements ? setupNeeds(requirements) : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>
+                  {localOff ? <p className="workspace-option-req" id="workspace-local-off">{unavailableCopy.reason}</p>
+                    : <p className="workspace-option-req">{requirements ? setupNeeds(requirements) : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>}
                   {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated' && <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} onFailed={setPreflightFailed} onCluster={() => { setLocation('cluster'); document.getElementById('workspace-cluster')?.focus(); }} onSetUpLater={onSetUpLater} />}
-                  {!(location === 'local' && preflightFailed) && <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
+                  {!localOff && !(location === 'local' && preflightFailed) && <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
                     <div id="workspace-inside" hidden={!inside}>
                       <p className="workspace-option-lede">The workspace includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>
                     </div>
@@ -466,7 +468,6 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
           <div className="workspace-step-actions">{continueAction}
             {/* What Continue does next, beside it, as the boards show. */}
             {(location === 'cluster' || status?.localVm !== 'notIntegrated') && <span className="workspace-continue-hint" aria-hidden={location === 'local' && !preflightFailed ? true : undefined}>{location === 'cluster' ? 'Next, you pick the cluster. Setup on this computer is skipped.' : preflightFailed ? 'Continue is off until the check passes.' : 'These checks do not change this computer.'}</span>}</div>
-          {location === 'local' && status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
           </section>
         </>}
         <div className="setup-column setup-main">

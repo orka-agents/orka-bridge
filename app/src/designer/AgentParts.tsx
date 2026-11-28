@@ -16,8 +16,10 @@ function Unavailable({ label, reason, children, focusRef }: { label: string; rea
 function toolDescription(tool: CatalogTool): string {
   return tool.kind === 'builtin' && Object.hasOwn(builtInToolDescriptions, tool.name) ? builtInToolDescriptions[tool.name] : tool.description;
 }
-export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_ID, readOnly, setupPending = false, catalog, catalogLoading = false, catalogAvailability = catalogLoading ? 'loading' : 'attempted', catalogDestination = 'This computer', remote = false, trying = false, onPendingEdit, onChange }: {
-  source: string; path?: string; documentId?: string; readOnly: boolean; setupPending?: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; catalogAvailability?: 'unavailable' | 'needsConnection' | 'loading' | 'paused' | 'attempted'; catalogDestination?: string; remote?: boolean; onPendingEdit?: (pending: boolean) => void; onChange: (source: string) => void;
+export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_ID, readOnly, setupPending = false, catalog, catalogLoading = false, catalogAvailability = catalogLoading ? 'loading' : 'attempted', catalogDestination = 'This computer', remote = false, localUnavailable = false, trying = false, onPendingEdit, onChange }: {
+  source: string; path?: string; documentId?: string; readOnly: boolean; setupPending?: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; catalogAvailability?: 'unavailable' | 'needsConnection' | 'loading' | 'paused' | 'attempted'; catalogDestination?: string; remote?: boolean;
+  /** This build can't run agents on this computer, so tools and models load from a cluster only. */
+  localUnavailable?: boolean; onPendingEdit?: (pending: boolean) => void; onChange: (source: string) => void;
   /** Beside Try a task: instructions and model stay editable so a change can be tried at once; tools and other settings stay in Agent view. */
   trying?: boolean;
 }) {
@@ -68,7 +70,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
   const knownModel = catalog?.models.state === 'ready' && catalog.models.items.some(model => model.id === form.model);
   const unlistedLabel = !remote && models ? knownModel ? ' (not offered for chat)' : ' (unlisted)' : '';
   const catalogReason = catalogAvailability === 'needsConnection' ? 'Choose an AI connection in Clusters to load tools and models'
-    : catalogAvailability === 'unavailable' ? remote ? 'Connect a cluster in Clusters to load tools and models' : 'Open Clusters to load tools and models on This computer.'
+    : catalogAvailability === 'unavailable' ? remote || localUnavailable ? 'Connect a cluster in Clusters to load tools and models' : 'Open Clusters to load tools and models on This computer.'
     : catalogAvailability === 'paused' ? 'Tools and models are paused while another operation finishes.' : undefined;
   const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit this agent’s tools in File view.'
     : setupPending ? 'Tools will be available when the workspace is ready.' : catalogLoading ? 'Loading tools…' : catalogReason ?? (tools === undefined ? `Couldn't read tools from ${catalogDestination}. Check Clusters or edit File view.` : undefined);

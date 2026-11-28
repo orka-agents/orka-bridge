@@ -17,12 +17,14 @@ export type OverviewProps = {
   focus?: { id: number; sendId: string; target?: AgentFocus };
   focusPending?: boolean;
   onRetryFocus?: (sendId: string) => void;
-  workspaceNote?: string; filesRevision?: number; placesRevision?: number;
+  workspaceNote?: string; filesRevision?: number;
+  /** This build can't run agents on this computer, so its group says so instead of a stopped workspace. */
+  localUnavailable?: boolean; placesRevision?: number;
 };
 const focusNotes = { present: 'Not shown in Overview yet.', gone: 'The original agent is no longer available. Your saved result is unchanged.', cannotCheck: 'Cannot check this agent. Your saved result is unchanged.' };
 const complete = (v?: LiveAgents): v is CompleteAgents => v?.state === 'complete' && v.installation !== null && v.observedAt !== null;
 const hasRunningSend = (value?: Places) => value?.places.some(p => p.agents.some(a => a.record?.verdict === 'running')) || value?.unobserved.some(a => a.verdict === 'running');
-export default function Overview({ onNewAgent, active, runBusy, localAiConnected, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, onSavedCount, workspaceNote, filesRevision = 0, placesRevision = 0, focus: navigationFocus, focusPending = false, onRetryFocus }: OverviewProps) {
+export default function Overview({ onNewAgent, active, runBusy, localAiConnected, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, onSavedCount, workspaceNote, localUnavailable, filesRevision = 0, placesRevision = 0, focus: navigationFocus, focusPending = false, onRetryFocus }: OverviewProps) {
   const aiReasonId = useId();
   const [dismissedFocus, setDismissedFocus] = useState<number>();
   const focus = navigationFocus?.id === dismissedFocus ? undefined : navigationFocus;
@@ -176,7 +178,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     return () => { cancelled = true; };
   }, [active, filesRevision, workspaceKey, runBusy, activeDocumentId]);
   const observed = complete(live) ? live : last;
-  const inputs: Inputs = { files, filesStale, finals: finals.current, live, observed, pending, activeDocumentId, places, placeError, chat: !!onChatDocument, run: !!onRunDocument, workspaceNote };
+  const inputs: Inputs = { files, filesStale, finals: finals.current, live, observed, pending, activeDocumentId, places, placeError, chat: !!onChatDocument, run: !!onRunDocument, workspaceNote, localUnavailable };
   const built = buildCards(inputs);
   const empty = isEmpty(inputs, built);
   const partial = !!workspaceNote || filesStale || files?.historyState !== 'complete' || !complete(live) || pending || !places || placeError || places.places.some(p => p.stale || p.observedAt === null);

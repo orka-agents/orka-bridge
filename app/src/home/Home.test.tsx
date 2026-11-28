@@ -237,6 +237,27 @@ test('an unreachable cluster offers This computer', async () => {
   expect(onOpenPage).toHaveBeenCalledWith('Clusters');
 });
 
+test.each<[NavigatorGate]>([[{ kind: 'unreachable' }], [{ kind: 'noConnection', name: 'team-dev' }]])('where this computer cannot run agents, %o never offers it', gate => {
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn() };
+  render(<main aria-labelledby="page-title"><Home active revision={0} gate={gate} {...handlers} /></main>);
+  expect(screen.queryByRole('button', { name: 'Switch to This computer' })).toBeNull();
+});
+
+test('on a build without the local cluster Home names the cluster route, not a workspace to wait for', async () => {
+  const user = userEvent.setup(); const choose = vi.fn(); const manage = vi.fn();
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn() };
+  const view = render(<main aria-labelledby="page-title"><Home active revision={0} gate={{ kind: 'unavailable' }} {...handlers} onManageClusters={manage} /></main>);
+  expect(screen.getByRole('heading', { level: 2, name: 'Not available on this build.' })).toBeTruthy();
+  expect(screen.getByText('Navigator · not available on this computer')).toBeTruthy();
+  expect(document.body.textContent).not.toMatch(/waiting for the workspace|start the workspace/i);
+  await user.click(screen.getByRole('button', { name: 'Open Clusters' }));
+  expect(manage).toHaveBeenCalledOnce();
+  view.rerender(<main aria-labelledby="page-title"><Home active revision={0} gate={{ kind: 'unavailable' }} {...handlers} onManageClusters={manage} switchTo={{ name: 'team-dev', choose }} /></main>);
+  await user.click(screen.getByRole('button', { name: 'Switch to team-dev' }));
+  expect(choose).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'Send' }).matches(':disabled')).toBe(true);
+});
+
 test('a conversation forgotten by a replaced workspace starts over instead of hiding new turns', async () => {
   updateConversation(() => ({ startVersion: 3, cards: { old: { status: 'dismissed' } } }));
   nav.turns = [turn('After the replacement', 'A new answer.')];

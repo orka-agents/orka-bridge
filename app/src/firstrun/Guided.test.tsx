@@ -219,7 +219,6 @@ test.each([
   ['a download that failed', { localVm: 'failed', model: 'locked', workspaceFailure: { operation: 'download', cause: 'network', codes: [] } }, true],
   ['a forced stop', { localVm: 'failed', model: 'locked', workspaceFailure: { operation: 'start', cause: 'forcedStop', codes: [] } }, true],
   ['a failed computer check at start', { localVm: 'failed', model: 'locked', preflightFailure: 'insufficientMemory' }, true],
-  ['a build without the workspace', { localVm: 'notIntegrated', model: 'locked' }, true],
 ] as const)('guided: %s', async (_name, status, offered) => {
   guidedRun();
   // Setup opens on its progress card while the workspace gets ready, as a first run does, then reaches the state.

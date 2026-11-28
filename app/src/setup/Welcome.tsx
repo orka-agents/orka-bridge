@@ -1,4 +1,5 @@
 import { Button } from '../components/Button';
+import { unavailableCopy } from './availability';
 import { setupTime, type WorkspaceRequirements } from './requirements';
 
 export const welcomePreference = 'bridge.welcomeSeen.v1';
@@ -8,7 +9,7 @@ export function hasSeenWelcome() {
 }
 
 // Someone who already runs Orka picks their cluster on the next screens, beside this computer.
-export default function Welcome({ titleId, onStart, unavailable, requirements }: { titleId?: string; onStart: () => void; unavailable?: string; requirements?: WorkspaceRequirements | null }) {
+export default function Welcome({ titleId, onStart, unavailable, requirements }: { titleId?: string; onStart: () => void; unavailable?: boolean; requirements?: WorkspaceRequirements | null }) {
   return <section className="welcome-screen">
     <div className="art-orca" aria-hidden="true" />
     <h1 id={titleId}><span>Your agents. Your models.</span> <span>Your keys. Your cluster.</span></h1>
@@ -20,8 +21,8 @@ export default function Welcome({ titleId, onStart, unavailable, requirements }:
     </ol>
     <div className="welcome-actions">
       <Button kind="primary" size="large" type="button" onClick={onStart}>Get started</Button>
-      <span className="muted">{setupTime(requirements)}</span>
-      {unavailable && <p className="muted">{unavailable}</p>}
+      {/* Nothing is downloaded on a build without the local cluster, so there is no download to time. */}
+      {unavailable ? <p className="muted">{unavailableCopy.welcome}</p> : <span className="muted">{setupTime(requirements)}</span>}
     </div>
   </section>;
 }
