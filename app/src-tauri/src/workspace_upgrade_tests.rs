@@ -27,6 +27,19 @@ struct Scene {
     target: Option<PreparedImage>,
     source_id: Uuid,
 }
+/// Rewrites an installation's committed record to `phase`; `consumed` also records the boot that
+/// consumed it, as a real first boot does.
+fn record_phase(root: &Path, phase: &str) {
+    let path = root.join("record.json");
+    let mut record: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record["phase"] = phase.into();
+    record["bootNonce"] = if phase == "consumed" {
+        Uuid::new_v4().to_string().into()
+    } else {
+        serde_json::Value::Null
+    };
+    fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+}
 impl Scene {
     fn new(target: ImageTarget) -> Self {
         let temp = match std::env::var_os("BRIDGE_UPGRADE_CRASH_HOME") {
@@ -105,6 +118,8 @@ impl Scene {
         )
         .unwrap();
         drop(journal);
+        // The workspace an update replaces has booted: an install that never did is not one.
+        record_phase(&local.join("local-vm-v1"), "consumed");
         Self {
             _temp: temp,
             data,

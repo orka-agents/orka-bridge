@@ -205,6 +205,12 @@ pub trait LocalSession: Send {
     }
     fn execute(&mut self, request: EngineRequest) -> TransportFuture<'_>;
     fn stop(&mut self) -> Result<(), RuntimeError>;
+    /// Whether the workspace behind this session is gone: its VM process exited or its one
+    /// guest channel was lost, which ends that VM. Cheap and non-blocking, and never a guest
+    /// request: a probe could poison an older guest's only channel.
+    fn lost(&mut self) -> bool {
+        false
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum UpgradeCancellationSource {
@@ -268,6 +274,10 @@ struct State {
     progress: Option<ProgressClock>,
     /// One authority interval from forward admission through its marked startup.
     upgrade_cancel: Option<UpgradeCancellation>,
+    /// Counts starts, so a lost workspace is retired only for the boot it was seen in.
+    boot: u64,
+    /// The running workspace stopped by itself; its stop reports a failure, not a cancel.
+    lost: bool,
 }
 struct ProgressClock {
     started: std::time::Instant,
@@ -415,6 +425,9 @@ mod progress_tests {
 #[path = "local_vm_fresh_tests.rs"]
 mod fresh_tests;
 #[cfg(test)]
+#[path = "local_vm_lost_tests.rs"]
+mod lost_tests;
+#[cfg(test)]
 #[path = "local_vm_model_tests.rs"]
 mod model_tests;
 
@@ -559,6 +572,11 @@ impl Inner {
         let state = self.state.lock().unwrap();
         !state.closing && state.phase == LocalVmStatus::Ready
     }
+    /// The boot a Ready workspace is serving.
+    fn ready_boot(&self) -> Option<u64> {
+        let state = self.state.lock().unwrap();
+        (!state.closing && state.phase == LocalVmStatus::Ready).then_some(state.boot)
+    }
 }
 pub struct LocalVm {
     inner: Arc<Inner>,
@@ -648,6 +666,8 @@ impl LocalVm {
                     completion,
                     progress: None,
                     upgrade_cancel: None,
+                    boot: 0,
+                    lost: false,
                 }),
                 session: Arc::new(AsyncMutex::new(None)),
             }),
@@ -1783,6 +1803,8 @@ impl LocalVm {
         // Unknown work on an old boot must not own a new workspace's admission.
         *self.authoring.lock().unwrap() = Arc::new(AsyncMutex::new(()));
         state.phase = LocalVmStatus::Preparing;
+        state.boot = state.boot.wrapping_add(1);
+        state.lost = false;
         state.model_connected = false;
         state.run_cancel_supported = false;
         state.failure = None;
@@ -1846,6 +1868,8 @@ impl LocalVm {
                     inner.state.lock().unwrap().run_cancel_supported = live.run_cancel_supported();
                     *session = Some(live);
                     vm.publish_ready();
+                    drop(session);
+                    vm.watch_ready();
                 }
                 Err(
                     RuntimeError::Closed
@@ -1878,9 +1902,9 @@ impl LocalVm {
         &self,
         work: impl FnOnce(bridge_runtime_protocol::Uuid, &mut VmClient) -> T + Send + 'static,
     ) -> Result<T, RuntimeError> {
-        if !self.inner.ready() {
+        let Some(boot) = self.inner.ready_boot() else {
             return Err(RuntimeError::Unavailable);
-        }
+        };
         let mut session = self
             .inner
             .session
@@ -1888,27 +1912,78 @@ impl LocalVm {
             .try_lock_owned()
             .map_err(|_| RuntimeError::Busy)?;
         let inner = self.inner.clone();
-        tokio::task::spawn_blocking(move || {
+        let (result, lost) = tokio::task::spawn_blocking(move || {
             if !inner.ready() {
-                return Err(RuntimeError::Closed);
+                return (Err(RuntimeError::Closed), false);
             }
             let mut work = Some(work);
             let mut result = None;
-            session
-                .as_mut()
-                .ok_or(RuntimeError::Unavailable)?
-                .with_client(&mut |id, client| {
-                    let work = work.take().ok_or(RuntimeError::Unavailable)?;
-                    result = Some(work(id, client));
-                    Ok(())
-                })?;
-            if !inner.ready() {
-                return Err(RuntimeError::Closed);
-            }
-            result.ok_or(RuntimeError::Unavailable)
+            let Some(live) = session.as_mut() else {
+                return (Err(RuntimeError::Unavailable), false);
+            };
+            let used = live.with_client(&mut |id, client| {
+                let work = work.take().ok_or(RuntimeError::Unavailable)?;
+                result = Some(work(id, client));
+                Ok(())
+            });
+            // A request that finds the workspace gone says so for every later one.
+            let lost = live.lost();
+            let result = used.and_then(|()| {
+                if !inner.ready() {
+                    return Err(RuntimeError::Closed);
+                }
+                result.ok_or(RuntimeError::Unavailable)
+            });
+            (result, lost)
         })
         .await
-        .map_err(|_| RuntimeError::Unavailable)?
+        .map_err(|_| RuntimeError::Unavailable)?;
+        if lost {
+            self.retire_lost(boot);
+        }
+        result
+    }
+    /// Every two seconds while the workspace is Ready: whether its VM is still there, without
+    /// asking the guest anything. A session busy with a request is skipped; that request
+    /// reports a lost workspace itself when it ends.
+    fn watch_ready(self: &Arc<Self>) {
+        let Some(boot) = self.inner.ready_boot() else {
+            return;
+        };
+        let vm = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                let Some(vm) = vm.upgrade() else { return };
+                if vm.inner.ready_boot() != Some(boot) {
+                    return;
+                }
+                let Ok(mut session) = vm.inner.session.clone().try_lock_owned() else {
+                    continue;
+                };
+                let lost = tokio::task::spawn_blocking(move || {
+                    session.as_mut().is_some_and(|live| live.lost())
+                })
+                .await
+                .unwrap_or(false);
+                if lost {
+                    vm.retire_lost(boot);
+                    return;
+                }
+            }
+        });
+    }
+    /// The running workspace stopped by itself. Stop and release its session as an ordinary
+    /// stop does, then report it as stopped: Restart starts it again without quitting Bridge.
+    /// A stop that cannot be confirmed keeps the workspace quarantined, as any failed stop does.
+    fn retire_lost(&self, boot: u64) {
+        let mut state = self.inner.state.lock().unwrap();
+        if state.closing || state.phase != LocalVmStatus::Ready || state.boot != boot {
+            return;
+        }
+        state.lost = true;
+        state.model_connected = false;
+        let _ = self.begin_stop(&mut state, false);
     }
     pub async fn workspace_catalog(
         &self,
@@ -2152,6 +2227,7 @@ impl LocalVm {
             state.close_started = true;
             let startup = state.startup.take();
             let inner = self.inner.clone();
+            let lost = state.lost;
             // Custody survives dropped cancel, change and shutdown IPC waiters.
             tokio::spawn(async move {
                 let started = match startup {
@@ -2163,6 +2239,21 @@ impl LocalVm {
                 let stopped = tokio::task::spawn_blocking(move || {
                     match session.as_mut().map_or(Ok(()), |s| s.stop()) {
                         Ok(()) => {
+                            session.take();
+                            true
+                        }
+                        // A VM that already exited cannot stop cleanly. Its native stop still
+                        // observed the end of every process and released the workspace's
+                        // files, so the session goes and its journal returns for a restart.
+                        Err(error)
+                            if lost
+                                && WorkspaceFailure::from_error(
+                                    &error,
+                                    WorkspaceOperation::Stop,
+                                )
+                                .cause
+                                    == crate::runtime::types::WorkspaceCause::ForcedStop =>
+                        {
                             session.take();
                             true
                         }
@@ -2188,9 +2279,22 @@ impl LocalVm {
                     LocalVmStatus::Closed
                 } else if state.upgrade_startup_failed {
                     LocalVmStatus::Failed
+                } else if lost {
+                    state.failure = Some(
+                        "The workspace stopped unexpectedly: its VM is no longer running.".into(),
+                    );
+                    state.preflight_failure = None;
+                    state.workspace_failure = Some(WorkspaceFailure::new(
+                        WorkspaceOperation::Serve,
+                        crate::runtime::types::WorkspaceCause::Exited,
+                        [],
+                    ));
+                    state.progress = None;
+                    LocalVmStatus::Failed
                 } else {
                     LocalVmStatus::Cancelled
                 };
+                state.lost = false;
                 state.stopped = Some(stopped);
                 if state.upgrade_cancel.as_ref().is_some_and(|c| c.startup) {
                     state.upgrade_cancel = None;
@@ -3566,9 +3670,9 @@ fn facade_request_close_cancels_upgrade_before_async_shutdown() {
 impl EngineTransport for LocalVm {
     fn execute(&self, request: EngineRequest) -> TransportFuture<'_> {
         Box::pin(async move {
-            if !self.inner.ready() {
+            let Some(boot) = self.inner.ready_boot() else {
                 return Err(EngineError::new(ErrorKind::Unavailable));
-            }
+            };
             let mut session = self
                 .inner
                 .session
@@ -3577,24 +3681,29 @@ impl EngineTransport for LocalVm {
                 .map_err(|_| EngineError::new(ErrorKind::Execution))?;
             let inner = self.inner.clone();
             let runtime = tokio::runtime::Handle::current();
-            tokio::task::spawn_blocking(move || {
+            let (result, lost) = tokio::task::spawn_blocking(move || {
                 if !inner.ready() {
-                    return Err(EngineError::new(ErrorKind::Unavailable));
+                    return (Err(EngineError::new(ErrorKind::Unavailable)), false);
                 }
-                let session = session
-                    .as_mut()
-                    .ok_or_else(|| EngineError::new(ErrorKind::Unavailable))?;
+                let Some(session) = session.as_mut() else {
+                    return (Err(EngineError::new(ErrorKind::Unavailable)), false);
+                };
                 // Keep the owned session guard through Mac's existing inner job,
                 // even if the renderer cancels its outer request.
                 let result = runtime.block_on(session.execute(request));
+                let lost = session.lost();
                 if inner.ready() {
-                    result
+                    (result, lost)
                 } else {
-                    Err(EngineError::new(ErrorKind::Unavailable))
+                    (Err(EngineError::new(ErrorKind::Unavailable)), lost)
                 }
             })
             .await
-            .map_err(|_| EngineError::new(ErrorKind::Execution))?
+            .map_err(|_| EngineError::new(ErrorKind::Execution))?;
+            if lost {
+                self.retire_lost(boot);
+            }
+            result
         })
     }
 }

@@ -39,6 +39,7 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `wsStopped` | Workspace stopped | Opens there |
 | `wsCouldntStart` | Workspace couldn't start | Opens there |
 | `wsForced` | Workspace forcibly stopped | Opens there |
+| `wsExited` | The running workspace stopped unexpectedly; Restart workspace starts it again without quitting | Opens there |
 | `wsUpdate` | This version needs a new workspace | Opens there |
 | `wsRestore` | Interrupted update, restore offered | Opens there |
 | `wsRecovery` | Interrupted update, setup incomplete | Opens there |
@@ -56,6 +57,7 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `copilotUnreachable` | First run: this computer can't reach GitHub Copilot; Check again asks again | Get started → Set up → Continue, then Connect the AI |
 | `copilotChoiceGone` | First run: a saved model choice is no longer offered, so the card asks for another | Get started → Set up → Continue, wait for the workspace, then Connect the AI |
 | `keyRejected` | API key not accepted | This computer → Manage → Your own API key, enter a key starting `sk-`, Connect the AI |
+| `keyUnsupported` | The workspace's image can't use an API key: refused before anything is saved or sent | As `keyRejected` |
 | `aiMismatch` | Saved AI connection from an earlier setup | This computer → Manage → Connect the AI |
 | `aiStuck` | The workspace refuses to remove the previous AI connection: Check again once, then Start a fresh workspace, its confirmation, the replacement and the first-setup screen it lands on | This computer → Manage → Connect the AI, Check again, then Start a fresh workspace twice |
 | `freshStopUnconfirmed` | Start a fresh workspace refused because the workspace's stop can't be confirmed | This computer → Manage → What's inside → Start a fresh workspace…, then Start a fresh workspace |

@@ -14,6 +14,11 @@ export const workspaceFailures = {
     workspaceFailure: { operation: 'stop', cause: 'forcedStop', codes: [] },
     localVmError: 'Starting the local VM failed: Runtime operation failed: ShutdownForced',
   },
+  // The running workspace's VM exited by itself; its stop was confirmed, so it can start again in place.
+  wsExited: {
+    workspaceFailure: { operation: 'serve', cause: 'exited', codes: [] },
+    localVmError: 'The workspace stopped unexpectedly: its VM is no longer running.',
+  },
   // A newer Bridge refuses the older retained image before booting it.
   wsUpdate: {
     workspaceFailure: { operation: 'verify', cause: 'workspaceUpdateRequired', codes: [] },
@@ -65,6 +70,8 @@ export function upgradeStatus(state: UpgradeState, transaction: string, credenti
 // AI connection errors, as SetupError serialises them.
 export const keyRejected = (vendor: 'openai' | 'anthropic') => ({ kind: 'modelCredentialRejected', message: 'The model company did not accept this key.', vendor });
 export const keyInvalid = { kind: 'modelKeyInvalid', message: "Paste the whole key with the selected company's key prefix." };
+// The workspace's image predates API keys: refused before anything is saved or sent.
+export const keyUnsupported = (vendor: 'openai' | 'anthropic') => ({ kind: 'modelKeyUnsupported', message: 'The workspace on this computer cannot use an API key. Its image predates API-key connections.', vendor });
 // The workspace's connect tool refuses to remove the previous AI connection, as on a real Windows run.
 export const reconnectRefused = { kind: 'modelReconnect', message: 'Bridge could not remove the previous AI connection from the local cluster. The saved sign-in was kept.', cleanup: ['disconnectRetainedModel', 'refused'] };
 export const modelGuest = { kind: 'modelGuest', message: 'The guest model handler is unavailable or is not idle.' };

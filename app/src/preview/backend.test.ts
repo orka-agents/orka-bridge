@@ -180,14 +180,16 @@ describe('preview backend replies', () => {
     await preview('scenario=wsStopped&speed=100');
     expect(await setupStatus()).toMatchObject({ ok: true, status: { selected: 'localVm', localVm: 'cancelled' } });
     expect(await selectLocal()).toMatchObject({ ok: true, status: { localVm: 'starting' } });
-    for (const [query, failure] of [['wsCouldntStart', { operation: 'start', cause: 'guestConnection' }], ['wsForced', { operation: 'stop', cause: 'forcedStop' }]] as const) {
+    for (const [query, failure] of [['wsCouldntStart', { operation: 'start', cause: 'guestConnection' }], ['wsForced', { operation: 'stop', cause: 'forcedStop' }], ['wsExited', { operation: 'serve', cause: 'exited' }]] as const) {
       await preview(`scenario=${query}&speed=100`);
       expect(await setupStatus()).toMatchObject({ ok: true, status: { localVm: 'failed', workspaceFailure: failure } });
       expect((await readAgents()).state).toBe('unavailable');
       expect((await upgradeCall('status')).ok).toBe(true);
     }
-    await preview('scenario=wsCouldntStart&speed=100');
-    expect(await selectLocal()).toMatchObject({ ok: true, status: { localVm: 'starting' } });
+    for (const query of ['wsCouldntStart', 'wsExited']) {
+      await preview(`scenario=${query}&speed=100`);
+      expect(await selectLocal()).toMatchObject({ ok: true, status: { localVm: 'starting' } });
+    }
   });
 
   it('passes the upgrade validator for update, restore and recovery', async () => {

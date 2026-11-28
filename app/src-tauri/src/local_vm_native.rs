@@ -722,6 +722,21 @@ impl LocalSession for NativeSession {
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         self.0.stop()
     }
+    fn lost(&mut self) -> bool {
+        #[cfg(windows)]
+        {
+            self.session.lost()
+        }
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            self.0.lost()
+        }
+        // Another native session supplies its own check; without one nothing is seen.
+        #[cfg(not(any(windows, all(target_os = "macos", target_arch = "aarch64"))))]
+        {
+            false
+        }
+    }
 }
 #[cfg(test)]
 #[path = "local_vm_native_tests.rs"]

@@ -83,6 +83,25 @@ struct Binding {
     phase: Phase,
     nonce: Option<Uuid>,
     connection: Option<ModelConnection>,
+    /// Pending only: the attempt has handed the guest at most the credential, and no model
+    /// connect was sent. The guest keeps a delivered credential in memory only, so once that
+    /// workspace has stopped nothing of the attempt is left in it. Cleared, durably, before the
+    /// connect is sent; a record without it can have reached kmx.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    delivering: bool,
+}
+impl Binding {
+    /// Nothing but the credential can have reached the guest in this Pending attempt.
+    fn only_delivering(&self) -> bool {
+        self.phase == Phase::Pending && self.connection.is_none() && self.delivering
+    }
+    /// Back to a saved, unconnected sign-in or key.
+    fn settle_stored(&mut self) {
+        self.phase = Phase::Stored;
+        self.nonce = None;
+        self.connection = None;
+        self.delivering = false;
+    }
 }
 fn unavailable() -> SetupError {
     SetupError {
@@ -296,9 +315,7 @@ impl SetupStore {
             return Ok(None);
         }
         b.installation = destination;
-        b.phase = Phase::Stored;
-        b.nonce = None;
-        b.connection = None;
+        b.settle_stored();
         serde_json::to_vec(&b).map(Some).map_err(|_| unavailable())
     }
     /// Recovery already has exact durable snapshots; lock without interpreting a
@@ -449,6 +466,7 @@ fn finish_connect(
     b: &mut Binding,
     remote: ModelState,
 ) -> Result<ModelSetupState, SetupError> {
+    b.delivering = false;
     b.connection = remote.connection;
     if remote.phase != ModelPhase::Ready {
         write_binding(root, b).map_err(|_| SetupError::connect(remote.diagnostic.clone()))?;
@@ -480,6 +498,15 @@ fn cleanup_error_class(error: &std::io::Error) -> &'static str {
         _ => "io",
     }
 }
+/// A key attempt on a guest that refuses keys: its delivery was the first frame the guest could
+/// not read, so no key and no connection ever reached it. The record goes back to a saved key.
+fn settle_unreached_key(root: &Path, b: &mut Binding) -> Result<(), SetupError> {
+    if b.phase == Phase::Pending && b.connection.is_none() {
+        b.settle_stored();
+        write_binding(root, b)?;
+    }
+    Ok(())
+}
 // Explicit intent only, under both ownership locks. A fresh guest has no token,
 // but kmx's owned model resources survive on the state disk and must be stopped.
 fn cleanup_previous_boot(
@@ -491,6 +518,17 @@ fn cleanup_previous_boot(
         cleanup: Some((operation, class)),
         ..SetupError::model("modelReconnect")
     };
+    if b.phase == Phase::Pending && b.connection.is_none() {
+        if b.only_delivering() {
+            // That workspace was handed at most the credential, which its guest kept in memory
+            // only: nothing of the attempt survived it, and there is nothing to remove.
+            b.settle_stored();
+            return write_binding(root, b);
+        }
+        // A connect was sent and its answer never arrived: kmx may keep a connection that
+        // Bridge cannot name, and no request can remove a connection by anything else.
+        return Err(failure("connectionUnknown", "refused"));
+    }
     let connection = b.connection.as_ref().ok_or_else(unavailable)?;
     let before = client
         .model_status()
@@ -516,9 +554,7 @@ fn cleanup_previous_boot(
     client
         .disconnect_retained_model(connection)
         .map_err(|error| failure("disconnectRetainedModel", cleanup_error_class(&error)))?;
-    b.phase = Phase::Stored;
-    b.nonce = None;
-    b.connection = None;
+    b.settle_stored();
     write_binding(root, b)
 }
 /// Why Start a fresh workspace could not confirm the saved AI connection was forgotten.
@@ -900,6 +936,14 @@ impl SetupStore {
         {
             return Err(SetupError::model("modelKeyInvalid"));
         }
+        // Before anything is saved or sent: a guest without API keys would read the key's
+        // delivery as an invalid frame and stop answering until the workspace restarts.
+        if !client.model_keys() {
+            return Err(SetupError {
+                vendor: Some(vendor),
+                ..SetupError::model("modelKeyUnsupported")
+            });
+        }
         let binding = self.model_binding_status()?;
         if binding.associated || binding.unknown {
             return Err(SetupError::model("modelAlreadyAssociated"));
@@ -971,6 +1015,7 @@ impl SetupStore {
             phase: Phase::Storing,
             nonce: None,
             connection: None,
+            delivering: false,
         };
         // Reserve the exact slot durably: save can apply and then report an error.
         write_binding(root, &b)?;
@@ -1079,6 +1124,14 @@ impl SetupStore {
         if b.vendor != selection.vendor || matches!(b.phase, Phase::Storing | Phase::Cleared) {
             return Err(unavailable());
         }
+        if b.kind == CredentialKind::Key && !client.model_keys() {
+            // No key ever reached this guest or kmx: its channel refuses them.
+            settle_unreached_key(root, &mut b)?;
+            return Err(SetupError {
+                vendor: b.vendor,
+                ..SetupError::model("modelKeyUnsupported")
+            });
+        }
         if matches!(b.phase, Phase::Pending | Phase::Connected)
             && b.nonce != Some(client.boot_nonce())
         {
@@ -1102,6 +1155,7 @@ impl SetupStore {
                 return Err(unavailable());
             }
             if remote.phase == ModelPhase::Ready {
+                b.delivering = false;
                 b.connection = remote.connection;
                 b.phase = Phase::Connected;
                 write_binding(root, &b)?;
@@ -1109,6 +1163,7 @@ impl SetupStore {
             }
             if let Some(connection) = &remote.connection {
                 // Persist the acknowledged identity before cleanup, never guess one.
+                b.delivering = false;
                 b.connection = Some(connection.clone());
                 write_binding(root, &b)?;
                 let stopped = client
@@ -1132,6 +1187,11 @@ impl SetupStore {
                 }
             } else if remote.credential.installed {
                 let generation = remote.credential.generation.ok_or_else(unavailable)?;
+                // From here kmx may record a connection: durably, before the connect.
+                if b.delivering {
+                    b.delivering = false;
+                    write_binding(root, &b)?;
+                }
                 // Guest admits the original attempt only; kmx's retained record refuses
                 // partial creates. Do not recapture, load or republish credentials.
                 let remote = client
@@ -1141,9 +1201,7 @@ impl SetupStore {
             } else if remote.phase != ModelPhase::Idle {
                 return Err(unavailable());
             }
-            b.phase = Phase::Stored;
-            b.nonce = None;
-            b.connection = None;
+            b.settle_stored();
             write_binding(root, &b)?;
         }
         if b.phase == Phase::Connected {
@@ -1184,17 +1242,35 @@ impl SetupStore {
         }
         b.phase = Phase::Pending;
         b.nonce = Some(client.boot_nonce());
+        b.delivering = true;
         write_binding(root, &b)?; // durable barrier before either guest mutation
-        let delivered = client
-            .deliver_credential_for_profile(
-                selection.credential_profile(),
-                &secret,
-                before.credential.generation,
-            )
-            .map_err(|_| SetupError::model("modelDelivery"))?;
+        let delivered = match client.deliver_credential_for_profile(
+            selection.credential_profile(),
+            &secret,
+            before.credential.generation,
+        ) {
+            Ok(delivered) => delivered,
+            Err(_) => {
+                // A guest that still answers and holds no new credential never received this
+                // one: nothing is pending. Otherwise the record keeps saying that at most the
+                // credential arrived, which the workspace forgets when it stops.
+                let unchanged = !client.closed()
+                    && client.credential_status().is_ok_and(|after| {
+                        !after.installed && after.generation == before.credential.generation
+                    });
+                if unchanged {
+                    b.settle_stored();
+                    let _ = write_binding(root, &b);
+                }
+                return Err(SetupError::model("modelDelivery"));
+            }
+        };
         let generation = delivered
             .generation
             .ok_or_else(|| SetupError::model("modelDelivery"))?;
+        // From here kmx may record a connection: durably, before the connect.
+        b.delivering = false;
+        write_binding(root, &b)?;
         let remote = client
             .connect_model(generation, selection)
             .map_err(|_| SetupError::model("modelConnect"))?;
@@ -1221,7 +1297,10 @@ impl SetupStore {
         }
         if matches!(b.phase, Phase::Pending | Phase::Connected) {
             let client = client.ok_or_else(unavailable)?;
-            if b.nonce != Some(client.boot_nonce()) {
+            if b.kind == CredentialKind::Key && !client.model_keys() {
+                // No key ever reached this guest or kmx: there is nothing in it to remove.
+                settle_unreached_key(root, &mut b)?;
+            } else if b.nonce != Some(client.boot_nonce()) {
                 cleanup_previous_boot(root, &mut b, client)?;
             } else {
                 if b.phase == Phase::Pending {
@@ -1231,6 +1310,31 @@ impl SetupStore {
                             // Guest cleanup may precede a failed Cleared checkpoint write.
                             b.phase = Phase::Cleared;
                             write_binding(root, &b)?;
+                        }
+                    } else {
+                        // The attempt's answer never arrived. The guest knows what it holds.
+                        let remote = client.model_status().map_err(|_| unavailable())?;
+                        match remote.connection {
+                            // Removal disconnects exactly the connection the guest names.
+                            Some(connection) if connection.selection.vendor == b.vendor => {
+                                b.delivering = false;
+                                b.connection = Some(connection);
+                                write_binding(root, &b)?;
+                            }
+                            // No connect ran this boot: at most the credential arrived.
+                            None if remote.phase == ModelPhase::Idle => {
+                                if remote.credential.installed {
+                                    let generation =
+                                        remote.credential.generation.ok_or_else(unavailable)?;
+                                    client
+                                        .clear_credential_file(generation)
+                                        .map_err(|_| unavailable())?;
+                                }
+                                b.settle_stored();
+                                write_binding(root, &b)?;
+                            }
+                            // A connect is still unsettled: Check again settles it first.
+                            _ => return Err(unavailable()),
                         }
                     }
                 }
@@ -1338,6 +1442,7 @@ mod catalog_binding_tests {
                         Phase::Connected
                     },
                     connection: Some(connection),
+                    delivering: false,
                 },
             )
             .unwrap();
@@ -1416,6 +1521,7 @@ mod tests {
                     phase: Phase::Storing,
                     nonce: None,
                     connection: None,
+                    delivering: false,
                 },
             )
             .unwrap();

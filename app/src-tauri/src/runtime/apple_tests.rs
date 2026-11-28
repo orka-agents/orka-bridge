@@ -554,3 +554,25 @@ fn unobserved_start_exit_is_distinct_and_drop_retains_lock_without_retry() {
         "quarantined parent capability was not retained"
     );
 }
+#[test]
+fn a_helper_that_exited_by_itself_is_a_confirmed_hard_stop() {
+    for prepare in [false, true] {
+        let (d, mut owner, cmd) = setup("crash");
+        let _guest = owner.start(cmd, config()).unwrap();
+        let end = Instant::now() + Duration::from_secs(5);
+        while !owner.exited() {
+            assert!(Instant::now() < end, "the helper did not exit");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if prepare {
+            // As a session's stop does first: nothing is exchanged with an exited helper.
+            owner
+                .prepare_shutdown(Instant::now() + Duration::from_secs(1))
+                .unwrap();
+            assert_eq!(owner.graceful_end, None);
+        }
+        owner.stop().unwrap();
+        assert_eq!(owner.stop_outcome(), Some(AppleStopOutcome::HardStopped));
+        assert_reaped(&d);
+    }
+}

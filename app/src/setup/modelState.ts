@@ -23,6 +23,7 @@ const errors = {
   modelProviderUnreachable: 'The workspace could not reach GitHub Copilot. Check your internet connection.',
   modelModelUnavailable: 'The default model is not listed for this Copilot sign-in. Check your Copilot plan.',
   modelKeyCleanup: 'Key removal has not been confirmed. Retry removal before adding another key.',
+  modelKeyUnsupported: "The workspace on this computer can't use your own API key yet. Choose GitHub Copilot instead.",
   modelCopilotTokenType: "This GitHub CLI sign-in uses a classic token, which GitHub Copilot doesn't accept here.",
   modelCopilotSignInRejected: "GitHub didn't accept your GitHub CLI sign-in.",
   modelCopilotAccessDenied: "GitHub Copilot isn't available to this GitHub account.",
@@ -105,7 +106,7 @@ function recoveryInfo(value: unknown): ModelRecovery | undefined {
   if (r.resetStage !== undefined && r.resetStage !== 'credentialRemovalUnconfirmed' && r.resetStage !== 'recordRemovalUnconfirmed') return;
   return { installation: r.installation, savedInstallation: r.savedInstallation, credentialSlot: r.credentialSlot, ...(r.resetStage ? { resetStage: r.resetStage } : {}) };
 }
-const cleanupOperations = ['modelStatus', 'modelStatusPreconditions', 'disconnectRetainedModel'] as const;
+const cleanupOperations = ['modelStatus', 'modelStatusPreconditions', 'disconnectRetainedModel', 'connectionUnknown'] as const;
 const cleanupClasses = ['timeout', 'unsupported', 'protocol', 'connection', 'permission', 'refused', 'busy', 'io'] as const;
 type CleanupDiagnostic = [typeof cleanupOperations[number], typeof cleanupClasses[number]];
 function cleanupInfo(value: unknown): CleanupDiagnostic | undefined {

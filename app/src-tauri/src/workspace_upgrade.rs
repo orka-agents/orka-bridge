@@ -186,7 +186,7 @@ fn eligible_status(
         return Ok(UpgradeStatusDto::none());
     };
     let root = local.join("local-vm-v1");
-    if !root.try_exists()? {
+    if !root.try_exists()? || never_booted(&root)? {
         return Ok(UpgradeStatusDto::none());
     }
     let journal = Journal::open(&root)?;
@@ -214,6 +214,16 @@ fn eligible_status(
         can_replace: true,
         ..UpgradeStatusDto::none()
     })
+}
+/// A first install that never finished is not a workspace to update: no guest ever booted it, so
+/// it holds nothing to keep, and the launch starts it again from scratch. Before its first record
+/// it has no installation at all. A record that cannot be read is left to the update checks.
+fn never_booted(root: &Path) -> Result<bool, RuntimeError> {
+    let Some(bytes) = read_bytes(&root.join("record.json"), 32768)? else {
+        return Ok(true);
+    };
+    Ok(serde_json::from_slice::<InstallationRecord>(&bytes)
+        .is_ok_and(|record| record.phase != StatePhase::Consumed))
 }
 fn saved_credential_label(
     model: Option<&[u8]>,
