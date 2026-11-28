@@ -61,7 +61,8 @@ test('model and workspace trouble keep their own words and tone', () => {
   expect(setupView(status('failed', { workspaceFailure: { operation: 'download', cause: 'network', codes: [] } })).step).toBe(2);
   expect(setupView(status('cancelled')).line).toBe('Setup paused');
   expect(setupView(status('closed')).line).toBe('Workspace stopped');
-  expect(setupView(status('notIntegrated', { selected: null })).line).toBe('Workspace unavailable');
+  // A build without the local cluster waits on nothing: no amber, no setup to continue.
+  expect(setupView(status('notIntegrated', { selected: null }))).toMatchObject({ line: 'Not available on this build', detail: "This computer can't run agents on this build. Use a cluster you already have.", tone: 'wait', status: 'not-started', action: 'Details' });
 });
 
 test.each([

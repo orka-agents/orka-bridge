@@ -10,8 +10,17 @@
 .nav-composer textarea { width: 100%; min-height: 44px; max-height: 40dvh; padding: var(--space-1-5) var(--space-0-5); border: 0; resize: none; background: transparent; color: var(--color-text); font: 400 17px/24px var(--font-ui); overflow-wrap: anywhere; }
 .nav-composer-start textarea { min-height: 76px; }
 .nav-composer textarea::placeholder, .nav-composer-placeholder { color: var(--color-text-secondary); }
-.nav-composer-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
-.nav-line { min-width: 0; color: var(--color-text-secondary); font: 500 12.5px/16px var(--font-mono); font-variant-ligatures: none; }
+/* One row whatever the line says: the line takes the room left beside the links and Send, so its length never moves
+   them. A long line shortens the place's name in the middle and keeps the model. */
+.nav-composer-foot { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2) var(--space-3); }
+.nav-composer-foot > .nav-line { grid-column: 1; }
+.nav-composer-foot > .button { grid-column: 3; }
+.nav-line { display: flex; min-width: 0; color: var(--color-text-secondary); font: 500 12.5px/16px var(--font-mono); font-variant-ligatures: none; white-space: nowrap; }
+/* Pre keeps each part's own spaces; the place gives way long before the model does. */
+.nav-line > span { overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.nav-line-lead { flex: none; }
+.nav-line-place { flex: 0 1000 auto; min-width: 5ch; }
+.nav-line-model { flex: none; max-width: calc(100% - 17ch); }
 .nav-links { display: inline-flex; align-items: center; gap: var(--space-3); margin-left: auto; }
 .nav-links .button-quiet { font-size: 13px; }
 /* Unavailable: the box is a quiet well, and the card above it says why. */
@@ -84,9 +93,7 @@
 }
 /* At the narrowest the box names only the model, and the starters wrap under it. */
 @media (max-width: 600px) {
-  .nav-line-wide { display: none; }
   .nav-composer-start .nav-links { display: none; }
-  .nav-composer-start .nav-composer-foot > .button { margin-left: auto; }
   /* One line to start with: the box grows as the message does. */
   .nav-composer-start textarea { min-height: 44px; height: 44px; }
   .nav-edit-grid { grid-template-columns: minmax(0, 1fr); }

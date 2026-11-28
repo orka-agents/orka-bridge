@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -39,4 +40,17 @@ test('clipboard and native failures are visible without exposing native errors',
   await user.click(screen.getByRole('button', { name: 'Show in folder' }));
   await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Could not show the folder'));
   expect(document.body.textContent).not.toContain('private-native-path');
+});
+test('feedback has its own line, so a long message never squeezes the path or pushes its actions off the card', async () => {
+  const user = userEvent.setup(); vi.stubGlobal('isTauri', true); mockIPC(() => { throw Error('reveal failed'); });
+  const { container } = render(<FileLocation path="/home/creator/Orka/agents/reader/reader.agent.md" documentId={SAMPLE_DOCUMENT_ID} />);
+  await user.click(screen.getByRole('button', { name: 'Show in folder' }));
+  const status = await screen.findByText('Could not show the folder. Copy the path to open it yourself.');
+  expect(status.closest('.agent-tool-row')).toBeNull();
+  expect(status.parentElement).toBe(container.querySelector('.file-location'));
+  const css = readFileSync('src/designer/designer.css', 'utf8');
+  // The path keeps a 14rem basis beside its actions and wraps them under it before narrowing further.
+  expect(css).toMatch(/\.file-location > \.agent-path, \.file-location > p:first-child \{ flex: 1 1 14rem; min-width: 0;/);
+  expect(css).toMatch(/\.file-location \{ display: flex; flex-wrap: wrap;/);
+  expect(css).toMatch(/\.file-location > \.file-location-feedback \{ flex: 1 0 100%;/);
 });

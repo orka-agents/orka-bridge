@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Button, CloseIcon } from '../components/Button';
+import { useAnchoredPopover } from '../components/anchored-popover';
 import type { ContextView } from './api';
 
 export default function ContextPicker({ choices, value, found, disabled, active, trigger, onChoose }: {
@@ -9,6 +10,7 @@ export default function ContextPicker({ choices, value, found, disabled, active,
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const popover = useRef<HTMLDivElement>(null);
+  useAnchoredPopover(open && active && !disabled, trigger, popover);
   function close(focus = true) { setOpen(false); setQuery(''); if (focus) trigger.current?.focus(); }
   useEffect(() => {
     if (!active || disabled) { setOpen(false); setQuery(''); return; }

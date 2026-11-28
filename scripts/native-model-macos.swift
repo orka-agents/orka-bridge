@@ -707,7 +707,7 @@ for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
         let strings = nativeElements().flatMap { element in
             ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
         }
-        require(strings.contains { showsText($0, "4.3 GB") } && strings.contains { showsText($0, "Step 1 of 4") },
+        require(strings.contains { showsText($0, "4.3 GB") } && strings.contains { showsText($0, "Choose where agents run") },
                 "Local choice lost native-derived decimal GB or its step counter")
         require(enabledButton("Back to clusters") == nil && enabledButton("Choose where agents run") == nil, "Local setup must not have a header Back link")
         if ["ready", "unknown"].contains(state) {
@@ -1614,7 +1614,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     func sendDetails() -> AXUIElement {
         let matches = nativeElements().filter { element in
             attribute(element, "AXRole") as? String == "AXButton"
-                && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("Resources and file hashes") == true }
+                && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("How Send works, checks and file hashes") == true }
         }
         require(matches.count == 1, "Expected one Send card Details disclosure")
         return matches[0]

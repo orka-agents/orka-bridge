@@ -167,3 +167,12 @@ test('preview never fabricates a native test or sends Run IPC', async () => {
   vi.stubGlobal('isTauri', false); const ipc = vi.fn(); mockIPC(ipc); render(<Run />);
   expect(await screen.findByText('Run is available only in the native app.')).toBeTruthy(); expect(ipc).not.toHaveBeenCalled();
 });
+test('on a build without the local cluster the tests card says why instead of waiting for the workspace', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => ({ ...idle, canRun: false, modelConnected: false }));
+  const reason = "This computer can't run agents on this build. Use a cluster you already have.";
+  render(<Run workspaceReady={false} unavailable={reason} />);
+  expect(await screen.findByText(reason)).toBeTruthy();
+  expect(screen.queryByText(/Waiting for the workspace|Connect the AI in Clusters first/)).toBeNull();
+  expect(screen.getByRole('button', { name: 'Run tests' }).getAttribute('title')).toBe(reason);
+});

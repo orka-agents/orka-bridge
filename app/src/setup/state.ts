@@ -44,7 +44,9 @@ async function call(command: 'setup_status' | 'setup_select_local' | 'setup_canc
       || (command === 'setup_select_local' && value.selected !== 'localVm')) {
       return { ok: false, message: 'Setup information is not supported by this build.' };
     }
-    const status: SetupStatus = { selected: value.selected, localVm: value.localVm, model: value.model };
+    // An earlier choice of this computer on a build that can't run it (native keeps it) chooses nothing: nothing can
+    // start, so no page may wait for it.
+    const status: SetupStatus = { selected: value.localVm === 'notIntegrated' ? null : value.selected, localVm: value.localVm, model: value.model };
     if ('localVmError' in value && (value.localVmError === null || typeof value.localVmError === 'string')) {
       status.localVmError = value.localVmError;
     }

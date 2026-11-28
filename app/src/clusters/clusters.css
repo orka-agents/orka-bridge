@@ -117,6 +117,13 @@ select.cluster-mono-field { font: 500 13px/18px var(--font-mono); font-variant-l
 .context-picker { position: fixed; inset: 80px 24px auto; width: min(520px, calc(100vw - 48px)); max-height: calc(100dvh - 128px); overflow: auto; margin: 0 auto; padding: var(--space-4); border: 1px solid var(--color-border-strong); border-radius: var(--radius-overlay); background: var(--color-card); color: var(--color-text); box-shadow: var(--shadow-popover); }
 .context-picker:popover-open { display: grid; height: fit-content; align-content: start; gap: var(--space-2); }
 .context-picker::backdrop { background: transparent; }
+/* Anchored to its trigger (components/anchored-popover.ts): under it, or above it when only that fits. The list
+   scrolls inside the popover's padding, so its scrollbar never sits on the popover's edge. */
+.context-picker.popover-anchored { inset: auto; top: var(--popover-top); left: var(--popover-left); width: var(--popover-width); max-height: var(--popover-max-height); margin: 0; overflow: hidden; }
+.context-picker.popover-anchored:popover-open { display: flex; flex-direction: column; gap: var(--space-2); }
+.context-picker.popover-anchored > .picker-close { align-self: flex-end; flex: none; }
+.context-picker.popover-anchored > :not(ul) { flex: none; }
+.context-picker.popover-anchored ul { flex: 0 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .context-picker > label { font-weight: 600; }
 .context-picker ul { display: grid; gap: var(--space-0-5); margin: 0; padding: 0; list-style: none; }
 .context-picker li button { width: 100%; display: grid; gap: var(--space-0-5); padding: var(--space-2); text-align: left; overflow-wrap: anywhere; border: 0; border-radius: var(--radius-small); background: transparent; color: var(--color-text); font: inherit; }
@@ -153,7 +160,7 @@ select.cluster-mono-field { font: 500 13px/18px var(--font-mono); font-variant-l
 .send-panel .send-local > span { color: var(--color-status-failed); }
 .send-panel .send-reason { margin-top: var(--space-2); color: var(--color-text-secondary); }
 /* The result: a hairline, then the headline, coloured by the result. */
-.send-panel .send-result { display: grid; gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--color-border-strong); }
+.send-panel .send-result { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--color-border-strong); }
 .send-panel .send-result > p { overflow-wrap: anywhere; }
 .send-headline { margin: 0; font: 700 20px/26px var(--font-ui); letter-spacing: -0.02em; overflow-wrap: anywhere; }
 .send-headline-passed { color: var(--color-status-succeeded); }

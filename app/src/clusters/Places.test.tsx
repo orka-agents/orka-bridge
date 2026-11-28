@@ -81,9 +81,12 @@ test('a build without local VM integration explains unavailability rather than a
   const { sim } = native(); sim.status = { ...sim.status, selected: null, localVm: 'notIntegrated' };
   render(<Host />);
   const local = await screen.findByRole('region', { name: 'This computer' });
-  await within(local).findByText('Workspace unavailable');
+  await within(local).findByText('Not available on this build');
   expect(within(local).queryByText('The workspace runs here')).toBeNull();
-  expect(local.querySelector('.pill.status-needs-you')).toBeTruthy();
+  // Nothing waits on the creator here: not amber, and no setup to start.
+  expect(local.querySelector('.pill.status-not-started')?.textContent).toBe('Unavailable');
+  expect(within(local).queryByRole('button', { name: 'Set up' })).toBeNull();
+  expect(within(local).getByRole('button', { name: 'Details' }).classList.contains('button-primary')).toBe(false);
 });
 
 test('an unreadable workspace status stays unknown while retained places remain readable', async () => {

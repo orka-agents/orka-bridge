@@ -5,6 +5,7 @@ import { workspaceRecovery } from './recovery-info';
 import { formatRequirementGB } from './requirements';
 import type { CheckStepState } from './Steps';
 import type { SetupStatus } from './state';
+import { unavailableCopy } from './availability';
 
 // One derivation feeds the tab, footer and step list so their counters cannot disagree.
 // Infrastructure substages share one workspace step; the file bar measures only file work.
@@ -47,7 +48,8 @@ export function setupView(status: SetupStatus | undefined, { checking = false, s
     return { ...result, tabLine: `This computer, ${state.word.toLowerCase()}`, action: state.word === 'Stopped' && status.localVm === 'cancelled' ? 'Start' : 'Manage' };
   }
   const place = status.selected === 'localVm' ? 'local' : 'none';
-  if (status.localVm === 'notIntegrated') return view(place, 0, 'Workspace unavailable', 'Workspace unavailable', 'needs-you');
+  // Nothing on this computer waits on the creator when this build can't run it: not amber, and no setup to continue.
+  if (status.localVm === 'notIntegrated') return { ...view(place, 0, unavailableCopy.line, unavailableCopy.detail, 'wait'), action: 'Details' };
   if (place === 'none') return view(place, 0, 'Choose where agents run', 'Choose where agents run', 'wait');
   if (stopping) return view(place, status.localVm === 'ready' ? 4 : 0, 'Stopping the workspace', 'Stopping the workspace', 'busy', status.localVm === 'ready');
   switch (status.localVm) {

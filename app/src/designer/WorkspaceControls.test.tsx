@@ -55,7 +55,8 @@ test('remote configured defaults keep their model label and do not claim first-p
   const changed = vi.fn();
   const rows = Array.from({ length: 1000 }, (_, i) => ({ id: i === 0 ? 'listed' : `m-${i}` }));
   render(<AgentParts source={source} readOnly={false} remote catalog={{ ...catalog, defaultModel: 'listed', models: { state: 'ready', items: rows } }} onChange={changed} />);
-  expect(screen.getByRole('option', { name: 'listed' })).toBeTruthy();
+  // The cluster's configured default says it is the AI connection's, not a model choice of the workspace.
+  expect(screen.getByRole('option', { name: 'AI connection default: listed' })).toBeTruthy();
   expect(screen.queryByRole('option', { name: /Workspace default/ })).toBeNull();
   expect(screen.queryByText(/more may be available/)).toBeNull();
   expect(changed).not.toHaveBeenCalled();

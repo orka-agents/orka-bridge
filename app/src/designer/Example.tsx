@@ -20,12 +20,15 @@ import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
 import Send, { SendHistory } from '../clusters/Send';
 import type { SendStart } from '../clusters/use-send-settlement';
+import { rovingIndex, rovingKeyDown } from '../components/roving';
 
 export type DocumentAction = { id: number; documentId: string; action: 'open' | 'chat' | 'run' | 'send' | 'file' };
 
-export default function Example({ sampleRevision = 0, actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, workspaceReady = true, remote = false, catalogPaused = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview, startSend, onChatBlocked, onCreating, onView }: {
+export default function Example({ sampleRevision = 0, actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, workspaceReady = true, localUnavailable, remote = false, catalogPaused = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview, startSend, onChatBlocked, onCreating, onView }: {
   actionRequest?: DocumentAction; onActionHandled?: (id: number) => void;
-  sampleRevision?: number; agentsRevision?: number; onRegistered?: () => void; documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; workspaceReady?: boolean; remote?: boolean; catalogPaused?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
+  sampleRevision?: number; agentsRevision?: number; onRegistered?: () => void; documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; workspaceReady?: boolean; remote?: boolean;
+  /** Why this computer can't run agents on this build, said where Designer would wait for the workspace. */
+  localUnavailable?: string; catalogPaused?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: AgentPair | undefined, documentId: string) => void; onRun?: (snapshot: RunSnapshot | undefined, documentId: string) => void;
   onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void; onSeeInOverview?: (sendId: string) => void; startSend?: SendStart;
   // Reports why the open agent can't try a task, so Home's Try a task for the same agent can apply the same gate.
@@ -80,6 +83,9 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string>();
   const [saveState, setSaveState] = useState<SaveState>('saved');
+  // Once this agent has been edited here, the head of its editor keeps saying Saved, beside where the editing happens.
+  const [editedHere, setEditedHere] = useState<string>();
+  useEffect(() => { if (saveState !== 'saved') setEditedHere(boundDocument); }, [saveState, boundDocument]);
   const [pendingSoul, setPendingSoul] = useState(false);
   const pendingSoulCurrent = useRef(false);
   const [reloading, setReloading] = useState(false);
@@ -252,7 +258,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   const chatPlace = clusterName && targetId && providerId ? { name: clusterName, targetId, providerId } : undefined;
   const remoteBlock = !remote ? undefined : !targetId ? 'Connect this cluster in Clusters to try a task on it.'
     : !providerId ? `Choose an AI connection for ${clusterName} in Clusters to try a task on it.` : undefined;
-  const chatBlocked = !remote && !workspaceReady ? 'Waiting for the workspace to start.' : instructionsMissing ? 'Write instructions in Agent view before trying a task.' : remoteBlock ? remoteBlock
+  const chatBlocked = !remote && !workspaceReady ? localUnavailable ?? 'Waiting for the workspace to start.' : instructionsMissing ? 'Write instructions in Agent view before trying a task.' : remoteBlock ? remoteBlock
     : setupPending ? 'Connect the workspace and the AI in Clusters before trying a task.'
     : documentId !== boundDocument ? 'Wait for your agent to finish saving before switching.'
     : reloading ? 'Wait for your saved files to reload.'
@@ -270,7 +276,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
         {instructionsMissing && !testDraft && <p>Write instructions in Agent view before running tests.</p>}
         {testDraft ? <div><h3>Tests</h3><p>Your first test is incomplete. Write instructions in Agent view, then add a question and at least one assertion to the test file on disk before running tests or sending to a cluster.</p><div className="heading-actions"><Button type="button" kind="primary" disabled title="Complete your instructions and test file first">Run tests</Button><Button type="button" kind="secondary" disabled={reloading || pendingSoul || saveState !== 'saved'} title={pendingSoul || saveState !== 'saved' ? 'Wait for your changes to save before reloading.' : undefined} onClick={() => { void reloadSource().catch(() => undefined); }}>{reloading ? 'Reloading…' : 'Reload saved files'}</Button></div><p className="muted">Complete your instructions and test file first</p>{sourceReloadError && <p role="alert">Your saved files could not be read. Your current instructions are kept. Try reloading again.</p>}{testSource}</div>
           : setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Waiting for the workspace to start." title="Waiting for the workspace to start."><Button type="button" kind="secondary" className="action-spaced" disabled title="Waiting for the workspace to start.">Run tests</Button><span className="control-tip" aria-hidden="true">Waiting for the workspace to start.</span></span><p className="muted">Waiting for the workspace to start.</p>{onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Go to Clusters</Button>}</div>
-          : <Run tests={pair.tests} workspaceReady={workspaceReady} onChooseCluster={onChooseCluster} onEditInstructions={editInstructions} documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={instructionsMissing || pendingSoul || saveState !== 'saved'} stale={stale} collapsed={testsFolded} details={view === 'File'} saveLabel={saveLabel} startRequest={actionReady && view === 'Agent' && actionRequest?.action === 'run' ? actionRequest.id : undefined} onStartRequestHandled={finishAction} onStart={() => { if (latest.current === draft) setStale(false); }} />}
+          : <Run tests={pair.tests} workspaceReady={workspaceReady} unavailable={localUnavailable} onChooseCluster={onChooseCluster} onEditInstructions={editInstructions} documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={instructionsMissing || pendingSoul || saveState !== 'saved'} stale={stale} collapsed={testsFolded} details={view === 'File'} saveLabel={saveLabel} startRequest={actionReady && view === 'Agent' && actionRequest?.action === 'run' ? actionRequest.id : undefined} onStartRequestHandled={finishAction} onStart={() => { if (latest.current === draft) setStale(false); }} />}
         {/* Run shows the test list and test file itself; this copy is only for the not-ready state. */}
         {setupPending && !testDraft && <><DesignerTests definitions={definitions} stale={false} /><Details hint="Test file">{testSource}</Details></>}
       </div></section>;
@@ -285,10 +291,10 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     <div className="page-heading designer-heading">
       <div className="agent-heading-copy"><h1 className={info.name ? 'agent-name' : undefined} id={active && !creating ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{view === 'Try' ? <p className="muted">Try a task on {chatPlace?.name ?? 'this computer'} before you rely on it.</p> : info.description ? <p className="muted">{info.description}</p> : pair && <p className="muted">No description in the agent file.</p>}</div>
       <div className="heading-actions">
-        <div className="view-switch" role="group" aria-label="Designer view">
-          <button type="button" aria-pressed={view === 'Agent'} onClick={() => setView('Agent')}>Agent</button>
-          <button type="button" aria-pressed={view === 'Try'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('Try')}>Try a task</button>
-          <button type="button" aria-pressed={view === 'File'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('File')}>File</button>
+        <div className="view-switch" role="group" aria-label="Designer view" onKeyDown={rovingKeyDown}>
+          <button type="button" aria-pressed={view === 'Agent'} data-label="Agent" tabIndex={rovingIndex(view === 'Agent', true, true)} onClick={() => setView('Agent')}>Agent</button>
+          <button type="button" aria-pressed={view === 'Try'} data-label="Try a task" tabIndex={rovingIndex(view === 'Try', true, false)} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('Try')}>Try a task</button>
+          <button type="button" aria-pressed={view === 'File'} data-label="File" tabIndex={rovingIndex(view === 'File', true, false)} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('File')}>File</button>
         </div>
         <label className="agent-selector"><span className="sr-only">Agent</span><select className="field" disabled={!entries || selecting} title={!entries ? 'Reading your agents' : selecting ? 'Opening your agent' : undefined} value={boundDocument} onChange={event => { setSelectionError(undefined); setWantsCreate(false); onNewAgentHandled?.(); requestDocument(event.target.value); }}>
           {!entries?.some(entry => entry.id === boundDocument) && <option value={boundDocument}>{pair?.name ?? 'Current agent'}</option>}
@@ -302,7 +308,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     {!pair ? error ? <div className="designer-file card"><div className="alert alert-failed"><p role="alert" className="alert-title">{error}</p></div><div className="heading-actions"><Button type="button" kind="primary" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</Button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div className="designer-work">
       <div className="designer-editing">
-      <div className="file-toolbar"><h2 className={view === 'File' ? 'section-label file-name' : 'section-label'}>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2>{!error && <span className="muted" role="status">{saveLabel}</span>}</div>
+      <div className="file-toolbar"><h2 className={view === 'File' ? 'section-label file-name' : 'section-label'}>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2>{!error && <span className="muted" role="status">{saveLabel || (editedHere === boundDocument ? 'Saved' : '')}</span>}</div>
       {error && <div className="save-error"><div className="alert alert-failed"><p role="alert" className="alert-title">{error}</p></div><div className="save-error-actions"><Button kind="primary" type="button" onClick={() => { void flush(true); }}>Try saving again</Button><span className="save-state" role="status">{saveLabel}</span></div></div>}
       <div className="designer-file card">
         {view === 'File' ? <>
@@ -311,7 +317,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
           <FileEditor value={draft} onChange={value => edit(value, true)} onSave={() => { void flush(); }} />
         </> : null}
         <div hidden={view === 'File'}>
-          <AgentParts source={draft} path={pair.path} documentId={boundDocument} readOnly={false} setupPending={setupPending} catalog={currentCatalog?.reply} catalogLoading={catalogAvailability === 'loading'} catalogAvailability={catalogAvailability} catalogDestination={catalogDestination} remote={remote} trying={view === 'Try'} onPendingEdit={observePendingSoul} onChange={edit} />
+          <AgentParts source={draft} path={pair.path} documentId={boundDocument} readOnly={false} setupPending={setupPending} catalog={currentCatalog?.reply} catalogLoading={catalogAvailability === 'loading'} catalogAvailability={catalogAvailability} catalogDestination={catalogDestination} remote={remote} localUnavailable={!!localUnavailable} trying={view === 'Try'} onPendingEdit={observePendingSoul} onChange={edit} />
           {currentCatalog && (!currentCatalog.reply || currentCatalog.reply.models.state === 'unavailable' || currentCatalog.reply.tools.state === 'unavailable') && <Button type="button" kind="secondary" onClick={() => setCatalogAttempt(attempt => attempt + 1)}>Refresh tools and models</Button>}
         </div>
         {pair.storage && view !== 'Try' && <p className="muted">{storageCopy[pair.storage]}</p>}

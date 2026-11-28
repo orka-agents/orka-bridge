@@ -18,6 +18,8 @@
 .test-answer h5 { margin: 0; }
 .test-answer .card-details { margin-top: var(--space-3); padding-top: var(--space-3); }
 .test-reason, .test-answer li { overflow-wrap: anywhere; max-width: 70ch; }
+/* A hash has no break opportunity at all; break-all holds it inside the card in every engine, including WebKitGTK. */
+.test-expected-token { word-break: break-all; }
 .test-results.result-stale { color: var(--color-text-secondary); }
 @media (max-width: 649px) {
   .test-result > summary > .disclosure-label { grid-template-columns: minmax(0, 1fr); }

@@ -4,6 +4,14 @@ import { Disclosure } from '../components/Disclosure';
 import { storageCopy } from './agent-api';
 import { createDocument, creationRoot, pickRepo, type RepoSelection } from './documents-api';
 
+// The rule the field enforces, in words beside it rather than the engine's own validation bubble.
+export function nameProblem(name: string) {
+  if (!name) return 'Enter a name.';
+  if (!/^[a-z0-9-]+$/.test(name)) return 'Use only lowercase letters, numbers and hyphens, with no spaces.';
+  if (!/^[a-z0-9]/.test(name) || !/[a-z0-9]$/.test(name)) return 'Begin and end with a letter or number.';
+  return undefined;
+}
+
 export default function NewAgent({ active, model, onRegistered, onCreated, onCancel }: { active: boolean; model?: string; onRegistered: () => void; onCreated: (id: string) => Promise<void>; onCancel: () => void }) {
   const [name, setName] = useState('');
   const [root, setRoot] = useState<string>();
@@ -12,11 +20,15 @@ export default function NewAgent({ active, model, onRegistered, onCreated, onCan
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  // Shown once Create was pressed with a name that breaks the rule, then kept current as the name changes.
+  const [checked, setChecked] = useState(false);
+  const problem = checked ? nameProblem(name) : undefined;
   const admitted = useRef(false);
   const input = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; input.current?.focus(); void creationRoot().then(value => { if (mounted.current) setRoot(value); }); return () => { mounted.current = false; }; }, []);
-  const stem = name || '<name>';
+  // The folder preview names only a name that can be used, so it never shows a path that can't be created.
+  const stem = name && !nameProblem(name) ? name : '<name>';
   const destination = storage === 'bridge' ? root : repo?.path;
   const separator = destination?.includes('\\') ? '\\' : '/';
   const disabled = busy || picking;
@@ -29,8 +41,9 @@ export default function NewAgent({ active, model, onRegistered, onCreated, onCan
   }
   return <section className="new-agent" aria-labelledby={active ? 'page-title' : undefined}>
     <div className="page-heading"><h1 id={active ? 'page-title' : undefined}>New agent</h1></div>
-    <form className="new-agent-form card" onSubmit={event => {
+    <form className="new-agent-form card" noValidate onSubmit={event => {
       event.preventDefault(); if (admitted.current || storage === 'repo' && !repo) return;
+      if (nameProblem(name)) { setChecked(true); input.current?.focus(); return; }
       admitted.current = true; setBusy(true); setError(undefined);
       // An explicit Open can leave this form while native creation finishes.
       // App still refreshes registration, but a late reply cannot steal selection.
@@ -40,7 +53,8 @@ export default function NewAgent({ active, model, onRegistered, onCreated, onCan
     }}>
       <label htmlFor="new-agent-name">Name</label>
       <p className="muted" id="new-agent-name-hint">Use lowercase letters, numbers and hyphens.</p>
-      <input id="new-agent-name" className="field" ref={input} autoCapitalize="none" autoCorrect="off" spellCheck={false} required minLength={1} maxLength={63} pattern="[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?" aria-describedby="new-agent-name-hint" value={name} disabled={disabled} onChange={event => { setName(event.target.value); setError(undefined); }} />
+      <input id="new-agent-name" className="field" ref={input} autoCapitalize="none" autoCorrect="off" spellCheck={false} required minLength={1} maxLength={63} pattern="[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?" aria-invalid={problem ? 'true' : undefined} aria-describedby={problem ? 'new-agent-name-error new-agent-name-hint' : 'new-agent-name-hint'} value={name} disabled={disabled} onChange={event => { setName(event.target.value); setError(undefined); }} />
+      {problem && <p className="field-error" id="new-agent-name-error" role="alert">{problem}</p>}
       <Disclosure label="Naming details"><p className="muted">Use 1–63 characters. Begin and end with a letter or number. Windows device names{storage === 'bridge' ? ' and web-reader are' : ' are'} reserved. This names your files, not the agent on a cluster.</p></Disclosure>
       <fieldset disabled={disabled}><legend>Keep it in</legend>
         <label><input type="radio" name="agent-storage" checked={storage === 'bridge'} onChange={() => { setStorage('bridge'); setError(undefined); }} /> Bridge's folder</label>

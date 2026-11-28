@@ -20,11 +20,21 @@ export function useNarrowWindow() {
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
     const query = window.matchMedia(narrowQuery);
-    const change = () => setNarrow(query.matches);
+    let last: boolean | undefined;
+    const change = () => {
+      const now = query.matches;
+      setNarrow(now);
+      // Crossing the breakpoint restyles the whole window. WebKitGTK can keep the narrow layout's rules applied after
+      // the window is widened again, until something else on the page changes; an inherited custom property on the
+      // root changes every element's style, so all of them pick up the media rules that now match.
+      if (last !== undefined && now !== last) document.documentElement.style.setProperty('--window-narrow', now ? '1' : '0');
+      last = now;
+    };
     change();
-    if (typeof query.addEventListener !== 'function') return;
-    query.addEventListener('change', change);
-    return () => query.removeEventListener('change', change);
+    // A resize is checked too: an engine that misses the query's change event still reports the new width.
+    window.addEventListener('resize', change);
+    if (typeof query.addEventListener === 'function') query.addEventListener('change', change);
+    return () => { window.removeEventListener('resize', change); if (typeof query.removeEventListener === 'function') query.removeEventListener('change', change); };
   }, []);
   return narrow;
 }

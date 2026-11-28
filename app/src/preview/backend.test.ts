@@ -57,6 +57,17 @@ describe('preview backend replies', () => {
     expect(await connectModel()).toMatchObject({ ok: false, category: 'modelGuest' });
   });
 
+  it('reports this computer as not integrated on a build without the local cluster, keeping an earlier choice as native does', async () => {
+    await preview('scenario=noWorkspace&speed=100');
+    expect(await workspaceRequirements()).toBeNull();
+    expect(await setupStatus()).toEqual({ ok: true, status: { selected: null, localVm: 'notIntegrated', localVmError: null, model: 'locked', modelSupported: false } });
+    await preview('scenario=noWorkspaceChosen&speed=100');
+    // Native keeps the choice; the app reads it as no choice, so nothing waits for this computer.
+    expect(await setupStatus()).toMatchObject({ ok: true, status: { selected: null, localVm: 'notIntegrated' } });
+    expect(await clusterPlaces()).toMatchObject({ places: [{ context: 'team-dev', stale: true }] });
+    expect(await reconnectCluster('team-dev/control/orka')).toMatchObject({ context_name: 'team-dev' });
+  });
+
   it('passes the run, chat and Overview validators once the AI is connected', async () => {
     await preview('scenario=connected');
     expect(await connectModel()).toMatchObject({ ok: true, connection: { kind: 'copilot' } });

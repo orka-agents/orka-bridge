@@ -52,7 +52,7 @@
 .live-dot.bad { background: var(--color-status-failed); }
 .live-dot.stale { background: var(--color-text-secondary); }
 .coming-control { position: relative; display: inline-flex; border-radius: var(--radius-control); }
-.control-tip, .page-tab::after { display: none; position: absolute; z-index: 2; top: calc(100% + 8px); right: 0; width: max-content; max-width: 240px; padding: var(--space-2); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-card); color: var(--color-text); font: var(--type-body); box-shadow: var(--shadow-popover); }
+.control-tip, .page-tab::after, .host-chip[data-tip]::after { display: none; position: absolute; z-index: 2; top: calc(100% + 8px); right: 0; width: max-content; max-width: 240px; padding: var(--space-2); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-card); color: var(--color-text); font: var(--type-body); box-shadow: var(--shadow-popover); }
 .coming-control:hover .control-tip, .coming-control:focus-visible .control-tip { display: block; }
 * { scrollbar-width: thin; scrollbar-color: var(--color-text-tertiary) var(--color-page); }
 @supports not (scrollbar-width: thin) {
@@ -83,6 +83,12 @@
   .app-shell[data-sidebar="collapsed"] .page-tab { position: relative; justify-content: center; padding: var(--space-1); }
   .app-shell[data-sidebar="collapsed"] .page-tab::after { content: attr(aria-label); top: 50%; right: auto; left: calc(100% + var(--space-2)); transform: translateY(-50%); pointer-events: none; }
   .app-shell[data-sidebar="collapsed"] .page-tab:is(:hover, :focus-visible)::after { display: block; }
+  /* The toggle sits over the rail's first tab: its tip opens past the rail's edge, not over that tab. In the rail the
+     status card is only its dot, centred in a 44px card: its tip starts past the card's edge (18px from the dot) and
+     ends level with the card's foot, inside the window, where a system tooltip would be drawn below it. */
+  .app-shell[data-sidebar="collapsed"] .sidebar-toggle-control .control-tip { left: calc(var(--sidebar-width) - var(--space-2)); }
+  .app-shell[data-sidebar="collapsed"] .host-chip[data-tip]::after { content: attr(data-tip); top: auto; right: auto; bottom: -12px; left: calc(100% + 18px + var(--space-2)); pointer-events: none; }
+  .app-shell[data-sidebar="collapsed"] .host-chip[data-tip]:is(:hover, :focus-visible):not([aria-expanded="true"])::after { display: block; }
   .app-shell[data-sidebar="collapsed"] .status-bar { place-items: center; min-height: 40px; margin-inline: var(--space-2); padding: 0; }
 }
 /* Narrow windows always show the rail. The title bar keeps Bridge and the toggle, which opens the full sidebar over
@@ -95,6 +101,10 @@
   .app-shell:not(.guided, [data-sidebar="overlay"]) .page-tab { position: relative; justify-content: center; padding: var(--space-1); }
   .app-shell:not(.guided, [data-sidebar="overlay"]) .page-tab::after { content: attr(aria-label); top: 50%; right: auto; left: calc(100% + var(--space-2)); transform: translateY(-50%); pointer-events: none; }
   .app-shell:not(.guided, [data-sidebar="overlay"]) .page-tab:is(:hover, :focus-visible)::after { display: block; }
+  /* The toggle sits over the rail's first tab: its tip opens past the rail's edge, not over that tab. */
+  .app-shell:not(.guided, [data-sidebar="overlay"]) .sidebar-toggle-control .control-tip { left: calc(var(--sidebar-width) - var(--space-2)); }
+  .app-shell:not(.guided, [data-sidebar="overlay"]) .host-chip[data-tip]::after { content: attr(data-tip); top: auto; right: auto; bottom: -12px; left: calc(100% + 18px + var(--space-2)); pointer-events: none; }
+  .app-shell:not(.guided, [data-sidebar="overlay"]) .host-chip[data-tip]:is(:hover, :focus-visible):not([aria-expanded="true"])::after { display: block; }
   .app-shell:not(.guided, [data-sidebar="overlay"]) .status-bar { place-items: center; min-height: 40px; margin-inline: var(--space-2); padding: 0; }
   /* The open sidebar is drawn over the page: a panel behind the full-width tabs and status card. */
   .app-shell[data-sidebar="overlay"]:not(.guided)::before { content: ''; grid-row: 2 / 4; grid-column: 1; z-index: 5; width: 232px; border-right: 1px solid var(--color-border-strong); background: var(--color-bar); box-shadow: var(--shadow-popover); }

@@ -558,7 +558,7 @@ const unsupportedWalk = smoke.slice(smoke.indexOf('    // Unsupported is deliber
 assert.ok(unsupportedWalk.includes('"Check cluster status"'));
 assert.ok(!unsupportedWalk.includes('clickSendControl("Retry cancellation"'), 'unsupported must be last, never followed by retry');
 assert.ok(smoke.indexOf('send-cancel-completion-race') < smoke.indexOf('// Unsupported is deliberately the last Send:'));
-assert.ok(smoke.includes('Resources and file hashes'), 'native discovery must distinguish resources from nested Details');
+assert.ok(smoke.includes('How Send works, checks and file hashes'), 'native discovery must distinguish resources from nested Details');
 assert.ok(smoke.includes('let buttonAnchor = nativeButtons(anchor ?? expected, root: root)'), 'action captions need scoped AXButton bounds after Details closes');
 assert.ok(smoke.includes('nativeTextBounds(anchor ?? expected, visibleOnly: false, exact: anchor != nil, root: root)'), 'duplicate local test names cannot steer Send anchors');
 assert.ok(smoke.includes('nativeTextBounds(failureReason, exact: true, root: root)'), 'the visible failure reason must belong to Send');

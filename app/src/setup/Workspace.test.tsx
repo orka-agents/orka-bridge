@@ -153,6 +153,7 @@ test('unavailable integration keeps its explanation instead of promising startup
   status = { selected: 'localVm', localVm: 'notIntegrated', model: 'locked' };
   await open();
   expect(screen.queryByRole('region', { name: 'Workspace' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
   expect(screen.getByText('Workspace setup is not included in this build. Nothing will be downloaded or started.')).toBeTruthy();
 });
 
