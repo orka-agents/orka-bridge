@@ -103,7 +103,8 @@ impl AppleVmSession {
                 Box::new(channel),
                 nonce,
                 serving_hello.as_ref().ok_or(RuntimeError::Unavailable)?,
-            )?;
+            )?
+            .with_guest_build(session.worker.guest_build());
             session.transport = Some(VmTransport::with_client(client));
             Ok(())
         })();

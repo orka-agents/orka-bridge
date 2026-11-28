@@ -12,7 +12,7 @@ import { sidebarPreference } from '../chrome/sidebar';
 import { themePreference } from '../chrome/theme';
 import {
   clusterCatalog, type Credential, contextTargets, createdSeed, deniedAccess, kubeContexts, failingClusterPlace, failingClusterProvider, failingClusterTarget, type FailureScenario,
-  installationMismatch, keyInvalid, keyRejected, modelGuest, reconnectRefused, sendRows, unreachableCluster, upgradeStatus, workspaceFailures,
+  installationMismatch, keyInvalid, keyRejected, keyUnsupported, modelGuest, reconnectRefused, sendRows, unreachableCluster, upgradeStatus, workspaceFailures,
 } from './fixtures';
 
 export const scenarios = {
@@ -42,6 +42,7 @@ export const scenarios = {
   freshConflict: "Start a fresh workspace: folders Bridge didn't expect",
   freshBlocked: "Start a fresh workspace isn't available after a workspace update",
   keyRejected: 'API key not accepted',
+  keyUnsupported: "API keys aren't available on this workspace",
   aiMismatch: 'Saved AI connection from an earlier setup',
   clusterDenied: 'Cluster access denied',
   clusterUnreachable: "Can't reach the cluster",
@@ -664,6 +665,11 @@ async function scenarioReply(command: string, args?: Record<string, unknown>): P
       if (!upgrade) break;
       return 'notCancellable';
     case 'setup_connect_key': {
+      if (scenario === 'keyUnsupported') {
+        await wait(0.3);
+        if (!ready()) throw modelGuest;
+        throw keyUnsupported(args?.vendor === 'anthropic' ? 'anthropic' : 'openai');
+      }
       if (scenario !== 'keyRejected') break;
       await wait(2);
       if (!ready()) throw modelGuest;

@@ -4,6 +4,21 @@ use super::*;
 const KEY: &str = "sk-ant-synthetic-model-only";
 const OPENAI_KEY: &str = "sk-synthetic-model-only";
 
+/// A guest whose build accepts API keys; `unkeyed_peer` is one that predates them.
+fn peer(
+    nonce: Uuid,
+    reply: impl FnMut(&WireRequest) -> Option<ResultBody> + Send + 'static,
+) -> (VmClient, JoinHandle<Traffic>) {
+    let (mut client, worker) = super::peer(nonce, reply);
+    client.allow_model_keys();
+    (client, worker)
+}
+fn unkeyed_peer(nonce: Uuid) -> (VmClient, JoinHandle<Traffic>) {
+    super::peer(nonce, |_| {
+        panic!("a guest without API keys is never sent a request")
+    })
+}
+
 fn key_selection(vendor: ModelVendor) -> ModelSelection {
     ModelSelection {
         vendor: Some(vendor),
@@ -775,4 +790,66 @@ fn diagnostic_mapping_does_not_infer_category_from_stderr() {
         .unwrap()
         .get("diagnostic")
         .is_none());
+}
+
+#[test]
+fn a_guest_without_api_keys_is_never_sent_a_key_and_nothing_is_saved() {
+    for vendor in [ModelVendor::Openai, ModelVendor::Anthropic] {
+        let (_tmp, setup, install) = selected_setup();
+        let vault = FakeVault::default();
+        let key = if vendor == ModelVendor::Openai {
+            OPENAI_KEY
+        } else {
+            KEY
+        };
+        let (mut client, worker) = unkeyed_peer(Uuid::new_v4());
+        let error = setup
+            .connect_key_model(install, vendor, key, &mut client, &vault)
+            .unwrap_err();
+        assert_eq!(error.kind, "modelKeyUnsupported");
+        assert_eq!(error.vendor, Some(vendor));
+        drop(client);
+        worker.join().unwrap().assert_empty();
+        // Nothing saved: no record, no slot. Another provider can be chosen at once.
+        assert!(read_binding(setup.root.as_deref().unwrap())
+            .unwrap()
+            .is_none());
+        assert_eq!(vault.counts(), (0, 0, 0));
+    }
+}
+
+#[test]
+fn a_key_attempt_stuck_on_a_guest_without_api_keys_is_removed_without_the_guest() {
+    // As an earlier Bridge left it: the key's delivery made the guest stop answering, so the
+    // record says Pending with no connection, from that boot or this one.
+    for same_boot in [false, true] {
+        let (_tmp, setup, install) = selected_setup();
+        let vault = FakeVault::default();
+        setup
+            .associate_secret_for_vendor(install, SECRET, Some(ModelVendor::Openai), None, &vault)
+            .unwrap();
+        let nonce = Uuid::new_v4();
+        let root = setup.root.as_deref().unwrap();
+        let mut binding = read_binding(root).unwrap().unwrap();
+        binding.phase = Phase::Pending;
+        binding.nonce = Some(if same_boot { nonce } else { Uuid::new_v4() });
+        write_binding(root, &binding).unwrap();
+        let (mut client, worker) = unkeyed_peer(nonce);
+        // Check again explains, and leaves a saved key that Remove deletes.
+        let error = setup
+            .connect_saved_key_model(install, ModelVendor::Openai, &mut client, &vault)
+            .unwrap_err();
+        assert_eq!(error.kind, "modelKeyUnsupported");
+        let saved = read_binding(root).unwrap().unwrap();
+        assert_eq!((saved.phase, saved.nonce), (Phase::Stored, None));
+        assert!(setup.model_binding_status().unwrap().associated);
+        write_binding(root, &binding).unwrap();
+        setup
+            .sign_out_model(install, Some(&mut client), &vault)
+            .unwrap();
+        drop(client);
+        worker.join().unwrap().assert_empty();
+        assert!(read_binding(root).unwrap().is_none());
+        assert_eq!(vault.counts().2, 1);
+    }
 }

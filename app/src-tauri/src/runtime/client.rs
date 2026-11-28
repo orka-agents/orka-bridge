@@ -16,6 +16,16 @@ pub struct VmClient {
     next: u64,
     run_cleanup: bool,
     navigator_chat: bool,
+    model_keys: bool,
+}
+/// Guest builds whose serving channel accepts an API key: the key credential profile and the
+/// key route. A guest without them reads such a request as an invalid frame and stops serving
+/// its channel for the rest of its boot, so the host never sends one to it. Its serving hello
+/// does not say, so the installed image's guest build does. The image pin update adds a build
+/// here once its guest handles keys; none of the pinned images does yet.
+const MODEL_KEY_GUESTS: &[&str] = &[];
+pub(crate) fn model_key_guest(build: &str) -> bool {
+    MODEL_KEY_GUESTS.contains(&build)
 }
 fn invalid() -> io::Error {
     io::Error::from(io::ErrorKind::InvalidData)
@@ -40,6 +50,7 @@ impl VmClient {
             next: 3,
             run_cleanup: false,
             navigator_chat: false,
+            model_keys: false,
         })
     }
     /// Capabilities come from the validated serving hello, never a probe that
@@ -59,6 +70,19 @@ impl VmClient {
     /// otherwise: a guest without it stops serving on the first such request.
     pub fn navigator_chat(&self) -> bool {
         self.navigator_chat
+    }
+    /// From the installed image's guest build, never a probe that could poison the channel.
+    pub(crate) fn with_guest_build(mut self, build: &str) -> Self {
+        self.model_keys = model_key_guest(build);
+        self
+    }
+    /// Whether this guest accepts an API key. Never sent otherwise.
+    pub fn model_keys(&self) -> bool {
+        self.model_keys
+    }
+    #[cfg(test)]
+    pub(crate) fn allow_model_keys(&mut self) {
+        self.model_keys = true;
     }
     /// The serving channel is gone; nothing more can be sent until the workspace restarts.
     pub fn closed(&self) -> bool {

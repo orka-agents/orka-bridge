@@ -321,6 +321,7 @@ impl SetupError {
             "modelProviderUnreachable" => "The workspace could not reach the model company.",
             "modelModelUnavailable" => "The selected model is not listed for this key.",
             "modelKeyCleanup" => "Key removal was not confirmed. The saved connection was kept for another removal attempt.",
+            "modelKeyUnsupported" => "The workspace on this computer cannot use an API key. Its image predates API-key connections.",
             "modelCaptureUnavailable" => {
                 "Install GitHub CLI and sign in to github.com before connecting."
             }

@@ -282,6 +282,8 @@ fn definitive_failed_key_connect_cannot_auto_delete_a_retained_shared_slot() {
         nonce,
     )
     .unwrap();
+    // A guest whose build takes API keys.
+    client.allow_model_keys();
     let setup = SetupStore::with_upgrade_root(Some(s.data.clone()), Some(s.local.clone()));
     setup.select_local().unwrap();
     let error = setup
