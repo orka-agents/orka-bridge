@@ -687,7 +687,9 @@ for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
             let strings = nativeElements().flatMap { element in
                 ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
             }
-            if strings.contains(where: { showsText($0, "These checks do not change") || showsText($0, "This computer has") || showsText($0, "Virtualization:") || showsText($0, "Bridge couldn't check") }) { checksSettled = true; break }
+            // A build that checks only at start settles on its own line (setup/Preflight.tsx); the walk's
+            // fixture never answers that way, but its settle must not stall on one that does.
+            if strings.contains(where: { showsText($0, "These checks do not change") || showsText($0, "Bridge checks virtualization and memory when the workspace starts") || showsText($0, "This computer has") || showsText($0, "Virtualization:") || showsText($0, "Bridge couldn't check") }) { checksSettled = true; break }
             Thread.sleep(forTimeInterval: 0.1)
         }
         require(checksSettled, "Computer requirements did not settle")
