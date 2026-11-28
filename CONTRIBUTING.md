@@ -46,6 +46,7 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `wsVersionUnsupported` | The workspace uses different cluster files; Start a fresh workspace sits beside Open the matching Bridge version | Opens there |
 | `wsStarting` | First setup, the workspace starting with its progress; Connect the AI checks the GitHub sign-in at once and waits with the account and model | Opens there |
 | `wsReadyNoAi` | A first setup left with the workspace ready and no AI: the setup card keeps What's inside and Start a fresh workspace… | Opens on Clusters; This computer → Connect the AI |
+| `wsReinstall` | Reopened after a first install that never booted: native retired it at launch and installs again from the start, as an ordinary first install | Opens there |
 | `firstDownloadFails` | First run: the workspace download fails partway, then Try again finishes it | Get started → Set up → Continue |
 | `firstCached` | First run on a computer that already has the workspace's download: Welcome and the choice say Already downloaded | Welcome, then Get started → Set up |
 | `firstTestFails` | First run: the first agent's test fails | Get started → Set up → Continue, then Connect the AI |
