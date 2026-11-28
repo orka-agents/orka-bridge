@@ -152,6 +152,8 @@ test.each([false, true])('disconnected AI keeps Run secondary/disabled even when
   await waitFor(() => expect(screen.getByRole('button', { name: 'Connect the AI' })).toBeTruthy());
   expect(run.classList.contains('button-primary')).toBe(false);
   expect(run.hasAttribute('disabled')).toBe(true);
+  // The workspace is running: the reason is the AI, not starting the workspace.
+  expect(run.getAttribute('title')).toBe('Connect the AI in Clusters first.');
   await user.click(screen.getByRole('button', { name: 'Connect the AI' })); expect(choose).toHaveBeenCalledOnce();
 });
 test.each(['Succeeded', 'Failed'])('failed %s gives factual next steps and editor navigation', async phase => {

@@ -170,3 +170,18 @@ test('Personality offers an example without inserting it in the agent file', asy
   const field = screen.getByRole('textbox', { name: 'Personality' }) as HTMLTextAreaElement;
   expect(field.placeholder).toContain('Be concise'); expect(field.value).toBe('');
 });
+
+test.each([
+  ['the workspace is not ready', { localCatalogBlocker: 'workspace' as const }, 'Tools and models load once the workspace on this computer is ready. Check it in Clusters.'],
+  ['no AI is connected', { localCatalogBlocker: 'ai' as const }, 'Connect the AI in Clusters to load tools and models on this computer.'],
+])('when %s, the hint names that blocker, with one tooltip on Add a tool', async (_, props, reason) => {
+  vi.stubGlobal('isTauri', true); const ipc = vi.fn(command => command === 'agent_open' ? pair : null); mockIPC(ipc);
+  render(<Example place={{ kind: 'thisComputer' }} {...props} />);
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  expect(screen.getAllByText(reason).length).toBeGreaterThan(0);
+  expect(screen.queryByText('Open Clusters to load tools and models on This computer.')).toBeNull();
+  const add = screen.getByRole('group', { name: `Add a tool: ${reason}` });
+  expect(add.hasAttribute('title')).toBe(false);
+  expect(add.querySelector('button')!.hasAttribute('title')).toBe(false);
+  expect(add.querySelector('.control-tip')?.textContent).toBe(reason);
+});

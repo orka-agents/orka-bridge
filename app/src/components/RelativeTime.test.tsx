@@ -36,7 +36,9 @@ test('milliseconds from Overview retain an exact machine-readable and hover date
   const time = screen.getByText('2 minutes ago');
   expect(time.tagName).toBe('TIME');
   expect(time.getAttribute('datetime')).toBe('2026-11-13T11:58:00.000Z');
-  expect(time.title).toBe(new Date(timestamp).toLocaleString());
+  // One hover tip, the styled one: no native title drawn over it.
+  expect(time.querySelector('.control-tip')?.textContent).toBe(new Date(timestamp).toLocaleString());
+  expect(time.hasAttribute('title')).toBe(false);
 });
 
 test('an age that follows other words starts in lower case', () => {
