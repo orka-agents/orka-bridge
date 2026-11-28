@@ -126,7 +126,7 @@ try {
     ['download-reserved', { operation: 'download', cause: 'network', codes: [] }, 'Your agent files are kept'],
     ['unknown', { operation: 'start', cause: 'unknown', codes: [] }, "Your workspace didn't start."],
     ['cli', 'modelCaptureUnavailable', 'gh auth login --hostname github.com --web'],
-    ['sign-in', 'modelCaptureFailed', 'gh auth status --hostname github.com'],
+    ['sign-in', 'modelCaptureFailed', 'Sign in to github.com with GitHub CLI in your terminal'],
     ['model-store', 'modelStore', 'could not save or load your sign-in'],
     ['model-copy', 'modelCaptureFailed', 'Share the visible error message'],
     ['cluster-empty', null, 'No kubectl contexts were found'],

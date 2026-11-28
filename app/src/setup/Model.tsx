@@ -229,7 +229,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   }
   async function help(topic: HelpTopic) {
     try { await invoke('setup_open_help', { topic }); setNotice('Help opened in your browser.'); }
-    catch { setNotice(choice === 'key' ? `Couldn't open help. Open ${company.site} to create a key.` : "Couldn't open help. Open the GitHub CLI website for installation and sign-in instructions."); }
+    catch { setNotice(choice === 'key' ? `Couldn't open help. Open ${company.site} to create a key.` : "Couldn't open help. Go to cli.github.com for installation and sign-in instructions."); }
   }
   async function copy() {
     if (!error) return;
@@ -269,7 +269,12 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   }
   const cliUnavailable = !removalFailed && error?.category === 'modelCaptureUnavailable';
   const signInCheck = !removalFailed && error && ['modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(error.category);
-  function chooseKind(kind: 'copilot' | 'key') { clearKey(); setQueued(false); setChoice(kind); setError(undefined); setAnotherChoice(false); setPicking(false); }
+  // Installed but not signed in, or its sign-in unreadable: signing in is the next step.
+  const signedOut = !removalFailed && error?.category === 'modelCaptureFailed';
+  // Bridge couldn't read a sign-in, so nothing was saved or sent.
+  const nothingRead = !!cliUnavailable || !!signInCheck;
+  // A route's own error and help notice belong to that route: changing route clears them.
+  function chooseKind(kind: 'copilot' | 'key') { clearKey(); setQueued(false); setChoice(kind); setError(undefined); setNotice(''); setAnotherChoice(false); setPicking(false); }
   const keyMode = choice === 'key';
   const keyProblem = keyMode && error && !removalFailed;
   // A key the company refused, or one that isn't whole, is an error on the field itself.
@@ -390,10 +395,11 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     : freshBlocked ? "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace isn't available right now. Try again later, or copy the details for whoever helps you with Bridge. Your agent files are kept."
     : "Bridge can't remove it from here, and resetting Bridge's saved connection wouldn't clear the workspace's own record. A fresh workspace is the sure way back. Copy the details for whoever helps you with Bridge. Your agent files are kept."
     : cliUnavailable ? 'Install GitHub CLI if needed, then sign in to github.com in your terminal:'
+    : signedOut ? 'Sign in to github.com with GitHub CLI in your terminal, then press Check again:'
     : signInCheck ? 'Check your GitHub CLI sign-in in your terminal:'
     : error?.category === 'modelBusy' ? 'Wait for the other operation to finish, then press Check again.'
     : 'Press Check again to reconnect. If it happens again, copy the details for help.');
-  const command = preflight ? preflight.command : cliUnavailable ? ghLogin : signInCheck ? 'gh auth status --hostname github.com' : undefined;
+  const command = preflight ? preflight.command : cliUnavailable || signedOut ? ghLogin : signInCheck ? 'gh auth status --hostname github.com' : undefined;
   const otherRoute = error?.category === 'modelCopilotAccessDenied' && !hasSignIn && !busy && <Button type="button" kind="secondary" onClick={() => chooseKind('key')}>Use your own API key</Button>;
   const copyAction = error && <Button type="button" kind={setupFailure ? 'secondary' : 'quiet'} onClick={() => { void copy(); }}>Copy details for help</Button>;
   const reconnectHint = !removalFailed && <p className="muted">Check again reconnects the AI using your saved sign-in when available.</p>;
@@ -454,19 +460,20 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
         <p>{nextStep}</p>
         {command && <pre>{command}</pre>}
         {error.category === 'modelCopilotModelNotOffered' && picker}
-        <p className="muted">{preflight ? 'Nothing was sent to your workspace.' : 'Your workspace and agent files are kept. A sign-in may already have been saved.'}</p>
+        <p className="muted">{preflight || nothingRead ? 'Nothing was sent to your workspace.' : 'Your workspace and agent files are kept. A sign-in may already have been saved.'}</p>
       </div></div>
       {actions}
       {otherRoute && <div className="workspace-step-actions">{otherRoute}</div>}
       <div className="workspace-step-actions model-copy-row">{copyAction}</div>
       {!freshAction && reconnectHint}
-      {!anotherChoice && !hasSignIn && !busy && <Button type="button" kind="quiet" className="model-another" onClick={() => setAnotherChoice(true)}>Choose another provider</Button>}
+      {/* Choosing again leaves this route's failure behind: its error and help notice go with it. */}
+      {!anotherChoice && !hasSignIn && !busy && <Button type="button" kind="quiet" className="model-another" onClick={() => { setError(undefined); setNotice(''); setAnotherChoice(true); }}>Choose another provider</Button>}
     </> : <div className={callout ? 'workspace-failure' : undefined} role={callout ? 'alert' : undefined}>
       <div className={callout ? 'workspace-failure-explanation' : undefined}>
         {callout && <><p className="failure-summary">{removalFailed && error.category === 'unknown' ? `Bridge could not confirm ${keyMode ? 'key' : 'sign-in'} removal.` : keyMode ? keyFailure(error, vendor) : summary}</p>
         {!keyProblem && <><p>{removalFailed && !stuck ? 'Press Retry removal to retry cleanup. If it happens again, copy the details for help.' : nextStep}</p>
         {command && <pre>{command}</pre>}
-        <p>{preflight ? 'Nothing was sent to your workspace.' : `Your workspace and agent files are kept. ${removalFailed ? 'Removal has not been confirmed.' : 'A sign-in may already have been saved.'}`}</p>
+        <p>{preflight || nothingRead ? 'Nothing was sent to your workspace.' : `Your workspace and agent files are kept. ${removalFailed ? 'Removal has not been confirmed.' : 'A sign-in may already have been saved.'}`}</p>
         {otherRoute}
         {!preflight && !freshAction && reconnectHint}</>}
         </>}

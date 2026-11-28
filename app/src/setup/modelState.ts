@@ -2,8 +2,9 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { isOsCode } from './recovery-info';
 
 const errors = {
-  modelCaptureUnavailable: 'Install GitHub CLI and sign in to github.com before connecting.',
-  modelCaptureFailed: 'The stored GitHub sign-in could not be read. Check your GitHub CLI sign-in.',
+  // Native tells these apart: no GitHub CLI where Bridge looks for it, or GitHub CLI there whose sign-in it couldn't read.
+  modelCaptureUnavailable: "Bridge couldn't find GitHub CLI on this computer.",
+  modelCaptureFailed: "GitHub CLI isn't signed in to github.com, or Bridge couldn't read its sign-in.",
   modelCaptureInvalid: 'The stored GitHub sign-in returned invalid credential data.',
   modelCaptureTimedOut: 'Reading the stored GitHub sign-in timed out.',
   modelStore: 'Bridge could not save or load your sign-in.',

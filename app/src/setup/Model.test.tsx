@@ -226,7 +226,10 @@ test('failed CLI recovery offers install and sign-in help and explicitly reconne
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   const alert = await screen.findByRole('alert');
   expect(alert.textContent).toContain('gh auth login --hostname github.com --web');
-  expect(alert.textContent).toContain('Your workspace and agent files are kept');
+  expect(alert.textContent).toContain("Bridge couldn't find GitHub CLI on this computer.");
+  // No sign-in was read, so none can have been saved.
+  expect(alert.textContent).toContain('Nothing was sent to your workspace.');
+  expect(alert.textContent).not.toContain('A sign-in may already have been saved.');
   expect(screen.getByRole('button', { name: 'Install GitHub CLI' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Sign-in help' })).toBeTruthy();
   expect(alert.textContent).not.toContain('SECRET');
@@ -237,8 +240,20 @@ test('failed CLI recovery offers install and sign-in help and explicitly reconne
   await screen.findByText(/^Connected$/);
   expect(invoke.mock.calls.filter(([command]) => command === 'setup_connect_model')).toHaveLength(2);
 });
-test('reading sign-in errors show the status command without copying diagnostics', async () => {
-  invoke.mockRejectedValue({ kind: 'modelCaptureFailed', message: 'SECRET', diagnostic: 'SECRET' });
+test('GitHub CLI that is installed but signed out is told apart from GitHub CLI not found', async () => {
+  invoke.mockRejectedValue({ kind: 'modelCaptureFailed', message: 'SECRET' });
+  render(<Model enabled />); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain("GitHub CLI isn't signed in to github.com, or Bridge couldn't read its sign-in.");
+  expect(alert.textContent).toContain('Sign in to github.com with GitHub CLI in your terminal, then press Check again:');
+  expect(alert.textContent).toContain('gh auth login --hostname github.com --web');
+  expect(alert.textContent).not.toMatch(/Install GitHub CLI|couldn't find GitHub CLI/);
+  expect(screen.queryByRole('button', { name: 'Install GitHub CLI' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Sign-in help' })).toBeTruthy();
+  expect(alert.textContent).toContain('Nothing was sent to your workspace.');
+});
+test('a sign-in Bridge read but could not use shows the status command without copying diagnostics', async () => {
+  invoke.mockRejectedValue({ kind: 'modelCaptureInvalid', message: 'SECRET', diagnostic: 'SECRET' });
   render(<Model enabled />); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect((await screen.findByRole('alert')).textContent).toContain('gh auth status --hostname github.com');
   expect(screen.getByRole('button', { name: 'Copy details for help' })).toBeTruthy();
@@ -485,4 +500,29 @@ test('a hidden Model never takes focus when its queued connection starts', async
   view.rerender(withNeighbour({ enabled: true, queueable: true }, true));
   await screen.findByText('Connecting the AI…');
   expect(focus).not.toHaveBeenCalled();
+});
+
+test('a route keeps its own errors: changing route clears the help notice and the Copilot failure', async () => {
+  invoke.mockImplementation(async (command: string) => { if (command === 'setup_open_help') throw Error('no browser'); throw { kind: 'modelCaptureFailed' }; });
+  const user = userEvent.setup();
+  render(<Model enabled />);
+  await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Sign-in help' }));
+  expect(screen.getByText("Couldn't open help. Go to cli.github.com for installation and sign-in instructions.")).toBeTruthy();
+  await user.click(screen.getByRole('radio', { name: /Your own API key/ }));
+  expect(screen.queryByText(/Couldn't open help/)).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+test('on the setup card, Choose another provider leaves the Copilot failure behind', async () => {
+  invoke.mockImplementation(async (command: string) => { if (command === 'setup_open_help') throw Error('no browser'); throw { kind: 'modelCaptureFailed' }; });
+  const user = userEvent.setup();
+  render(<Model enabled setupCard />);
+  await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Sign-in help' }));
+  expect(screen.getByText(/Couldn't open help/)).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Choose another provider' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByText(/Couldn't open help/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+  expect(screen.getByRole('radio', { name: /Your own API key/ })).toBeTruthy();
 });
