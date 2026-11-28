@@ -572,7 +572,9 @@ fn main() {
                 "cluster_places" => json!({"places":[{
                     "key":"team-observed", "context":"team-dev", "service":"control/orka", "namespace":"agents",
                     "stale":false, "observedAt":1234567890000_u64, "agents":[]
-                }], "selectedKey":cluster_selected.load(std::sync::atomic::Ordering::SeqCst).then_some("team-observed"), "persistenceState":"complete"}),
+                }], "selectedKey":cluster_selected.load(std::sync::atomic::Ordering::SeqCst).then_some("team-observed"), "persistenceState":"complete",
+                    // Required since places report lost access; this synthetic place never loses it.
+                    "accessLost":false}),
                 "cluster_reconnect" => target.clone(),
                 "cluster_use" => {
                     if account_scene {
