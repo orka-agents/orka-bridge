@@ -430,8 +430,9 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
     {recovery !== 'choose' && reasonHint}
     {blockedByChecks && checksDisclosure}
     {/* Open while tests run, where it explains what Cancel keeps and offers a separate agent. */}
-    <Details key={running ? 'running' : 'settled'} hint="Resources and file hashes" defaultOpen={running}>
-      {/* What a Send does and what Cancel keeps, then the other ways to send, then the evidence. */}
+    <Details key={running ? 'running' : 'settled'} hint="How Send works, checks and file hashes" defaultOpen={running}>
+      {/* What a Send does and what Cancel keeps, then the other ways to send, then the checks, then the evidence. */}
+      <h5 className="section-label">How Send works</h5>
       <p>Repeated Sends use the same linked agent, kept on the cluster even if a test fails. Sending requires permission to create an agent and run its tests. Updating a changed agent also requires permission to patch that agent; unchanged tests do not. Saved answers and test receipts remain in Past Sends on this computer, within its retention limits. Cancel tests requests cancellation of this Send's unfinished tests. It keeps the agent, tests and completed answers. Closing Bridge only ends watching.</p>
       {!running && <div className="workspace-step-actions">
         {recovery && recovery !== 'check' && recovery !== 'blocked' && sendButton('secondary')}
@@ -442,15 +443,15 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
       </div>}
       {!running && canSeparate && <p>Sends as a new agent; the old one keeps running.</p>}
       {!checksInline && checksDisclosure}
+      <h5 className="section-label">Resources and file hashes</h5>
       <dl className="cluster-details"><div><dt>Source</dt><dd>Your saved agent and test files</dd></div>
         <div><dt>This computer</dt><dd>{localEvidence}</dd></div>
         {target && <div><dt>Destination</dt><dd><code>{target.context_name}</code> · <code>{target.watched_namespace}</code></dd></div>}
+        {provider && <div><dt>AI connection</dt><dd><code>{provider.name}</code></dd></div>}
+        {snapshot && <><div><dt>Result destination</dt><dd>{targetName ?? 'Not confirmed'}</dd></div>
+          <div><dt>Model sent</dt><dd><code>{snapshot.model ?? 'Not captured'}</code></dd></div></>}
       </dl>
-      {provider && <p>AI connection: <code>{provider.name}</code></p>}
-      {snapshot && <><dl className="cluster-details"><div><dt>Result destination</dt><dd>{targetName ?? 'Not confirmed'}</dd></div>
-      <div><dt>Model sent</dt><dd><code>{snapshot.model ?? 'Not captured'}</code></dd></div>
-    </dl>
-      {snapshot.agentName && <GeneratedValue label="Planned agent" value={snapshot.agentName} />}
+      {snapshot && <>{snapshot.agentName && <GeneratedValue label="Planned agent" value={snapshot.agentName} />}
       {snapshot.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Test file hash" value={snapshot.source.tests} /></>}
       {snapshot.acknowledged.map(r => <GeneratedValue key={`${r.kind}-${r.uid}`} label={r.kind} value={r.name} />)}
       {snapshot.pending && <GeneratedValue label={`Possibly created ${snapshot.pending.kind}`} value={snapshot.pending.name} />}</>}

@@ -12,7 +12,7 @@ export async function openLocalSetup(user = userEvent.setup()) {
   // A finished workspace opens on Home; these tests start from Clusters.
   if (document.querySelector('main[data-page="Home"]')) await openClusters(user);
   const row = screen.queryByRole('region', { name: 'This computer' });
-  if (row) await user.click(within(row).getByRole('button', { name: /^(Set up|Continue setup|Connect the AI|Manage|View details|View workspace)$/ }));
+  if (row) await user.click(within(row).getByRole('button', { name: /^(Set up|Continue setup|Connect the AI|Manage|Details|View details|View workspace)$/ }));
   // Lifecycle tests opt into the early AI choices; the dedicated layout test checks the collapsed default.
   const inline = document.querySelector<HTMLElement>('.model-compact .model-inline-head');
   if (inline) {

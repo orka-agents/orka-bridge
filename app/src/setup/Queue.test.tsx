@@ -188,7 +188,7 @@ test('using a cluster clears the held intent even though the view stays mounted'
   await observe(ipc); expect(connects()).toBe(0);
 });
 
-test.each(['notIntegrated', 'cancelled', 'closed', 'closing', 'idle'])('nothing can be queued while the workspace is %s', async localVm => {
+test.each(['cancelled', 'closed', 'closing', 'idle'])('nothing can be queued while the workspace is %s', async localVm => {
   const { connects } = native(localVm); render(<App />); await openLocalSetup();
   await screen.findByRole('region', { name: 'Workspace setup' });
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();

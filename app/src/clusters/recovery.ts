@@ -12,6 +12,16 @@ const results: Record<ClusterFailure['result'], string> = {
   unsupportedCredential: 'This credential method could not be used.', incompatible: 'The Orka schema or watch namespace is incompatible.',
   identityRejected: 'The cluster rejected the account or namespace.', noProviders: 'No AI connections are configured on this cluster.',
 };
+// What each check was doing, in words for the Details on screen. Copy details for help keeps the raw names.
+const steps: Record<ClusterFailure['check'], string> = {
+  configuration: 'Reading your kubeconfig', credentials: 'Signing in to the cluster', clusterApi: 'Reaching the cluster',
+  compatibility: 'Checking the Orka installation', serviceAccount: 'Using the ServiceAccount', permissions: 'Checking your access',
+  orkaIdentity: 'Checking your account and namespace', orkaConnection: 'Connecting to Orka', agents: 'Reading agents',
+  providers: 'Reading AI connections',
+};
+export function clusterFailureWords(failure: ClusterFailure) {
+  return { step: steps[failure.check], result: results[failure.result] };
+}
 export function clusterRecovery(failure: ClusterFailure) {
   const { check, result } = failure;
   if (check === 'orkaConnection' && result === 'identityRejected') {

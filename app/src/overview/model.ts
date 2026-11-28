@@ -1,5 +1,6 @@
 import type { Status } from '../components/DesignSystem';
 import { sameSource } from '../designer/agent-api';
+import { unavailableCopy } from '../setup/availability';
 import type { LiveAgents, Observation, Place, Places, SavedFile, SavedFiles } from './api';
 
 export type CardAction = { id: 'open' | 'chat' | 'run' };
@@ -17,7 +18,7 @@ export type CompleteAgents = LiveAgents & { state: 'complete'; installation: str
 export type Inputs = {
   files?: SavedFiles; filesStale: boolean; finals: Map<string, Observation>;
   live?: LiveAgents; observed?: CompleteAgents; pending: boolean; activeDocumentId?: string;
-  places?: Places; placeError: boolean; chat: boolean; run: boolean; workspaceNote?: string;
+  places?: Places; placeError: boolean; chat: boolean; run: boolean; workspaceNote?: string; localUnavailable?: boolean;
 };
 export type Built = ReturnType<typeof buildCards>;
 
@@ -154,7 +155,8 @@ export function clusterGroups(i: Inputs, built: Built): Group[] {
   if (state === 'reading') notes.push({ text: 'Reading agents…' });
   if (state === 'updating') notes.push({ text: 'Updating when the test finishes.', seen });
   if (state === 'busy') notes.push({ text: 'The workspace is busy right now.', seen, check: true });
-  if (state === 'stopped') notes.push({ text: 'The workspace is stopped. Start it to run tests or try a task.', clusters: true });
+  if (i.localUnavailable) notes.push({ text: unavailableCopy.detail, clusters: true });
+  else if (state === 'stopped') notes.push({ text: 'The workspace is stopped. Start it to run tests or try a task.', clusters: true });
   if (state === 'read') notes.push({ text: "Couldn't check just now.", seen, check: true });
   if (i.files?.state === 'complete' && !history && !i.filesStale) notes.push({ text: "Test history is unavailable, so other agents on this cluster aren't shown and results are unknown.", check: true });
   if (history && state === 'ok' && !local.length && !strays.length) notes.push({ text: 'No agents on this computer yet.', empty: true });

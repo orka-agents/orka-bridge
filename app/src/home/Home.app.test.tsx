@@ -100,7 +100,8 @@ test.each([
   expect(document.getElementById('tab-status-Clusters')?.textContent).toBe(tab);
   await user.click(screen.getByRole('button', { name: 'Home' }));
   expect(await screen.findByRole('heading', { level: 2, name: title })).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Switch to This computer' }) === null).toBe(!title.startsWith('Can’t'));
+  // This build has no local workspace, so no gate offers This computer.
+  expect(screen.queryByRole('button', { name: 'Switch to This computer' })).toBeNull();
   if (!title.startsWith('Can’t')) {
     expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Open Clusters' })).toBeTruthy();

@@ -21,7 +21,7 @@ function native(view: unknown = result, preflight: unknown = check) {
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 const card = () => screen.getByRole('region', { name: 'Send and cluster tests' });
 function actionRow() { return card().querySelector<HTMLElement>('.workspace-step-actions')!; }
-async function openDetails() { await userEvent.click(within(card()).getByText('Resources and file hashes')); }
+async function openDetails() { await userEvent.click(within(card()).getByText('How Send works, checks and file hashes')); }
 // After a result the destination checks fold away, so readiness shows as an enabled rerun.
 async function rerunReady() { await waitFor(() => expect(screen.getByRole('button', { name: 'Run cluster tests again' }).matches(':disabled')).toBe(false)); }
 
@@ -128,4 +128,15 @@ test('Send copy is concise and friendly while recorded raw model/provider remain
   await openDetails();
   expect(within(card()).getByText('Model sent').parentElement?.textContent).toContain('gpt-5.6-terra');
   expect(within(card()).getByText('team-model')).toBeTruthy();
+});
+test('Details groups how Send works, then the checks, then resources and hashes, with the AI connection as a row like its neighbours', async () => {
+  native();
+  render(<Send place={place} source={source} stale={false} onSeeInOverview={vi.fn()} />);
+  await rerunReady(); await openDetails();
+  const details = within(card()).getByText('How Send works, checks and file hashes').closest('details')!;
+  expect([...details.querySelectorAll('.section-label')].map(label => label.textContent)).toEqual(['How Send works', 'Resources and file hashes']);
+  const rows = [...details.querySelectorAll('dl.cluster-details dt')].map(term => term.textContent);
+  expect(rows).toEqual(['Source', 'This computer', 'Destination', 'AI connection', 'Result destination', 'Model sent']);
+  expect(details.querySelectorAll('dl.cluster-details')).toHaveLength(1);
+  expect(within(details).queryByText(/^AI connection:/)).toBeNull();
 });

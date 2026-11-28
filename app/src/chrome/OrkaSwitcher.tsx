@@ -148,7 +148,7 @@ export default function OrkaSwitcher({ children, title, place, accessLost = fals
   const computer = rows.filter(row => row.kind === 'computer');
   const remembered = rows.filter(row => row.kind === 'cluster');
   return <div className="orka-switcher" ref={root}>
-    <button ref={button} type="button" className="host-chip" title={title} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? `${id}-menu` : undefined}
+    <button ref={button} type="button" className="host-chip" data-tip={title} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? `${id}-menu` : undefined}
       onClick={() => { if (open) close(false); else void show('current'); }}
       onKeyDown={event => {
         if (!open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) { event.preventDefault(); void show(event.key === 'ArrowDown' ? 'first' : 'last'); }

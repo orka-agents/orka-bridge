@@ -17,9 +17,11 @@ export default function FileLocation({ path, documentId }: { path?: string; docu
       setFeedback({ path: filePath, text: 'Folder opened' });
     } catch { setFeedback({ path: filePath, text: 'Could not show the folder. Copy the path to open it yourself.' }); }
   }
+  // The path wraps beside its actions; feedback gets its own line under both, so a long message never squeezes the path.
   return <div className="file-location">{path ? <code className="agent-path">{path}</code> : <p className="muted">The file path is unavailable.</p>}<div className="agent-tool-row">
     {path && <Button type="button" kind="icon" aria-label="Copy file path" title="Copy file path" onClick={() => { void copy(); }}><CopyIcon /></Button>}
     <Button type="button" kind="quiet" onClick={() => { void reveal(); }}>Show in folder</Button>
-    <span className="muted" role="status">{feedback && feedback.path === path ? feedback.text : ''}</span>
-  </div></div>;
+  </div>
+    <p className="muted file-location-feedback" role="status">{feedback && feedback.path === path ? feedback.text : ''}</p>
+  </div>;
 }

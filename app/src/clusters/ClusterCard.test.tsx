@@ -141,7 +141,10 @@ test('browsing another context keeps the place in use, even when its discovery f
 test('a selected unavailable workspace can choose a cluster without resetting it', async () => {
   const ipc = native({ selected: 'localVm', localVm: 'notIntegrated', model: 'locked' });
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use a cluster you already have instead' }));
+  // The earlier choice chooses nothing on this build, so Bridge opens as nothing is set up, and Clusters on its list.
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
   expect(await screen.findByRole('button', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_change_local');
 });

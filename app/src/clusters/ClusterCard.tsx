@@ -4,7 +4,7 @@ import ContextPicker from './ContextPicker';
 import ServiceAccountPicker from './ServiceAccountPicker';
 import { useEffect, useRef, useState } from 'react';
 import { type AccessView, type ClusterFailure, type ContextView, connectCluster, contexts, discover, failedCheck, reloadContexts, reconnectCluster, forgetCluster, clusterPlaces, type SelectedPlace, type TargetView } from './api';
-import { clusterDetails, clusterRecovery } from './recovery';
+import { clusterDetails, clusterFailureWords, clusterRecovery } from './recovery';
 import { Button } from '../components/Button';
 import { StatusIcon } from '../components/DesignSystem';
 import { readPlaces, type Place } from '../overview/api';
@@ -269,7 +269,7 @@ export default function ClusterCard({ active = true, entry, selection, accessLos
           : <li><StatusIcon state="passed" /><b role="status">Access confirmed</b></li>}</ul>
         <h3>AI connection</h3><label className="sr-only" htmlFor="send-provider">AI connection</label>
         <select className="field cluster-mono-field" ref={providerField} id="send-provider" disabled={removing} value={providerId} onChange={event => { const next = event.target.value; setProviderId(next); providerName.current = access.providers.find(p => p.id === next)?.name ?? ''; onPlace({ kind: 'cluster', target, providers: access.providers, providerId: next }); }}>
-          <option value="">Choose an AI connection</option>{access.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.ready ? 'Ready' : 'Not ready'}</option>)}
+          <option value="" disabled>Choose an AI connection</option>{access.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.ready ? 'Ready' : 'Not ready'}</option>)}
         </select><p className="muted">Send checks whether this AI connection supports your agent's model.</p>
         <p className="muted">{checkedAt != null ? <>Checked <RelativeTime value={checkedAt} inline /></> : 'Last check unavailable'}</p>
         <h3>Agents on this cluster</h3>
@@ -314,7 +314,7 @@ export default function ClusterCard({ active = true, entry, selection, accessLos
       </div>}</Disclosure>}
     {error && <Disclosure label="Details" open={details} onOpenChange={setDetails}>{details && <div className="cluster-error-details">
       {target && !connected && <p className="cluster-found-line">Cluster found: <code className="code-chip">{target.watched_namespace}</code> · <code className="code-chip">{target.service_namespace} / {target.service_name}</code></p>}
-      <p>Check: {error.failure.check}</p><p>Result: {error.failure.result}</p>
+      <p>Step: {clusterFailureWords(error.failure).step}</p><p>Result: {clusterFailureWords(error.failure).result}</p>
       <Button type="button" kind="secondary" onClick={() => { void copy(); }}>Copy details for help</Button>
       <Button type="button" kind="quiet" disabled={reloading || removing} onClick={() => { void reload(); }}>Reload kubeconfig</Button>
       <p className="muted">After reloading kubeconfig, choose a context and check access again.</p>

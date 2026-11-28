@@ -100,11 +100,12 @@ test('keyboard disclosure and opening local setup are inert; only Continue start
 test('requirements render the native build values rather than fixed memory or disk sizes', async () => {
   localStorage.setItem(preference, '1'); native(unselected, { memoryBytes: 8589934592, stateDiskBytes: 68719476736, downloadBytes: 2380070756, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null });
   render(<App />); await openLocalSetup();
-  expect(screen.getByText('Downloads about 2.4 GB. Needs virtualization and 8.6 GB of memory. Data disk can grow to 68.7 GB.')).toBeTruthy();
+  expect(screen.getByText('Downloads about 2.4 GB. Needs virtualization and 8.6 GB of memory.')).toBeTruthy();
   expect(screen.getByText('Use Orka on a Kubernetes cluster you already have.')).toBeTruthy();
   expect(screen.getAllByText(/step 1 of 4/i)).toHaveLength(1);
   expect(within(screen.getByRole('contentinfo')).queryByText(/step 1/)).toBeNull();
   await userEvent.setup().click(screen.getByRole('button', { name: "What's inside" }));
+  expect(screen.getByText('Data disk can grow to 68.7 GB.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false);
   expect(screen.queryByText(/GiB|free disk|after installation/)).toBeNull();
 });
@@ -112,7 +113,7 @@ test('requirements render the native build values rather than fixed memory or di
 test('debug requirements without a download retain RAM checks and disk facts without inventing a transfer', async () => {
   localStorage.setItem(preference, '1'); native(unselected, { ...requirements, downloadBytes: null });
   render(<App />); await openLocalSetup();
-  expect(await screen.findByText('Needs virtualization and 6.4 GB of memory. Data disk can grow to 34.4 GB.')).toBeTruthy();
+  expect(await screen.findByText('Needs virtualization and 6.4 GB of memory.')).toBeTruthy();
   expect(screen.queryByText(/Downloads about/)).toBeNull();
   expect(screen.getByRole('region', { name: 'Computer requirements' })).toBeTruthy();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));
@@ -121,7 +122,11 @@ test('debug requirements without a download retain RAM checks and disk facts wit
 test('release welcome exposes unavailability before Get started without replacing the workflow copy', async () => {
   const ipc = native({ ...unselected, localVm: 'notIntegrated' }, null); render(<App />);
   expect(await screen.findByRole('button', { name: 'Get started' })).toBeTruthy();
-  expect(screen.getByText('Workspace setup is not included in this build. Nothing will be downloaded or started.')).toBeTruthy();
+  expect(screen.getByText("This build can't run agents here. Next, you connect a cluster you already have.")).toBeTruthy();
+  // The lede doesn't promise tests on this computer either.
+  expect(screen.getByText("Build an agent on this computer, then test it and run it on your team's Orka cluster.")).toBeTruthy();
+  // Nothing is downloaded here, so no download line contradicts it.
+  expect(screen.queryByText(/Mostly a/)).toBeNull();
   expect(screen.getByText('Share it')).toBeTruthy();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
@@ -282,7 +287,9 @@ test('a measured image shows its setup time on Welcome and its free and kept dis
   expect(await screen.findByText('Mostly a 2.4 GB download, then about 2 minutes to start')).toBeTruthy();
   await userEvent.setup().click(screen.getByRole('button', { name: 'Get started' }));
   await openLocalSetup();
-  expect(await screen.findByText('Downloads about 2.4 GB. Needs virtualization, 6.4 GB of memory and 24.3 GB of free disk; about 7.0 GB stays in use. Data disk can grow to 34.4 GB.')).toBeTruthy();
+  expect(await screen.findByText('Downloads about 2.4 GB. Needs virtualization, 6.4 GB of memory and 24.3 GB of free disk.')).toBeTruthy();
+  await userEvent.setup().click(screen.getByRole('button', { name: "What's inside" }));
+  expect(screen.getByText('About 7.0 GB stays in use after setup. Data disk can grow to 34.4 GB.')).toBeTruthy();
 });
 
 test('Welcome claims no time or size it was not given', async () => {

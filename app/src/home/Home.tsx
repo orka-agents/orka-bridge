@@ -9,6 +9,7 @@ import { type Card, type ExplainCard, parseReply, sourceLabel } from './cards';
 import { type CardRecord, selectConversationPlace, updateConversation, useConversation } from './conversation-store';
 import { NAVIGATOR_ID, type NavigatorResult, type ThinksWith, navigatorCall, navigatorErrors } from './navigator-api';
 import Prose from './Prose';
+import { unavailableCopy } from '../setup/availability';
 import TaskCard, { runLine, type TaskPlace } from './TaskCard';
 import './home.css';
 
@@ -16,14 +17,16 @@ import './home.css';
 // this computer, or a connected cluster's chosen AI connection (`place`).
 // `reconnect`: the cluster is reachable as far as Bridge knows, but its access must be confirmed again (it lasts only
 // while Bridge is open, and a token that can no longer be renewed stops working).
+// `unavailable`: this build has no local workspace and This computer is the place.
 // `choose`: a cluster is selected as the place, but none is connected.
-export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string }
+export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'unavailable' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string }
   | { kind: 'reconnect'; name: string; onReconnect: () => void; first?: boolean } | { kind: 'choose' };
 export type HomePage = 'Overview' | 'Designer' | 'Clusters';
 type Props = {
   active: boolean; revision: number; gate: NavigatorGate;
   onOpenPage: (page: HomePage) => void; onOpenAgent: (documentId: string) => void; onAgentCreated: () => void;
-  onThisComputer: () => void; blockedFor?: (documentId: string) => string | undefined;
+  /** Absent where this computer can't run agents (a build without the local cluster), so it is never offered. */
+  onThisComputer?: () => void; blockedFor?: (documentId: string) => string | undefined;
   /** Opens the list of clusters, rather than the selected one. */
   onManageClusters?: () => void;
   /** A cluster connected in this run that the Navigator can switch to, when this computer can't run it. */
@@ -60,11 +63,16 @@ function Hero({ lede = true }: { lede?: boolean }) {
 }
 
 // A disabled message box under a card that says why, and what to do.
-function Gated({ gate, onOpenPage, onThisComputer, onManageClusters }: Props & { gate: Exclude<NavigatorGate, { kind: 'ready' }> }) {
+function Gated({ gate, onOpenPage, onThisComputer, onManageClusters, switchTo }: Props & { gate: Exclude<NavigatorGate, { kind: 'ready' }> }) {
   const card = gate.kind === 'noModel' ? {
     title: 'Connect the AI first', line: 'no model connected',
     body: 'The Navigator thinks with the model your Orka is connected to. This computer has none yet. Overview, Designer and Clusters still work.',
     actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Connect the AI</Button><Button type="button" kind="secondary" onClick={() => onOpenPage('Clusters')}>Switch to another Orka</Button></>,
+  } : gate.kind === 'unavailable' ? {
+    title: unavailableCopy.title, line: 'not available on this computer',
+    body: `This build can't run agents on this computer, so the Navigator thinks with a cluster's AI connection. ${switchTo ? `It can think with ${switchTo.name}.` : 'Connect a cluster you already have in Clusters.'} Overview and Designer still work.`,
+    actions: switchTo ? <><Button type="button" kind="primary" onClick={switchTo.choose}>Switch to {switchTo.name}</Button>{onManageClusters && <Button type="button" kind="secondary" onClick={onManageClusters}>Open Clusters</Button>}</>
+      : <Button type="button" kind="primary" onClick={onManageClusters ?? (() => onOpenPage('Clusters'))}>Open Clusters</Button>,
   } : gate.kind === 'waiting' ? {
     title: 'Waiting for the workspace to start.', line: 'waiting for the workspace',
     body: 'The Navigator thinks with the model in the workspace on this computer, so it can answer once the workspace is ready. Overview, Designer and Clusters still work.',
@@ -72,23 +80,23 @@ function Gated({ gate, onOpenPage, onThisComputer, onManageClusters }: Props & {
   } : gate.kind === 'reconnect' && gate.first ? {
     title: `${gate.name} isn’t connected yet.`, line: `${gate.name} not connected`,
     body: `The Navigator thinks with the AI connection on ${gate.name}. Finish connecting it in Clusters to continue. Nothing on ${gate.name} has changed.`,
-    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button></>,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>{onThisComputer && <Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>}</>,
   } : gate.kind === 'reconnect' ? {
     title: `${gate.name} needs reconnecting.`, line: `${gate.name} needs reconnecting`,
     body: `The Navigator thinks with the AI connection on ${gate.name}. Bridge keeps cluster access only while it is open, so confirm it again to continue. Nothing on ${gate.name} has changed.`,
     actions: <><Button type="button" kind="primary" onClick={gate.onReconnect}>Reconnect</Button>{onManageClusters && <Button type="button" kind="secondary" onClick={onManageClusters}>Open Clusters</Button>}</>,
   } : gate.kind === 'choose' ? {
     title: 'Choose a cluster.', line: 'no cluster connected',
-    body: 'The Navigator thinks with the AI connection of the cluster you use. Choose one in Clusters, or switch to This computer. Your agent files are on this computer and still open in Designer.',
-    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button></>,
+    body: `The Navigator thinks with the AI connection of the cluster you use. Choose one in Clusters${onThisComputer ? ', or switch to This computer' : ''}. Your agent files are on this computer and still open in Designer.`,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>{onThisComputer && <Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>}</>,
   } : gate.kind === 'unreachable' ? {
     title: `Can’t reach ${gate.name ?? 'the selected cluster'}. Check your network or VPN.`, line: `can’t reach ${gate.name ?? 'the cluster'}`,
     body: `The Navigator thinks with the model on the Orka you have selected, so it can’t answer until ${gate.name ?? 'the cluster'} is reachable. Nothing on the cluster has changed. Your agent files are on this computer and still open in Designer.`,
-    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Check again</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>{onManageClusters && <Button type="button" kind="quiet" onClick={onManageClusters}>Open Clusters</Button>}</>,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Check again</Button>{onThisComputer && <Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>}{onManageClusters && <Button type="button" kind="quiet" onClick={onManageClusters}>Open Clusters</Button>}</>,
   } : {
     title: `Choose an AI connection for ${gate.name}.`, line: 'no AI connection chosen',
     body: `The Navigator thinks with the AI connection you choose for ${gate.name}, so it can answer once one is chosen in Clusters. Nothing on ${gate.name} has changed.`,
-    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button></>,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>{onThisComputer && <Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>}</>,
   };
   return <section className="home home-start" aria-labelledby="page-title">
     <Hero lede={false} />
@@ -222,8 +230,10 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
   });
   // On a cluster the line says where it runs; the model is the one its last answer used.
   // The line always names the place whose conversation is on screen, then the model its last answer used.
-  const line = place ? <>runs on {place.name}{thinksWith?.kind === 'cluster' && <span className="nav-line-wide"> · thinks with {thinksWith.model}</span>}</>
-    : <>runs on this computer{thinksWith && thinksWith.kind !== 'cluster' && <span className="nav-line-wide"> · thinks with {vendors[thinksWith.kind]} · {thinksWith.model}</span>}</>;
+  // When the line is too long for the box, the place's name shortens in the middle of the line; the model stays.
+  const model = place ? thinksWith?.kind === 'cluster' ? thinksWith.model : undefined
+    : thinksWith && thinksWith.kind !== 'cluster' ? `${vendors[thinksWith.kind]} · ${thinksWith.model}` : undefined;
+  const line = <><span className="nav-line-place">runs on {place ? place.name : 'this computer'}</span>{model && <span className="nav-line-model"> · thinks with {model}</span>}</>;
   // A refused send shows on its own turn below; the field alert is for everything else.
   const failure = error && error.message !== failed?.reason ? error.message : readError;
   // The field's own value when sending: it can be ahead of the last rendered draft while keys are still arriving.
@@ -237,10 +247,11 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
         if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(submitted()); }
       }} />
     <div className="nav-composer-foot">
-      <span className="nav-line">Navigator · {line}</span>
-      <span className="nav-links">
+      <span className="nav-line" title={`Navigator · runs on ${place ? place.name : 'this computer'}${model ? ` · thinks with ${model}` : ''}`}><span className="nav-line-lead">Navigator · </span>{line}</span>
+      {/* An empty conversation has nothing to start over, and the line gets the room. */}
+      {!empty && <span className="nav-links">
         <Button type="button" kind="quiet" disabled={thinking || !!command} onClick={() => { void startOver(); }}>New conversation</Button>
-      </span>
+      </span>}
       {thinking ? <Button type="button" kind="primary" size="large" disabled={command === 'agent_chat_stop' || snapshot?.state === 'requestingStop'} onClick={() => { void act('agent_chat_stop'); }}>Stop</Button>
         : <Button type="submit" kind="primary" size="large" disabled={!!reason || !draft.trim()} title={reason}>Send</Button>}
     </div>

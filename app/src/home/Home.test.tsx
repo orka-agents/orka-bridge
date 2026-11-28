@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -240,12 +241,55 @@ test('a cluster that needs reconnecting offers Reconnect and Open Clusters, not 
   expect(onReconnect).toHaveBeenCalledOnce();
   expect(onManageClusters).toHaveBeenCalledOnce();
 });
+test('with a local workspace, a cluster place still to choose or finish connecting offers This computer', async () => {
+  const user = userEvent.setup(); const { onThisComputer } = home({ kind: 'choose' });
+  expect(screen.getByText(/or switch to This computer/)).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Switch to This computer' }));
+  expect(onThisComputer).toHaveBeenCalledOnce();
+});
 test('an unreachable cluster offers This computer', async () => {
   const user = userEvent.setup(); const { onThisComputer, onOpenPage } = home({ kind: 'unreachable' });
   await user.click(screen.getByRole('button', { name: 'Switch to This computer' }));
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   expect(onThisComputer).toHaveBeenCalledOnce();
   expect(onOpenPage).toHaveBeenCalledWith('Clusters');
+});
+
+test.each<[NavigatorGate]>([[{ kind: 'unreachable' }], [{ kind: 'noConnection', name: 'team-dev' }], [{ kind: 'choose' }], [{ kind: 'reconnect', name: 'team-dev', onReconnect: () => {}, first: true }]])('where this computer cannot run agents, %o never offers it', gate => {
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn() };
+  render(<main aria-labelledby="page-title"><Home active revision={0} gate={gate} {...handlers} /></main>);
+  expect(screen.queryByRole('button', { name: 'Switch to This computer' })).toBeNull();
+});
+
+test('on a build without the local cluster Home names the cluster route, not a workspace to wait for', async () => {
+  const user = userEvent.setup(); const choose = vi.fn(); const manage = vi.fn();
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn() };
+  const view = render(<main aria-labelledby="page-title"><Home active revision={0} gate={{ kind: 'unavailable' }} {...handlers} onManageClusters={manage} /></main>);
+  expect(screen.getByRole('heading', { level: 2, name: 'Not available on this build.' })).toBeTruthy();
+  expect(screen.getByText('Navigator · not available on this computer')).toBeTruthy();
+  expect(document.body.textContent).not.toMatch(/waiting for the workspace|start the workspace/i);
+  await user.click(screen.getByRole('button', { name: 'Open Clusters' }));
+  expect(manage).toHaveBeenCalledOnce();
+  view.rerender(<main aria-labelledby="page-title"><Home active revision={0} gate={{ kind: 'unavailable' }} {...handlers} onManageClusters={manage} switchTo={{ name: 'team-dev', choose }} /></main>);
+  await user.click(screen.getByRole('button', { name: 'Switch to team-dev' }));
+  expect(choose).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'Send' }).matches(':disabled')).toBe(true);
+});
+
+test('the box\'s line keeps one row beside Send and gives way in the place\'s name, never the model', async () => {
+  const user = userEvent.setup(); home({ kind: 'ready', place: cluster });
+  // An empty conversation has nothing to start over.
+  expect(screen.queryByRole('button', { name: 'New conversation' })).toBeNull();
+  await user.type(await screen.findByRole('textbox', { name: 'Message' }), 'What is a Session?');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() => expect(document.querySelector('.nav-line-model')?.textContent).toBe(' · thinks with fixture-model'));
+  expect(document.querySelector('.nav-line-place')?.textContent).toBe('runs on team-dev');
+  expect(document.querySelector('.nav-line')?.getAttribute('title')).toBe('Navigator · runs on team-dev · thinks with fixture-model');
+  const css = readFileSync('src/home/home.css', 'utf8');
+  expect(css).toContain('.nav-composer-foot { display: grid; grid-template-columns: minmax(0, 1fr) auto auto;');
+  expect(css).toContain('.nav-line-place { flex: 0 1000 auto; min-width: 5ch; }');
+  expect(css).toContain('.nav-line-model { flex: none; max-width: calc(100% - 17ch); }');
+  expect(css).not.toContain('.nav-line-wide { display: none; }');
 });
 
 test('a conversation forgotten by a replaced workspace starts over instead of hiding new turns', async () => {

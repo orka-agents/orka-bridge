@@ -11,6 +11,7 @@ pub mod copilot_preflight;
 pub mod dev_image;
 pub mod engine;
 pub mod example_run;
+pub mod job_run;
 pub mod local_results;
 pub mod local_vm;
 pub mod navigator;

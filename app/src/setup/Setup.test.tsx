@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
 import Setup from './Setup';
 
-const status = (selected: 'localVm' | null = null) => ({ selected, localVm: 'notIntegrated', model: 'locked' });
+const status = (selected: 'localVm' | null = null, localVm: 'notIntegrated' | 'idle' = 'notIntegrated') => ({ selected, localVm, model: 'locked' });
 const unavailable = 'Workspace setup is not included in this build. Nothing will be downloaded or started.';
 function native() {
   vi.stubGlobal('isTauri', true);
@@ -96,15 +96,42 @@ test('the chooser only reads setup and build information, without runtime or cre
   expect(fetch).not.toHaveBeenCalled(); expect(screen.queryByRole('textbox')).toBeNull();
 });
 
-test('remount observes the native choice without inventing workspace or model readiness', async () => {
-  const ipc = native(); const user = userEvent.setup(); const first = render(<App />); await openLocalSetup();
-  await user.click(await screen.findByRole('button', { name: 'Continue' }));
-  expect(await screen.findByRole('region', { name: 'Workspace setup' })).toBeTruthy();
-  first.unmount(); render(<App />); await openLocalSetup();
-  await screen.findByRole('region', { name: 'Workspace setup' });
-  expect(screen.getByText(unavailable)).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
-  expect(ipc.mock.calls.filter(call => call[0] === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
+test('a build without the local cluster offers only the cluster, and an earlier choice of this computer chooses nothing', async () => {
+  const ipc = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
+  const local = await screen.findByRole<HTMLInputElement>('radio', { name: 'On this computer' });
+  const cluster = screen.getByRole<HTMLInputElement>('radio', { name: 'On a cluster you already have' });
+  expect(local.disabled).toBe(true); expect(local.checked).toBe(false); expect(cluster.checked).toBe(true);
+  expect(local.getAttribute('aria-describedby')).toBe('workspace-local-off');
+  expect(document.getElementById('workspace-local-off')?.textContent).toBe(unavailable);
+  expect(screen.queryByText('Recommended')).toBeNull();
+  expect(local.closest('.workspace-option')?.querySelector('.chip')?.textContent).toBe('Not available on this build');
+  expect(screen.queryByRole('button', { name: "What's inside" })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Continue' }));
+  expect(await screen.findByRole('button', { name: 'kubectl context' })).toBeTruthy();
+  expect(ipc.mock.calls.some(call => call[0] === 'setup_select_local')).toBe(false);
+});
+
+test('an earlier choice of this computer on a build without the local cluster does not trap the app on setup', async () => {
+  vi.stubGlobal('isTauri', true);
+  const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
+    if (command === 'setup_status') return status('localVm');
+    if (command === 'setup_requirements') return null;
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
+    throw Error('Forbidden command: ' + command);
+  });
+  mockIPC(ipc); const user = userEvent.setup(); render(<App />);
+  // Nothing is set up, so Bridge opens on Welcome as on a first launch, not on a setup that can't move.
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  expect(await screen.findByRole('heading', { name: 'Clusters' })).toBeTruthy();
+  const local = screen.getByRole('region', { name: 'This computer' });
+  expect(within(local).getByText('Not available on this build')).toBeTruthy();
+  expect(within(local).getByText('Unavailable').closest('.pill')?.classList.contains('status-not-started')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Add a cluster' }).classList.contains('button-primary')).toBe(true);
+  expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
+  expect(screen.queryByText('Getting your workspace ready')).toBeNull();
+  expect(within(screen.getByRole('contentinfo')).getByText('Not available on this build')).toBeTruthy();
+  expect(ipc.mock.calls.some(call => call[0] === 'setup_select_local')).toBe(false);
 });
 
 test.each([null, 'attempted'])('a lost selection reply preserves durable intent (%s) and resumes only observation across remount', async previous => {
@@ -158,7 +185,7 @@ test('unsupported native replies cannot claim availability or leak extra data', 
 });
 
 test('save failures do not mark the choice saved and never render rejected paths', async () => {
-  native(); mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? status() : command === 'setup_requirements' ? null
+  native(); mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? status(null, 'idle') : command === 'setup_requirements' ? null
     : Promise.reject({ kind: 'storage', message: '/private/SECRET_MARKER' }));
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
@@ -170,7 +197,7 @@ test('save failures do not mark the choice saved and never render rejected paths
 test('a failed initial read can be checked again without changing the saved choice', async () => {
   native(); let reads = 0;
   mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status'
-    ? ++reads === 1 ? Promise.reject('SECRET_MARKER') : status('localVm') : Promise.reject({ kind: 'unavailable' }));
+    ? ++reads === 1 ? Promise.reject('SECRET_MARKER') : status('localVm', 'idle') : Promise.reject({ kind: 'unavailable' }));
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   expect(await screen.findByRole('alert')).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
@@ -228,7 +255,7 @@ test.each([
 
 test('a delayed Continue reply stays pending across repeat activation and navigation', async () => {
   native(); let complete!: (value: unknown) => void; let selected: 'localVm' | null = null;
-  const ipc = vi.fn(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? status(selected) : command === 'setup_select_local'
+  const ipc = vi.fn(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? status(selected, 'idle') : command === 'setup_select_local'
     ? new Promise(resolve => { complete = resolve; }) : Promise.reject({ kind: 'unavailable' }));
   mockIPC(ipc);
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
@@ -236,7 +263,7 @@ test('a delayed Continue reply stays pending across repeat activation and naviga
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   const designer = screen.getByRole('button', { name: 'Designer' });
-  await user.click(designer); selected = 'localVm'; complete(status(selected));
+  await user.click(designer); selected = 'localVm'; complete(status(selected, 'idle'));
   await waitFor(() => expect(document.querySelector('[aria-label="Workspace setup"]')?.closest('[hidden]')).toBeTruthy());
   expect(screen.getByRole('main', { name: 'Designer' })).toBeTruthy();
   expect(document.activeElement).toBe(designer);

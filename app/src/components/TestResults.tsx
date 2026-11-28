@@ -29,6 +29,10 @@ export function changedFiles(current: SourceId | undefined, captured: SourceId |
 export function TestProgress({ stage }: { stage: string }) {
   return <div className="test-progress"><span className="test-progress-bar" aria-hidden="true"><span /></span><span role="status">{stage}</span><Elapsed /></div>;
 }
+// A long unbroken expectation (a 64-character hash) may break between any two characters; ordinary words don't.
+export function ExpectedValue({ value }: { value: string }) {
+  return <span className={/\S{24,}/.test(value) ? 'test-expected test-expected-token' : 'test-expected'}>{value}</span>;
+}
 export function testReason(c: Case, vendor?: 'openai' | 'anthropic' | null) {
   if (c.phase === 'NotRun') return 'This test was not submitted.';
   if (c.phase === 'CreditLimited' && vendor) {
@@ -50,7 +54,8 @@ export function TestResults({ report, stale, vendor, collapsed = false }: { repo
   if (!report) return null;
   const order = { failed: 0, unknown: 1, passed: 2, cancelled: 3 };
   return <div className={stale ? 'test-results result-stale' : 'test-results'}>
-    {stale && <p>Earlier result</p>}
+    {/* A collapsed card's headline already says it is an earlier result. */}
+    {stale && !collapsed && <p>Earlier result</p>}
     {[...report.cases].sort((a, b) => order[a.verdict] - order[b.verdict]).map(c => <Disclosure className="test-result" data-result-id={c.id} key={`${c.id}:${c.verdict}:${stale}`} defaultOpen={!collapsed && c.verdict !== 'passed'} label={<><span className="test-name"><code>{c.id}</code>{validTestTitle(c.title) && <span>{c.title}</span>}</span><StatusPill state={stale ? 'stale' : c.verdict === 'cancelled' ? 'not-started' : c.verdict === 'unknown' ? 'needs-you' : c.verdict}>{stale ? 'Earlier result' : c.phase === 'NotRun' ? 'Not run' : words[c.verdict]}</StatusPill></>}>
       <div className="test-answer">
         <h5 className="section-label">Question</h5><p className="reading">{c.question}</p>
@@ -60,7 +65,7 @@ export function TestResults({ report, stale, vendor, collapsed = false }: { repo
         <Details hint="Test expectations and execution">
           <p>Execution: {c.phase}</p>
           {c.verdict === 'cancelled' && <p>Actions already taken are not undone.</p>}
-          <ul>{c.assertions.map(a => <li key={a.id}>{a.kind === 'contains' ? <>Answer includes “{a.expected}”</> : <>Uses <code>{a.expected}</code></>}: {{ passed: 'Met', failed: 'Not met', unknown: 'Unknown' }[a.verdict]}</li>)}</ul>
+          <ul>{c.assertions.map(a => <li key={a.id}>{a.kind === 'contains' ? <>Answer includes “<ExpectedValue value={a.expected} />”</> : <>Uses <code>{a.expected}</code></>}: {{ passed: 'Met', failed: 'Not met', unknown: 'Unknown' }[a.verdict]}</li>)}</ul>
         </Details>
       </div>
     </Disclosure>)}

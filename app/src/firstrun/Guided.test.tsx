@@ -7,6 +7,7 @@ import App from '../App';
 import { noUpgrade } from '../setup/test-upgrade';
 import { SetupProgress } from '../setup/Steps';
 import { guidedStep } from './guided';
+import { chooseContext } from '../clusters/test-context';
 
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
@@ -50,6 +51,37 @@ test('a first launch is guided: the title bar shows the setup steps and the stat
   expect(screen.queryByRole('button', { name: 'Set up later' })).toBeNull();
   expect(document.querySelector('.title-bar .guided-exit')).toBeNull();
   expect(within(document.querySelector<HTMLElement>('.title-bar-end')!).queryAllByRole('button').map(button => button.textContent?.trim() || button.getAttribute('aria-label'))).not.toContain('Show all of Bridge');
+});
+
+test('the guided run counts its own three steps, and ends only once the chosen cluster is connected', async () => {
+  guidedRun(); vi.stubGlobal('isTauri', true);
+  const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev', current: true };
+  const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name, service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka:0.9.4' };
+  let respond!: (value: unknown) => void;
+  mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
+    if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
+    if (command === 'setup_requirements') return null;
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
+    if (command === 'cluster_contexts') return [context];
+    if (command === 'cluster_discover') return [target];
+    if (command === 'cluster_use') return new Promise(resolve => { respond = resolve; });
+    return null;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  await user.click(await screen.findByRole('button', { name: 'Set up' }));
+  const step = await screen.findByText('Choose where agents run', { selector: '.workspace-choice-step' });
+  expect(step.textContent).not.toMatch(/of 4/);
+  await user.click(screen.getByRole('radio', { name: 'On a cluster you already have' }));
+  await user.click(screen.getByRole('button', { name: 'Continue' }));
+  await chooseContext(user, context.name);
+  await screen.findByText('Cluster found');
+  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
+  // Pressing Use this cluster is not being connected: the steps stay until access is confirmed.
+  expect(shell().classList.contains('guided')).toBe(true);
+  respond({ status: 'connected', providers: [{ id: '00000000-0000-4000-8000-000000000003', name: 'team-model', ready: true }], failure: null });
+  await waitFor(() => expect(shell().classList.contains('guided')).toBe(false));
 });
 
 test('someone who already dismissed Welcome keeps the sidebar', () => {
@@ -219,7 +251,6 @@ test.each([
   ['a download that failed', { localVm: 'failed', model: 'locked', workspaceFailure: { operation: 'download', cause: 'network', codes: [] } }, true],
   ['a forced stop', { localVm: 'failed', model: 'locked', workspaceFailure: { operation: 'start', cause: 'forcedStop', codes: [] } }, true],
   ['a failed computer check at start', { localVm: 'failed', model: 'locked', preflightFailure: 'insufficientMemory' }, true],
-  ['a build without the workspace', { localVm: 'notIntegrated', model: 'locked' }, true],
 ] as const)('guided: %s', async (_name, status, offered) => {
   guidedRun();
   // Setup opens on its progress card while the workspace gets ready, as a first run does, then reaches the state.

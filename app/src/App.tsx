@@ -13,6 +13,7 @@ import type { ClustersView, DesignerView, Location } from './chrome/history';
 import { useNavigationHistory } from './chrome/useNavigationHistory';
 import ThemeButton from './chrome/ThemeButton';
 import SidebarToggle from './chrome/SidebarToggle';
+import { useFocusCycle } from './chrome/focus-cycle';
 import { narrowWindow, readSidebarCollapsed, useNarrowWindow, writeSidebarCollapsed } from './chrome/sidebar';
 import OrkaSwitcher from './chrome/OrkaSwitcher';
 import WindowControls, { customTitleBar } from './chrome/WindowControls';
@@ -25,6 +26,7 @@ import Overview from './overview/Overview';
 import { firstTestPending, retireFirstTest, useFirstTest } from './setup/first-test';
 import type { ModelState } from './setup/Model';
 import { preflightRecovery } from './setup/preflight-state';
+import { localUnavailable, unavailableCopy } from './setup/availability';
 import { setupView, workspaceView } from './setup/progress';
 import { workspaceRecovery } from './setup/recovery-info';
 import Setup, { type LocalClusterControl, type UpgradeNotice } from './setup/Setup';
@@ -65,6 +67,7 @@ export default function App() {
   const leaveGuided = useCallback(() => { guidedLeft.current = true; finishGuidedFirstRun(); setGuided(false); }, []);
   // Set up later, offered only where setup has stopped, ends guidance on the same page; focus stays on its heading.
   const setUpLater = useCallback(() => { leaveGuided(); requestAnimationFrame(() => document.getElementById('page-title')?.focus()); }, [leaveGuided]);
+  useFocusCycle(useCallback(() => document.querySelector<HTMLElement>('.app-shell'), []));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   // Narrow windows always show the rail; there the toggle opens the full sidebar over the page until a page is chosen.
   const narrow = useNarrowWindow();
@@ -122,9 +125,11 @@ export default function App() {
   // The last cluster connected in this run with an AI connection, for Home to offer when this computer can't run the Navigator.
   const [lastCluster, setLastCluster] = useState<SelectedPlace>();
   useEffect(() => { if (place.kind === 'cluster' && place.target && place.providerId) setLastCluster(place); }, [place]);
-  // The guided first run ends once the person moves on: another page, a cluster instead of this computer, or Set up later.
+  // The guided first run ends once the person moves on: another page, a cluster connected instead of this computer, or
+  // Set up later. Choosing a context or pressing Use this cluster isn't connected yet; access confirmed is.
   // That includes Setup opening Designer when the automatic first test doesn't pass, so the person sees why.
-  useEffect(() => { if (guided && (page !== 'Clusters' || remote)) leaveGuided(); }, [guided, page, remote, leaveGuided]);
+  const connected = place.kind === 'cluster' && !!place.target;
+  useEffect(() => { if (guided && (page !== 'Clusters' || connected)) leaveGuided(); }, [guided, page, connected, leaveGuided]);
   const content = useRef<HTMLElement>(null);
   useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);
@@ -276,12 +281,14 @@ export default function App() {
     }
   }, []);
   const cases = run?.report?.cases;
+  // This build can't run agents on this computer: pages name the cluster route instead of waiting for it.
+  const localOff = localUnavailable(setup);
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
   const localChecks = checksStale ? 'Tests not run since your edit' : runUnavailable ? 'Test status unavailable' : run?.cancellation === 'unconfirmed' ? 'Cancellation not confirmed' : run?.state === 'unknown' ? 'Test result unknown'
     : run?.cancellation === 'cancelling' ? 'Cancelling tests' : run?.state === 'running' ? 'Running tests…' : run?.report?.verdict === 'cancelled' ? 'Tests cancelled' : run?.report?.verdict === 'unknown' ? 'Test result unknown' : cases
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} passed`
     // Without a result the line still says where tests stand: nothing saved yet, or tests to run.
-    : remote ? undefined : savedAgents === 0 && !agentName ? 'No saved agents yet' : savedAgents || agentName ? 'Tests need running' : undefined;
+    : remote || localOff ? undefined : savedAgents === 0 && !agentName ? 'No saved agents yet' : savedAgents || agentName ? 'Tests need running' : undefined;
   const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
   const [designerView, setDesignerView] = useState<DesignerView>('Agent');
   const [clustersView, setClustersView] = useState<ClustersView>({ kind: 'places' });
@@ -527,19 +534,19 @@ export default function App() {
             : !place.providerId ? { kind: 'noConnection', name: place.target.context_name }
             : { kind: 'ready', place: { name: place.target.context_name, targetId: place.target.id, providerId: place.providerId,
               conversation: JSON.stringify([place.target.context_name, place.target.service_namespace, place.target.service_name, place.target.watched_namespace, place.providers?.find(p => p.id === place.providerId)?.name ?? place.providerId]) } }
-            : !workspaceReady || workspaceBusy ? { kind: 'waiting' } : setup?.model !== 'available' || aiObserved === false ? { kind: 'noModel' } : { kind: 'ready' }}
+            : localOff ? { kind: 'unavailable' } : !workspaceReady || workspaceBusy ? { kind: 'waiting' } : setup?.model !== 'available' || aiObserved === false ? { kind: 'noModel' } : { kind: 'ready' }}
           onOpenPage={next => next === 'Designer' ? openDesigner() : setPage(next)}
           // The task card's results are the agent's Try a task results, so Designer opens on that view.
           onOpenAgent={id => { openDesigner(id); setDocumentAction({ id: ++actionSequence.current, documentId: id, action: 'chat' }); }}
           onAgentCreated={() => setAgentsRevision(value => value + 1)}
-          onThisComputer={() => choosePlace({ kind: 'thisComputer' })}
+          onThisComputer={localOff ? undefined : () => choosePlace({ kind: 'thisComputer' })}
           switchTo={lastCluster?.kind === 'cluster' && lastCluster.target ? { name: lastCluster.target.context_name, choose: () => choosePlace(lastCluster) } : undefined}
           onManageClusters={() => { setPage('Clusters'); localCluster.current?.showPlaces(); }}
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
           blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}
         {page === 'Designer' && overviewNotice && <p className="muted" role="status">{overviewNotice}</p>}
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} accessLost={accessLost} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} onCreating={observeCreating} /></div>}
-        <Overview onNewAgent={() => openDesigner(undefined, true)} localAiConnected={overviewAiConnected} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} activeDocumentId={firstTest === 'running' ? SAMPLE_DOCUMENT_ID : run?.busy?.documentId} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} workspaceNote={overviewWorkspaceNote} filesRevision={agentsRevision} placesRevision={placesRevision} onCounts={setOverviewCounts} onSavedCount={setSavedAgents}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} accessLost={accessLost} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} localUnavailable={localOff ? unavailableCopy.detail : undefined} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} onCreating={observeCreating} /></div>}
+        <Overview onNewAgent={() => openDesigner(undefined, true)} localAiConnected={overviewAiConnected} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} activeDocumentId={firstTest === 'running' ? SAMPLE_DOCUMENT_ID : run?.busy?.documentId} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} workspaceNote={overviewWorkspaceNote} localUnavailable={localOff} filesRevision={agentsRevision} placesRevision={placesRevision} onCounts={setOverviewCounts} onSavedCount={setSavedAgents}
           onOpenDocument={(id, key) => { void openOverviewDocument(id, 'open', key); }}
           onChatDocument={id => openOverviewDocument(id, 'chat')}
           onRunDocument={(id, key) => { void openOverviewDocument(id, 'run', key); }}

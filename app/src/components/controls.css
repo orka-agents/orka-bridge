@@ -25,6 +25,11 @@ input.field, select.field { height: var(--height-control); }
 .field:disabled { background-color: var(--color-well); border-color: var(--color-border-strong); color: var(--color-text-secondary); cursor: not-allowed; }
 /* The select's chevron is the 11px, 2px-stroke icon. The page's CSP allows images from Bridge only, so each theme's
    colour is its own file rather than a data URI. */
+/* A closed select shows its choice on one line, shortened with an ellipsis, in every engine (WebKitGTK keeps the
+   system list but draws this control). */
+/* Search fields clear with Escape or the keyboard; WebKitGTK's own clear glyph is drawn in the system style. */
+input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webkit-search-decoration { appearance: none; -webkit-appearance: none; }
+select.field { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 select.field { appearance: none; padding-right: 32px; background-image: var(--chevron); background-repeat: no-repeat; background-size: 11px 11px; background-position: right 11px center; }
 select.field { --chevron: url('../assets/chevron/ink.svg'); }
 select.field:disabled { --chevron: url('../assets/chevron/secondary.svg'); }

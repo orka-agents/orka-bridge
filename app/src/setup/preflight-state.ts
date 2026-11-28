@@ -8,10 +8,12 @@ export type HostPreflight = {
   memory: 'ready' | 'insufficient' | 'unknown'; installedMemoryBytes: number | null; requiredMemoryBytes: number;
 };
 export const isPreflightFailure = (value: unknown): value is PreflightFailure => failures.some(f => f === value);
-export async function readPreflight(required: number): Promise<HostPreflight | null> {
+// 'atStart': this build checks only when the workspace starts. null: the answer couldn't be read.
+export async function readPreflight(required: number): Promise<HostPreflight | 'atStart' | null> {
   if (!isTauri()) return null;
   try {
     const value: unknown = await invoke('setup_preflight');
+    if (value === null) return 'atStart';
     if (typeof value !== 'object' || value === null || Array.isArray(value)
       || Object.keys(value).sort().join(',') !== 'installedMemoryBytes,memory,platform,requiredMemoryBytes,virtualization') return null;
     const p = value as Record<string, unknown>;

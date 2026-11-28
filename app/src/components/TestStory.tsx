@@ -1,7 +1,7 @@
 import { builtInTools } from '../designer/built-in-tools';
 import type { RunSnapshot } from '../designer/run-api';
 import { Details, StatusIcon } from './DesignSystem';
-import { testReason } from './TestResults';
+import { ExpectedValue, testReason } from './TestResults';
 import './test-story.css';
 export type TestCase = NonNullable<RunSnapshot['report']>['cases'][number];
 // Frozen native evidence only. A tool name is not proof of its arguments or URL.
@@ -20,7 +20,7 @@ export function TestStory({ result, stale = false, vendor }: { result: TestCase;
     <Details hint="Test expectations and execution">
       <p>Execution: {result.phase}</p>
       {result.verdict === 'cancelled' && <p>Actions already taken are not undone.</p>}
-      <ul>{result.assertions.map(a => <li key={a.id}>{a.kind === 'contains' ? <>Answer includes “{a.expected}”</> : <>Uses <code>{a.expected}</code></>}: {{ passed: 'Met', failed: 'Not met', unknown: 'Unknown' }[a.verdict]}</li>)}</ul>
+      <ul>{result.assertions.map(a => <li key={a.id}>{a.kind === 'contains' ? <>Answer includes “<ExpectedValue value={a.expected} />”</> : <>Uses <code>{a.expected}</code></>}: {{ passed: 'Met', failed: 'Not met', unknown: 'Unknown' }[a.verdict]}</li>)}</ul>
     </Details>
   </div>;
 }

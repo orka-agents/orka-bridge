@@ -311,7 +311,9 @@ test.each([
   ['ready', 'localVm', 'AI not connected', 'AI not connected'],
   ['failed', 'localVm', "Your workspace didn't start. Your agents are safe.", 'Setup failed'],
   ['closed', 'localVm', 'Workspace stopped', 'Workspace stopped'],
-  ['notIntegrated', null, 'Workspace unavailable', 'Workspace unavailable'],
+  ['notIntegrated', null, 'Not available on this build', 'Not available on this build'],
+  // An earlier choice of this computer chooses nothing on a build that can't run it.
+  ['notIntegrated', 'localVm', 'Not available on this build', 'Not available on this build'],
 ])('chrome reflects %s without invented readiness', async (localVm, selected, detail, tabLine) => {
   mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? { selected, localVm, model: 'locked' } : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   vi.stubGlobal('isTauri', true);
@@ -370,7 +372,9 @@ test('model acknowledgment and observed check counts survive navigation', async 
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('Workspace ready')).toBeTruthy();
-  expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('The workspace is ready on this computer.');
+  // The rail's styled tip, kept inside the window, rather than a system tooltip drawn below it.
+  expect(document.querySelector('.host-chip')?.getAttribute('data-tip')).toBe('The workspace is ready on this computer.');
+  expect(document.querySelector('.host-chip')?.hasAttribute('title')).toBe(false);
   expect(document.querySelector('.host-chip')?.textContent).toBe('This computer: The workspace is ready on this computer.');
   expect(document.querySelector('.host-chip .live-dot')?.className).toContain('ready');
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
@@ -711,7 +715,7 @@ test('Clusters reads setup without engine diagnostics or legacy IPC', async () =
   vi.stubGlobal('isTauri', true);
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
   const user = userEvent.setup(); render(<App />);
-  expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Details' })).toBeTruthy();
   expect(screen.queryByText('Engine diagnostics')).toBeNull();
   expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status', 'workspace_upgrade_status', 'cluster_places', 'overview_files'].includes(command))).toBe(true);
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_requirements')).toEqual([['setup_requirements', {}]]);

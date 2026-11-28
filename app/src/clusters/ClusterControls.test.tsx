@@ -127,8 +127,10 @@ test('pending discovery uses Running and a failed check leaves one primary retry
   expect(screen.queryByRole('button', { name: 'Reload kubeconfig' })).toBeNull();
   expect(document.querySelectorAll('.cluster-card .button-primary')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: 'Details' }));
-  expect(screen.getByText('Check: credentials')).toBeTruthy();
-  expect(screen.getByText('Result: unknown')).toBeTruthy();
+  // Words on screen; the raw check and result names stay in Copy details for help.
+  expect(screen.getByText('Step: Signing in to the cluster')).toBeTruthy();
+  expect(screen.getByText('Result: The reason is unknown.')).toBeTruthy();
+  expect(screen.queryByText(/credentials|Result: unknown/)).toBeNull();
   // In Details, copying for help leads and Reload kubeconfig is the quiet follow-up.
   expect(screen.getByRole('button', { name: 'Copy details for help' }).classList.contains('button-secondary')).toBe(true);
   expect(screen.getByRole('button', { name: 'Reload kubeconfig' }).classList.contains('button-quiet')).toBe(true);

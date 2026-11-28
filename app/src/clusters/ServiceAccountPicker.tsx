@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button, CloseIcon } from '../components/Button';
+import { useAnchoredPopover } from '../components/anchored-popover';
 import { StatusIcon } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
 import { clusterRecovery } from './recovery';
@@ -16,6 +17,7 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
   const [attempt, setAttempt] = useState(0); const [open, setOpen] = useState(false); const [query, setQuery] = useState('');
   const [preview, setPreview] = useState<{ name: string; reply?: AccountPreview; checking?: boolean }>();
   const [details, setDetails] = useState(false);
+  useAnchoredPopover(open && active && !disabled, trigger, popover);
   function close(focus = true) { setOpen(false); setQuery(''); if (focus) trigger.current?.focus(); }
   useEffect(() => {
     if (!active || disabled || accounts || reason) return;

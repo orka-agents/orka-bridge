@@ -37,6 +37,7 @@ fn main() {
             "agent_run_status",
             "agent_run_cancel",
             "agent_run_check_cancellation",
+            "job_run_start",
             "agent_chat_status",
             "agent_chat_send",
             "agent_chat_reconnect",
