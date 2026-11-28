@@ -43,7 +43,7 @@ export function isNavigatorSnapshot(value: unknown): value is NavigatorSnapshot 
   const { chat, thinksWith } = value;
   return object(chat) && exactKeys(chat, ['documentId', 'state', 'busy', 'canSend', 'versions', 'error', 'denied', 'keptOnCluster', 'readOnly']) && isChatSnapshot(chat)
     && chat.documentId === NAVIGATOR_ID
-    && chat.versions.every(version => exactKeys(version, ['turns']) && version.turns.every(turn => exactKeys(turn, ['message', 'answer', 'phase', 'tools', 'contextRetained', 'terminationUnconfirmed', 'stopUnconfirmed', 'startedAt', 'finishedAt'])
+    && chat.versions.every(version => exactKeys(version, ['turns']) && version.turns.every(turn => exactKeys(turn, ['message', 'answer', 'phase', 'tools', 'contextRetained', 'terminationUnconfirmed', 'stopUnconfirmed', 'startedAt', 'finishedAt', ...(Object.hasOwn(turn, 'finishedBeforeStop') ? ['finishedBeforeStop'] : [])])
       && turn.tools.every(tool => exactKeys(tool, ['name', 'callId', 'phase']))))
     && (thinksWith === null || object(thinksWith) && exactKeys(thinksWith, ['kind', 'model'])
       && ['copilot', 'openai', 'anthropic', 'cluster'].includes(thinksWith.kind as string) && typeof thinksWith.model === 'string' && thinksWith.model.length > 0 && thinksWith.model.length <= 256);

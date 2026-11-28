@@ -90,6 +90,8 @@ pub struct ChatTurn {
     /// Unix milliseconds when a terminal Task phase was first observed.
     pub finished_at: Option<u64>,
     /// Stop arrived after this turn's Task had already finished, so nothing was stopped.
+    /// Sent only when true, so replies without it keep their exact shape.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub finished_before_stop: bool,
 }
 #[derive(Clone, Debug, Default, Serialize)]

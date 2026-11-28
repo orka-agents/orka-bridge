@@ -11,6 +11,10 @@ afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
 test('a Navigator reply is exact: no unknown key at any level and only the Navigator conversation', () => {
   expect(isNavigatorSnapshot(reply)).toBe(true);
   expect(isNavigatorSnapshot({ ...reply, thinksWith: null })).toBe(true);
+  // A Stop that arrived after the turn finished adds one known key; it must not make the reply unconfirmable.
+  const turn = chat.versions[0].turns[0];
+  expect(isNavigatorSnapshot({ ...reply, chat: { ...chat, versions: [{ turns: [{ ...turn, finishedBeforeStop: true }] }] } })).toBe(true);
+  expect(isNavigatorSnapshot({ ...reply, chat: { ...chat, versions: [{ turns: [{ ...turn, finishedBeforeStop: 'yes' }] }] } })).toBe(false);
   for (const bad of [
     { ...reply, extra: 1 }, { chat }, { ...reply, chat: { ...chat, documentId: SAMPLE_DOCUMENT_ID } }, { ...reply, chat: { ...chat, extra: 1 } },
     { ...reply, chat: { ...chat, versions: [{ turns: [{ ...chat.versions[0].turns[0], extra: 1 }] }] } },

@@ -211,6 +211,11 @@ async fn stop_deletes_the_running_task() {
     owner.stop_on(channel.clone(), id).unwrap();
     let s = settled(&owner, &channel, id).await;
     assert!(s.versions[0].turns[0].termination_unconfirmed, "{s:?}");
+    // Absent unless true, so the renderer's exact turn shape is unchanged.
+    assert!(serde_json::to_value(&s.versions[0].turns[0])
+        .unwrap()
+        .get("finishedBeforeStop")
+        .is_none());
     let o = orka.lock().unwrap();
     assert_eq!(o.requests("DELETE").len(), 1);
     assert!(o.requests("DELETE")[0].starts_with("DELETE /api/v1/tasks/bridge-chat-task-"));
@@ -246,6 +251,10 @@ async fn a_stop_that_arrives_as_the_task_finishes_says_it_had_already_finished()
     let turn = &s.versions[0].turns[0];
     assert_eq!(turn.phase, "Succeeded");
     assert!(turn.finished_before_stop, "{s:?}");
+    assert_eq!(
+        serde_json::to_value(turn).unwrap()["finishedBeforeStop"],
+        true
+    );
     assert!(!turn.termination_unconfirmed);
     assert!(orka.lock().unwrap().requests("DELETE").is_empty());
     // Stop pressed again on the finished turn is answered the same way, not refused.
