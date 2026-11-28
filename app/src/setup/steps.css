@@ -109,6 +109,8 @@
 .model-key-form > label, .setup .model-key-form > label { padding: 0; font-weight: 600; }
 .model-key-form > .view-switch, .setup .model-key-form > .view-switch { margin: 0; padding: 3px; border: 0; }
 .model-key-form > input { width: 100%; }
+/* A key's masked characters are drawn a little larger and apart, so they read as the bullets they are. */
+.model-key-form > input[type="password"] { font-size: 1.15em; letter-spacing: .12em; }
 /* A refused key is cleared; until another is typed the primary action keeps its place, waiting rather than broken. */
 .setup-model .button-primary.model-connect-waiting:disabled { background: var(--color-action); border-color: var(--color-action); color: var(--color-action-text); opacity: .4; }
 /* First setup's compact AI card during the download: the choice in one line, what choosing now does below it. */

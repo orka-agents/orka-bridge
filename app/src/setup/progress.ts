@@ -72,7 +72,7 @@ export function setupView(status: SetupStatus | undefined, { checking = false, s
     }
     case 'closing': return view(place, 0, 'Stopping the workspace', 'Stopping the workspace', 'busy');
     case 'closed': return view(place, 2, 'Workspace stopped', 'Workspace stopped', 'wait');
-    case 'cancelled': return view(place, 2, 'Setup paused', 'Downloaded files are kept', 'wait');
+    case 'cancelled': return view(place, 2, 'Setup paused', 'Downloaded files are kept.', 'wait');
     case 'idle': return view(place, 0, 'Not set up', 'Not set up', 'wait');
     case 'ready': {
       if (status.model === 'locked') return view(place, 3, 'AI not connected', 'AI not connected', 'wait');

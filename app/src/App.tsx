@@ -561,7 +561,7 @@ export default function App() {
         {page === 'Designer' && !exampleOpen && <p role="status">Opening your agent…</p>}
       </main>
       <footer className="status-bar">
-        <OrkaSwitcher title={remote ? placeName : hostDetail} place={place} accessLost={accessLost} computerLine={savedAgents ? `${localLine} · ${savedAgents} ${savedAgents === 1 ? 'agent' : 'agents'}` : localLine} computerTone={hostTone} onPlace={choosePlace}
+        <OrkaSwitcher title={remote ? placeName : hostDetail} place={place} accessLost={accessLost} computerLine={savedAgents ? `${localLine} · ${savedAgents} ${savedAgents === 1 ? 'saved agent' : 'saved agents'}` : localLine} computerTone={hostTone} onPlace={choosePlace}
           onClusters={item => { setPage('Clusters'); localCluster.current?.showCluster(item); }} onManage={() => { setPage('Clusters'); localCluster.current?.showPlaces(); }}>
           <span className={`live-dot ${remote ? place.target ? accessLost ? 'needs-you' : 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span>{remote && place.target && <span className="chip">In use</span>}<span className="sr-only">: {remote ? place.target ? accessLost ? 'Needs reconnecting' : 'Access confirmed' : 'Not connected' : hostDetail}</span>
         </OrkaSwitcher>

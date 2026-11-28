@@ -26,6 +26,10 @@ import SetUpLater from '../firstrun/SetUpLater';
 import FreshWorkspace from './FreshWorkspace';
 import { type FreshStatus, freshDetails, startFresh } from './fresh';
 
+// A size and its unit stay on one line: "34.4 GB." never wraps to leave "GB." alone.
+function KeepUnits({ text }: { text: string }) {
+  return text.split(/(\d+(?:\.\d+)? GB\.?)/).map((part, index) => index % 2 ? <span key={index} className="no-break">{part}</span> : part);
+}
 const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting', 'closing'].includes(state);
 const failureKey = (status?: SetupStatus) => status?.workspaceFailure ? `${status.workspaceFailure.operation}/${status.workspaceFailure.cause}` : undefined;
 export type UpgradeNotice = 'recovery' | 'required' | 'error' | 'unknown' | 'checking' | 'busy';
@@ -459,12 +463,12 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                 <label htmlFor="workspace-local">On this computer</label>{localOff ? <span className="chip">{unavailableCopy.line}</span> : <span className="chip">Recommended</span>}
                 <div className="workspace-option-detail">
                   {localOff ? <p className="workspace-option-req" id="workspace-local-off">{unavailableCopy.reason}</p>
-                    : <p className="workspace-option-req">{requirements ? setupNeeds(requirements, downloaded) : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>}
+                    : <p className="workspace-option-req">{requirements ? <KeepUnits text={setupNeeds(requirements, downloaded)} /> : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>}
                   {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated' && <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} onFailed={setPreflightFailed} onCluster={() => { setLocation('cluster'); document.getElementById('workspace-cluster')?.focus(); }} onSetUpLater={onSetUpLater} />}
                   {!localOff && !(location === 'local' && preflightFailed) && <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
                     <div id="workspace-inside" hidden={!inside}>
                       <p className="workspace-option-lede">The workspace includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>
-                      {requirements && <p className="workspace-option-req">{diskDetail(requirements)}</p>}
+                      {requirements && <p className="workspace-option-req"><KeepUnits text={diskDetail(requirements)} /></p>}
                     </div>
                   </Disclosure>}
                 </div>

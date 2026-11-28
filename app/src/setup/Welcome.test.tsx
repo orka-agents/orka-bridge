@@ -54,7 +54,7 @@ test('a download already on this computer reads as already downloaded on Welcome
   expect(screen.queryByText(/Mostly a/)).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Get started' }));
   await user.click(await screen.findByRole('button', { name: 'Set up' }));
-  expect(await screen.findByText('Already downloaded. Needs virtualization and 6.4 GB of memory.')).toBeTruthy();
+  expect(await screen.findByText((_, node) => node?.tagName === 'P' && node.textContent === 'Already downloaded. Needs virtualization and 6.4 GB of memory.')).toBeTruthy();
 });
 
 test('welcome chrome advances only after Get started, including with denied preference storage', async () => {
@@ -109,12 +109,12 @@ test('keyboard disclosure and opening local setup are inert; only Continue start
 test('requirements render the native build values rather than fixed memory or disk sizes', async () => {
   localStorage.setItem(preference, '1'); native(unselected, { memoryBytes: 8589934592, stateDiskBytes: 68719476736, downloadBytes: 2380070756, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null });
   render(<App />); await openLocalSetup();
-  expect(screen.getByText('Downloads about 2.4 GB. Needs virtualization and 8.6 GB of memory.')).toBeTruthy();
+  expect(screen.getByText((_, node) => node?.tagName === 'P' && node.textContent === 'Downloads about 2.4 GB. Needs virtualization and 8.6 GB of memory.')).toBeTruthy();
   expect(screen.getByText('Use Orka on a Kubernetes cluster you already have.')).toBeTruthy();
   expect(screen.getAllByText(/step 1 of 4/i)).toHaveLength(1);
   expect(within(screen.getByRole('contentinfo')).queryByText(/step 1/)).toBeNull();
   await userEvent.setup().click(screen.getByRole('button', { name: "What's inside" }));
-  expect(screen.getByText('Data disk can grow to 68.7 GB.')).toBeTruthy();
+  expect(screen.getByText((_, node) => node?.textContent === 'Data disk can grow to 68.7 GB.' && node.tagName === 'P')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false);
   expect(screen.queryByText(/GiB|free disk|after installation/)).toBeNull();
 });
@@ -122,7 +122,7 @@ test('requirements render the native build values rather than fixed memory or di
 test('debug requirements without a download retain RAM checks and disk facts without inventing a transfer', async () => {
   localStorage.setItem(preference, '1'); native(unselected, { ...requirements, downloadBytes: null });
   render(<App />); await openLocalSetup();
-  expect(await screen.findByText('Needs virtualization and 6.4 GB of memory.')).toBeTruthy();
+  expect(await screen.findByText((_, node) => node?.tagName === 'P' && node.textContent === 'Needs virtualization and 6.4 GB of memory.')).toBeTruthy();
   expect(screen.queryByText(/Downloads about/)).toBeNull();
   expect(screen.getByRole('region', { name: 'Computer requirements' })).toBeTruthy();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));
@@ -296,9 +296,11 @@ test('a measured image shows its setup time on Welcome and its free and kept dis
   expect(await screen.findByText('Mostly a 2.4 GB download, then about 2 minutes to start')).toBeTruthy();
   await userEvent.setup().click(screen.getByRole('button', { name: 'Get started' }));
   await openLocalSetup();
-  expect(await screen.findByText('Downloads about 2.4 GB. Needs virtualization, 6.4 GB of memory and 24.3 GB of free disk.')).toBeTruthy();
+  expect(await screen.findByText((_, node) => node?.tagName === 'P' && node.textContent === 'Downloads about 2.4 GB. Needs virtualization, 6.4 GB of memory and 24.3 GB of free disk.')).toBeTruthy();
   await userEvent.setup().click(screen.getByRole('button', { name: "What's inside" }));
-  expect(screen.getByText('About 7.0 GB stays in use after setup. Data disk can grow to 34.4 GB.')).toBeTruthy();
+  const disk = screen.getByText((_, node) => node?.textContent === 'About 7.0 GB stays in use after setup. Data disk can grow to 34.4 GB.' && node.tagName === 'P');
+  // Each size keeps its unit on its line.
+  expect([...disk.querySelectorAll('.no-break')].map(part => part.textContent)).toEqual(['7.0 GB', '34.4 GB.']);
 });
 
 test('Welcome claims no time or size it was not given', async () => {
