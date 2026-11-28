@@ -18,7 +18,7 @@ function native(failure?: { check: string; result: string }, stage = 'discover',
   mockIPC(command => {
     if (command === 'setup_status') return status;
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [place], selectedKey: place.key, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [place], selectedKey: place.key, persistenceState: 'complete', accessLost: false };
     if (command === 'overview_places') return { places: [place], historyState: 'complete', unobserved: [] };
     if (command === 'cluster_contexts') return failure && stage === 'contexts' ? Promise.reject(failure) : [context];
     if (command === 'cluster_discover') { if (failure && stage === 'discover') return Promise.reject(failure); return [target]; }
@@ -54,9 +54,10 @@ test('added cluster names the page and keeps only Done and Open outside details'
   await user.click(screen.getByRole('button', { name: 'Change context' }));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'kubectl context' })));
   await chooseContext(user, context.name);
-  // Another context is a cluster not yet in use: the page is Add a cluster again until Use this cluster succeeds.
+  // Another context is a cluster not yet in use: the page is Add a cluster again until Use this cluster succeeds,
+  // while the place already in use stays in use.
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Add a cluster');
-  expect(document.querySelector('.host-chip .chip')).toBeNull();
+  expect(document.querySelector('.host-chip .chip')?.textContent).toBe('In use');
 });
 
 test.each([false, true])('Keep cluster restores visible focus even if details closed: %s', async close => {
@@ -93,7 +94,7 @@ test('failed removal preserves confirmation and named cluster', async () => {
 });
 
 test.each([false, true])('In use is independent of historical status, stale=%s', stale => {
-  render(<Places snapshot={{ places: [{ ...place, stale }, { ...place, key: 'other', context: 'unchecked', observedAt: null }], selectedKey: place.key, persistenceState: 'complete' }} unavailable={false} status={status} view={setupView(status)} place={{ kind: 'cluster', target }} onLocal={() => {}} onCluster={() => {}} />);
+  render(<Places snapshot={{ places: [{ ...place, stale }, { ...place, key: 'other', context: 'unchecked', observedAt: null }], selectedKey: place.key, persistenceState: 'complete', accessLost: false }} unavailable={false} status={status} view={setupView(status)} place={{ kind: 'cluster', target }} onLocal={() => {}} onCluster={() => {}} />);
   const selected = within(screen.getByRole('region', { name: 'team-dev' }));
   expect(selected.getByText('In use').className).toContain('chip');
   expect(selected.getByText(stale ? 'Stale' : 'Ready')).toBeTruthy();

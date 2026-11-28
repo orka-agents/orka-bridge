@@ -51,6 +51,9 @@ impl ClusterOpen for Opener {
     /// A fresh kubeconfig read and destination revalidation for every worker run, as Send does.
     fn open(&self) -> WireFuture<'_, Result<Arc<dyn ClusterWire>, ChatError>> {
         Box::pin(async move {
+            if self.access.lost() {
+                return Err(ChatError::AccessLost);
+            }
             let kubeconfig = self
                 .session
                 .read_configuration(self.reader.clone())
@@ -74,6 +77,8 @@ impl ClusterWire for Wire {
                 .exchange(request.method, &request.uri, request.body.as_deref())
                 .await
                 .map_err(|error| match error {
+                    // Rejected even after one renewal, or renewal is impossible.
+                    ErrorKind::Authentication => ChatError::AccessLost,
                     // The destination recheck before a write failed: not an Orka refusal.
                     ErrorKind::Identity | ErrorKind::Permission => ChatError::ClusterUnavailable,
                     _ => ChatError::Connection,

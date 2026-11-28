@@ -13,7 +13,7 @@ test('AI recovery stays usable after observed failure and restart without claimi
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_status') return status();
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
     if (command === 'setup_select_local') { phase = 'ready'; return status(); }
     if (command === 'setup_connect_model') throw { kind: 'modelInstallationMismatch', recovery: {
       installation: '10000000-0000-4000-8000-000000000001', savedInstallation: '20000000-0000-4000-8000-000000000002', credentialSlot: '30000000-0000-4000-8000-000000000003',
@@ -44,7 +44,7 @@ test.each(['stay', 'navigate'])('AI recovery keeps reset completion visible afte
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
     if (command === 'setup_connect_model') throw { kind: 'modelInstallationMismatch', recovery: {
       installation: '10000000-0000-4000-8000-000000000001', savedInstallation: '20000000-0000-4000-8000-000000000002', credentialSlot: '30000000-0000-4000-8000-000000000003',
     } };

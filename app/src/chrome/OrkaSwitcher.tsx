@@ -12,8 +12,10 @@ const focusFindAbove = 6;
 type Row = { id: string; kind: 'computer' } | { id: string; kind: 'cluster'; place: Place; connected: boolean } | { id: string; kind: 'add' } | { id: string; kind: 'manage' };
 
 /** The footer's place button and its menu. Choosing never reconnects a cluster: one not confirmed in this run opens in Clusters. */
-export default function OrkaSwitcher({ children, title, place, computerLine, computerTone, onPlace, onClusters, onManage }: {
+export default function OrkaSwitcher({ children, title, place, accessLost = false, computerLine, computerTone, onPlace, onClusters, onManage }: {
   children: ReactNode; title?: string; place: SelectedPlace; computerLine?: string; computerTone?: string;
+  /** The cluster in use can no longer authenticate and needs reconnecting. */
+  accessLost?: boolean;
   onPlace: (place: SelectedPlace) => void;
   /** Opens Clusters on that cluster's card, or on Add a cluster without one. */
   onClusters: (place?: Place) => void;
@@ -39,7 +41,8 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
   const rows: Row[] = [
     ...(matches('This computer') ? [{ id: `${id}-computer`, kind: 'computer' as const }] : []),
     ...clusters.filter(item => matches(item.context, item.service)).map((item, index) => ({
-      id: `${id}-cluster-${index}`, kind: 'cluster' as const, place: item, connected: item.key === snapshot?.selectedKey || confirmed.has(item.key),
+      id: `${id}-cluster-${index}`, kind: 'cluster' as const, place: item,
+      connected: (item.key === snapshot?.selectedKey || confirmed.has(item.key)) && !(item.key === snapshot?.selectedKey && (accessLost || snapshot.accessLost)),
     })),
     { id: `${id}-add`, kind: 'add' as const }, { id: `${id}-manage`, kind: 'manage' as const },
   ];
@@ -93,7 +96,8 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
     close(true);
     if (row.kind === 'add') return onClusters();
     if (row.kind === 'manage') return onManage();
-    if (current(row)) return;
+    // The place in use whose access needs reconnecting opens in Clusters to be connected again.
+    if (current(row) && !(row.kind === 'cluster' && !row.connected)) return;
     if (row.kind === 'computer') return onPlace({ kind: 'thisComputer' });
     if (row.connected) {
       try {
@@ -105,7 +109,7 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
       } catch {
         // A refused selection also clears native's previous one, so a cluster in use is no longer usable.
         confirmed.delete(row.place.key);
-        if (place.kind === 'cluster') onPlace({ kind: 'cluster' });
+        if (place.kind === 'cluster') onPlace({ kind: 'cluster', pending: { name: row.place.context, key: row.place.key } });
       }
     }
     onClusters(row.place);
@@ -131,7 +135,7 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
     }
     const checked = current(row);
     const tone = row.kind === 'computer' ? computerTone : row.connected ? 'ready' : undefined;
-    const meta = row.kind === 'computer' ? computerLine : row.connected ? <><code>{row.place.service.replace(/\s*\/\s*/g, '/')}</code> · namespace {row.place.namespace}</> : 'Connect again';
+    const meta = row.kind === 'computer' ? computerLine : row.connected ? <><code>{row.place.service.replace(/\s*\/\s*/g, '/')}</code> · namespace {row.place.namespace}</> : checked ? 'Needs reconnecting' : 'Connect again';
     return <button key={row.id} type="button" role="menuitemradio" aria-checked={checked} className="switcher-item" aria-labelledby={`${row.id}-name`} aria-describedby={meta ? `${row.id}-meta` : undefined} onClick={() => { void choose(row); }}>
       <span className={tone ? `switcher-dot ${tone}` : 'switcher-dot'} aria-hidden="true" />
       <span className="switcher-copy">

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '../components/Button';
 import { type LiveAgents, type Observation, type Places, type RunAgent, readAgents, readFiles, readPlaces, type SavedFiles, unavailableAgents } from './api';
-import { agentRows, buildCards, clusterGroups, type CompleteAgents, type Inputs, isEmpty, summaryLabel } from './model';
+import { agentRows, buildCards, clusterGroups, type CompleteAgents, type Inputs, filteredLabel, isEmpty, summaryLabel } from './model';
 import { PlaceNotes } from './places';
 import { AgentListRow } from './card';
 import { type AgentFocus, sendAgentCheck } from '../clusters/send-api';
@@ -181,11 +181,12 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const observed = complete(live) ? live : last;
   const inputs: Inputs = { files, filesStale, finals: finals.current, live, observed, pending, activeDocumentId, places, placeError, chat: !!onChatDocument, run: !!onRunDocument, workspaceNote, localUnavailable };
   const built = buildCards(inputs);
+  const allRows = agentRows(built.cards);
   const empty = isEmpty(inputs, built);
   const partial = !!workspaceNote || filesStale || files?.historyState !== 'complete' || !complete(live) || pending || !places || placeError || places.places.some(p => p.stale || p.observedAt === null);
   const counts = !files ? 'Reading saved files…' : files.state === 'unavailable' ? 'Saved files unavailable'
     : !filesVisited.current ? filesStale ? 'Saved files unavailable' : files.files.length ? `${files.files.length} saved agent${files.files.length === 1 ? '' : 's'}` : 'No saved agents yet'
-    : empty && !partial ? 'No saved agents yet' : summaryLabel(agentRows(built.cards), partial);
+    : empty && !partial ? 'No saved agents yet' : summaryLabel(allRows, partial);
   const savedCount = files?.state === 'complete' ? files.files.length : undefined;
   useEffect(() => { onCounts?.(counts); }, [counts, onCounts]);
   useEffect(() => { onSavedCount?.(savedCount); }, [savedCount, onSavedCount]);
@@ -205,7 +206,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       {options.length > 4 ? <select className="field" aria-label="Place" value={selectedPlace} onChange={event => { setReveal(undefined); setPlaceFilter(event.target.value); }}><option value="all">All places</option>{options.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}</select>
         : <div className="view-switch" role="group" aria-label="Place" onKeyDown={rovingKeyDown}>{[{ key: 'all', label: 'All' }, ...options].map((p, index, all) => <button key={p.key} type="button" aria-pressed={selectedPlace === p.key} data-label={p.label} tabIndex={rovingIndex(selectedPlace === p.key, all.some(item => item.key === selectedPlace), index === 0)} onClick={() => { setReveal(undefined); setPlaceFilter(p.key); }}>{p.label}</button>)}</div>}
       <input className="field" aria-label="Filter by name" placeholder="Filter by name" value={nameFilter} onChange={event => { setReveal(undefined); setNameFilter(event.target.value); }} />
-      <span className="overview-filter-count" role="status">{summaryLabel(rows, partial)}</span>
+      <span className="overview-filter-count" role="status">{filteredLabel(rows, allRows, partial)}</span>
     </div>}
     {needsAi && <p id={aiReasonId} className="overview-note" tabIndex={0}>Connect the AI in Clusters to try a task or run tests on this computer.</p>}
     {focusNote && <div className="overview-note alert" role="status"><p>{focusNote}</p><Button size="small" onClick={() => { if (focus && !focus.target && onRetryFocus) onRetryFocus(focus.sendId); else setFocusRetry(v => v + 1); }}>Refresh</Button></div>}

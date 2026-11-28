@@ -211,9 +211,56 @@ async fn stop_deletes_the_running_task() {
     owner.stop_on(channel.clone(), id).unwrap();
     let s = settled(&owner, &channel, id).await;
     assert!(s.versions[0].turns[0].termination_unconfirmed, "{s:?}");
+    // Absent unless true, so the renderer's exact turn shape is unchanged.
+    assert!(serde_json::to_value(&s.versions[0].turns[0])
+        .unwrap()
+        .get("finishedBeforeStop")
+        .is_none());
     let o = orka.lock().unwrap();
     assert_eq!(o.requests("DELETE").len(), 1);
     assert!(o.requests("DELETE")[0].starts_with("DELETE /api/v1/tasks/bridge-chat-task-"));
+}
+
+// Stop pressed after the worker's last request is never lost: the turn says its Task had finished.
+#[tokio::test]
+async fn a_stop_that_arrives_as_the_task_finishes_says_it_had_already_finished() {
+    let (orka, channel) = place().await;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    orka.lock().unwrap().session_gate = Some(gate.clone());
+    let (_home, folder) = folder();
+    let id = folder.document_id();
+    let owner = ChatOwner::new(tokio::runtime::Handle::current());
+    owner
+        .send_on(channel.clone(), folder, "Quick task".into())
+        .unwrap();
+    for _ in 0..2000 {
+        if orka.lock().unwrap().session_waiting {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(orka.lock().unwrap().session_waiting);
+    let pressed = owner.stop_on(channel.clone(), id).unwrap();
+    assert_eq!(
+        pressed.state,
+        ChatState::RequestingStop,
+        "acknowledged at once"
+    );
+    gate.notify_one();
+    let s = settled(&owner, &channel, id).await;
+    let turn = &s.versions[0].turns[0];
+    assert_eq!(turn.phase, "Succeeded");
+    assert!(turn.finished_before_stop, "{s:?}");
+    assert_eq!(
+        serde_json::to_value(turn).unwrap()["finishedBeforeStop"],
+        true
+    );
+    assert!(!turn.termination_unconfirmed);
+    assert!(orka.lock().unwrap().requests("DELETE").is_empty());
+    // Stop pressed again on the finished turn is answered the same way, not refused.
+    let again = owner.stop_on(channel.clone(), id).unwrap();
+    assert!(again.versions[0].turns[0].finished_before_stop);
+    assert!(!again.busy);
 }
 
 // An Orka without Sessions drops the reference: the one-off Task is deleted and the reason is precise.

@@ -109,7 +109,7 @@ describe('preview backend replies', () => {
   it('passes the cluster validators for a cluster connected in this run', async () => {
     await preview('scenario=clusterReady');
     const snapshot = await clusterPlaces();
-    expect(snapshot).toMatchObject({ selectedKey: 'team-dev', persistenceState: 'complete', places: [{ key: 'team-dev', context: 'team-dev' }] });
+    expect(snapshot).toMatchObject({ selectedKey: 'team-dev', persistenceState: 'complete', accessLost: false, places: [{ key: 'team-dev', context: 'team-dev' }] });
     // Native observation times are Unix milliseconds, as RelativeTime reads them.
     expect(Math.abs(Date.now() - snapshot!.places[0].checkedAt!)).toBeLessThan(60_000);
     expect((await readPlaces())?.places.map(place => place.key)).toEqual(['team-dev']);

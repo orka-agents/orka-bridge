@@ -3,7 +3,8 @@ import { type AttemptSummary, isSummary } from '../clusters/send-api';
 import { isDocumentId, isSourceId, type SourceId } from '../designer/agent-api';
 export type RecordedAttempt = AttemptSummary & { documentId?: string | null; detailState?: 'saved' | 'legacy' | 'omitted' | 'removed' | 'unavailable'; report?: { verdict: 'passed' | 'failed'; passed: number; total: number } | null };
 export type RemoteAgent = Agent & { agentType: string | null; model: string | null; tools: string[] | null; record: RecordedAttempt | null };
-export type Place = { key: string; context: string; service: string; namespace: string; stale: boolean; observedAt: number | null; checkedAt?: number | null; agents: RemoteAgent[] };
+// `installation` identifies the Orka apart from the context reaching it: equal for one Orka added through two contexts.
+export type Place = { key: string; context: string; service: string; namespace: string; stale: boolean; observedAt: number | null; checkedAt?: number | null; installation?: string; agents: RemoteAgent[] };
 export type Places = { places: Place[]; historyState: 'complete' | 'unavailable'; unobserved: AttemptSummary[] };
 export type SavedFile = { documentId: string; name: string; draft?: boolean; state: 'readable' | 'unreadable'; source: SourceId | null; summary: { name: string | null; description: string | null; model: string; tools: string[] } | null; reason: string | null; localResult: Observation | null };
 // Identity of an Agent Bridge itself created for a local test: installation + namespace + UID, never a name.
@@ -56,7 +57,8 @@ export function isPlaces(v: unknown): v is Places {
   const keys = new Set<string>();
   return v.places.every(p => {
     if (!object(p) || !text(p.key) || keys.has(p.key) || !text(p.context) || !text(p.service) || !text(p.namespace) || typeof p.stale !== 'boolean'
-      || !(p.observedAt === null && p.stale || time(p.observedAt)) || !(p.checkedAt === undefined || p.checkedAt === null || time(p.checkedAt)) || !Array.isArray(p.agents)) return false;
+      || !(p.observedAt === null && p.stale || time(p.observedAt)) || !(p.checkedAt === undefined || p.checkedAt === null || time(p.checkedAt))
+      || !(p.installation === undefined || text(p.installation)) || !Array.isArray(p.agents)) return false;
     keys.add(p.key);
     const uids = new Set<string>();
     return p.agents.every(a => {

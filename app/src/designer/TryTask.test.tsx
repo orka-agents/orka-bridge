@@ -106,6 +106,30 @@ test('a held, unconfirmed task offers Reconnect and Stop instead of a new task',
   expect(commands()).toEqual(['agent_chat_reconnect']);
   expect(within(result()).getByRole('button', { name: 'Stop' })).toBeTruthy();
 });
+test('Run sends exactly what the field holds, even when the last keys have not rendered yet', async () => {
+  await open();
+  fireEvent.change(field(), { target: { value: 'Read https://does-not-exist.inva' } });
+  // The browser has already put the last keys in the field; React has not rendered them yet.
+  field().value = 'Read https://does-not-exist.invalid';
+  fireEvent.click(runButton()); await settle();
+  expect(sends().map(c => c.args.message)).toEqual(['Read https://does-not-exist.invalid']);
+});
+test('a Stop that arrived after the task finished says so instead of passing silently', async () => {
+  snapshot = { ...idle, versions: [{ turns: [{ ...turn, finishedBeforeStop: true }] }] };
+  await open();
+  expect(result().getAttribute('aria-label')).toBe('Task result: Succeeded');
+  expect(within(result()).getByText('This task had already finished when Stop arrived, so nothing was stopped.')).toBeTruthy();
+});
+test('Stop before the task was created says nothing ran', async () => {
+  snapshot = { ...idle, error: 'interrupted' }; await open();
+  expect(screen.getByRole('alert').textContent).toBe('Stopped before the task was created. Nothing ran.');
+});
+test('a task whose cluster access can no longer authenticate says to reconnect the cluster, not that the connection was lost', async () => {
+  snapshot = { ...idle, state: 'observationLost', canSend: false, error: 'accessLost', versions: [{ turns: [{ ...turn, answer: null, phase: 'Running', finishedAt: null }] }] };
+  await open();
+  expect(screen.queryByText(/connection was lost/i)).toBeNull();
+  expect(screen.getAllByText('Access to the selected cluster needs reconnecting. Reconnect it in Clusters to see this task’s result.').length).toBeGreaterThan(0);
+});
 test('a newer composer draft survives acceptance of the earlier task', async () => {
   send = () => (snapshot = { ...idle, state: 'preparing', busy: true, canSend: false });
   await open(); await enter();

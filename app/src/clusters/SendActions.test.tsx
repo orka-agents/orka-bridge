@@ -91,6 +91,8 @@ test('an earlier target is labelled and preflight failure keeps the disabled Sen
   expect(buttons[0].matches(':disabled')).toBe(true);
   expect(card().querySelector('.long-card-summary')?.textContent).toContain('Earlier result on earlier-team');
   expect(within(card()).getByText('Destination').parentElement?.textContent).toContain('team-dev');
+  // Another destination's result is not an edit of this one.
+  expect(screen.queryByText('Not run since your edit')).toBeNull();
 });
 
 test('returning to an unchanged destination uses its preflight rerun wording, not the retained result target', async () => {

@@ -117,7 +117,7 @@ test('an earlier choice of this computer on a build without the local cluster do
     if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return status('localVm');
     if (command === 'setup_requirements') return null;
-    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
     throw Error('Forbidden command: ' + command);
   });
   mockIPC(ipc); const user = userEvent.setup(); render(<App />);
@@ -142,7 +142,7 @@ test.each([null, 'attempted'])('a lost selection reply preserves durable intent 
   const ipc = vi.fn((command: string) => {
     if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: selected ? 'localVm' : null, localVm: !selected ? 'idle' : ++reads === 1 ? 'starting' : 'ready', model: selected && reads > 1 ? 'available' : 'locked' };
-    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
     if (command === 'setup_requirements') return null;
     if (command === 'setup_select_local') {
       intentAtSelection = localStorage.getItem('bridge.firstTest.v1'); selected = true;

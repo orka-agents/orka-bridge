@@ -33,9 +33,11 @@ fn access(read: Arc<Read>) -> RemoteAccess {
     RemoteAccess {
         creator: Client::try_from(kube::Config::new("https://127.0.0.1:1".parse().unwrap()))
             .unwrap(),
-        bearer: "fixture-bearer".into(),
+        bearer: Arc::new(crate::clusters::bearer::Bearer::fixed(
+            "fixture-bearer".into(),
+            None,
+        )),
         creator_bearer: "fixture-creator".into(),
-        expiry: None,
         binding: TargetBinding {
             cluster_identity: "fixture-cluster".into(),
             context_id: ContextId(Uuid::new_v4()),

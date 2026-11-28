@@ -53,6 +53,7 @@
 .overview-place-head { display: grid; grid-template-columns: minmax(7rem, 10rem) auto auto minmax(0, 1fr) auto auto; grid-template-areas: "place pill count . time action" "details details details details details details"; align-items: center; gap: var(--space-1) var(--space-3); }
 .overview-place-head > span:first-child { grid-area: place; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 .overview-place-head > :is(.pill, .overview-note) { grid-area: pill; justify-self: start; }
+.overview-place-agent { display: block; width: fit-content; max-width: 100%; margin-top: 2px; font-weight: 400; overflow-wrap: anywhere; }
 .overview-place-head > .overview-note { color: var(--color-text-secondary); }
 .overview-place-count { grid-area: count; font: var(--type-body); color: var(--color-text); }
 .overview-place-head > .overview-time { grid-area: time; }

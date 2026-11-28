@@ -124,17 +124,17 @@ test('failed context discovery leaves local Run and Try a task usable without re
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
 });
 
-test('changing a selected remote context revokes its capability before failed discovery returns', async () => {
+test('browsing another context keeps the place in use, even when its discovery fails', async () => {
   const ipc = native(); const pending = deferred<unknown>();
   const selection = { kind: 'cluster' as const, target, providers: [provider], providerId: provider.id };
   ipc.mockImplementation(command => command === 'cluster_contexts' ? [context] : command === 'cluster_discover' ? pending.promise : Promise.reject('Unsupported'));
   const onPlace = vi.fn(); const user = userEvent.setup();
   render(<ClusterCard selection={selection} onPlace={onPlace} onOpenAgent={vi.fn()} />);
   await chooseContext(user, context.name);
-  expect(onPlace).toHaveBeenCalledExactlyOnceWith({ kind: 'cluster' });
+  expect(onPlace).not.toHaveBeenCalled();
   await act(async () => pending.resolve(Promise.reject({ check: 'clusterApi', result: 'connectionFailed' })));
   await screen.findByRole('alert');
-  expect(onPlace).toHaveBeenCalledExactlyOnceWith({ kind: 'cluster' });
+  expect(onPlace).not.toHaveBeenCalled();
   expect(screen.queryByRole('button', { name: 'Open your agent' })).toBeNull();
 });
 
@@ -459,7 +459,8 @@ test.each(['interrupted reload', 'failed initial read', 'failed reload'])('retur
   expect(await contextChoice(userEvent.setup(), context.name)).toBeTruthy();
   expect(screen.queryByText(/No kubectl contexts were found/)).toBeNull();
   expect(screen.queryByRole('alert')).toBeNull();
-  expect(onPlace).toHaveBeenCalledTimes(operation === 'failed initial read' ? 0 : 1);
+  // Reading and reloading kubeconfig only browse; they never replace the place in use.
+  expect(onPlace).not.toHaveBeenCalled();
   const completedReads = reads;
   view.rerender(<ClusterCard active entry={{ revision: 3 }} onPlace={onPlace} onOpenAgent={vi.fn()} />);
   expect(reads).toBe(completedReads);

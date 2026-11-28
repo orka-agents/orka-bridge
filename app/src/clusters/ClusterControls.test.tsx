@@ -43,7 +43,7 @@ test('keyboard context picker searches native metadata without selecting or disc
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'kubectl context' }));
   expect(ipc.mock.calls).toEqual([['cluster_contexts', {}], ['cluster_discover', { contextId: context.id }]]);
-  expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  expect(onPlace).not.toHaveBeenCalled();
   expect(screen.getByRole('button', { name: 'kubectl context', description: context.name })).toBeTruthy();
   expect(screen.queryByText('Access confirmed')).toBeNull();
 });
@@ -93,7 +93,7 @@ test('retrying a context-list read preserves a remembered working connection', a
   const ipc = vi.fn((command: string) => {
     if (command === 'cluster_reconnect') return target;
     if (command === 'cluster_use') return { status: 'connected', providers: [provider], failure: null };
-    if (command === 'cluster_places') return { places: [remembered], selectedKey: remembered.key, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places: [remembered], selectedKey: remembered.key, persistenceState: 'complete', accessLost: false };
     if (command === 'overview_places') return { places: [remembered], unobserved: [], historyState: 'complete' };
     if (command === 'cluster_contexts') { if (++reads === 1) throw { check: 'configuration', result: 'unknown' }; return [context]; }
     throw Error('Unexpected command ' + command);

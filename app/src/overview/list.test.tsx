@@ -50,17 +50,20 @@ test('one row per document, one mark per place, one primary; evidence and action
 });
 
 test('place and name filters intersect, filtering never turns into onboarding', async () => {
-  ipc([file(), file('22345678-1234-1234-1234-123456789abc', 'writer')]); render(<Overview {...props} />); await row();
+  const counts = vi.fn();
+  ipc([file(), file('22345678-1234-1234-1234-123456789abc', 'writer')]); render(<Overview {...props} onCounts={counts} />); await row();
   const results = screen.getByText(/^2 agents/);
   expect(results.getAttribute('role')).toBe('status');
   await userEvent.click(within(screen.getByRole('group', { name: 'Place' })).getByRole('button', { name: 'team' }));
-  expect(results.textContent).toMatch(/^1 agent/);
+  // The count says how many of the sidebar's agents the filter leaves.
+  expect(results.textContent).toMatch(/^1 of 2 agents/);
+  expect(counts).toHaveBeenLastCalledWith(expect.stringMatching(/^2 agents/));
   expect(screen.queryByRole('article', { name: 'writer' })).toBeNull();
   const agent = await row(); expect(within(agent).queryByLabelText('This computer: Passed')).toBeNull();
   await userEvent.type(screen.getByRole('textbox', { name: 'Filter by name' }), 'WRIT');
   expect(screen.queryByRole('article', { name: 'reader' })).toBeNull();
   expect(screen.getByText('No agents match these filters.')).toBeTruthy();
-  expect(results.textContent).toMatch(/^0 agents/);
+  expect(results.textContent).toMatch(/^0 of 2 agents/);
   expect(screen.getAllByRole('status')).toContain(results);
   expect(screen.queryByRole('heading', { name: 'No agents yet' })).toBeNull();
 });

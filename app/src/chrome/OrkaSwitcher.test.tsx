@@ -15,7 +15,7 @@ function ipc(places: Place[], selectedKey: string | null, extra: (command: strin
   mockIPC((command, args) => {
     calls.push({ command, args });
     const other = extra(command, args); if (other !== undefined) return other;
-    if (command === 'cluster_places') return { places, selectedKey, persistenceState: 'complete' };
+    if (command === 'cluster_places') return { places, selectedKey, persistenceState: 'complete', accessLost: false };
     if (command === 'cluster_select') return { target, providers: [provider] };
     return null;
   });
@@ -118,7 +118,8 @@ test('a refused selection falls back to that cluster in Clusters', async () => {
   await user.click(screen.getByRole('button', { name: /^This computer/ }));
   await user.click(await screen.findByRole('menuitemradio', { name: 'team-lost' }));
   await waitFor(() => expect(onClusters).toHaveBeenCalledWith(lost));
-  expect(onPlace).toHaveBeenCalledWith({ kind: 'cluster' });
+  // The place names the cluster that now needs reconnecting.
+  expect(onPlace).toHaveBeenCalledWith({ kind: 'cluster', pending: { name: 'team-lost', key: 'k-lost' } });
 });
 
 test('Add a cluster and Manage clusters go to Clusters', async () => {

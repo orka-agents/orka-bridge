@@ -15,7 +15,12 @@ import './home.css';
 
 // What stands between the person and the Navigator. It thinks with the model of the selected place: the workspace on
 // this computer, or a connected cluster's chosen AI connection (`place`).
-export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'unavailable' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string };
+// `reconnect`: the cluster is reachable as far as Bridge knows, but its access must be confirmed again (it lasts only
+// while Bridge is open, and a token that can no longer be renewed stops working).
+// `unavailable`: this build has no local workspace and This computer is the place.
+// `choose`: a cluster is selected as the place, but none is connected.
+export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'unavailable' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string }
+  | { kind: 'reconnect'; name: string; onReconnect: () => void; first?: boolean } | { kind: 'choose' };
 export type HomePage = 'Overview' | 'Designer' | 'Clusters';
 type Props = {
   active: boolean; revision: number; gate: NavigatorGate;
@@ -41,7 +46,9 @@ export default function Home(props: Props) {
   const { gate } = props;
   // Each place has its own conversation: switching shows that place's, and never continues another's.
   const placeKey = gate.kind === 'ready' && gate.place ? `${gate.place.targetId}/${gate.place.providerId}` : '';
-  useLayoutEffect(() => { selectConversationPlace(placeKey); }, [placeKey]);
+  // The record of what New cleared follows the place, not this run's connection to it: reconnecting keeps it.
+  const conversationKey = gate.kind === 'ready' && gate.place ? gate.place.conversation ?? placeKey : '';
+  useLayoutEffect(() => { selectConversationPlace(conversationKey); }, [conversationKey]);
   if (gate.kind !== 'ready') return <Gated {...props} gate={gate} />;
   return <Navigator key={placeKey} {...props} />;
 }
@@ -51,6 +58,7 @@ function Hero({ lede = true }: { lede?: boolean }) {
     <div className="art-orca" aria-hidden="true" />
     <h1 id="page-title">What do you want done?</h1>
     {lede && <p className="muted">The Navigator explains Orka and sets things up with you. Nothing is created until you confirm a card.</p>}
+    {lede && <p className="muted">Conversations are kept only while Bridge is open.</p>}
   </div>;
 }
 
@@ -69,6 +77,18 @@ function Gated({ gate, onOpenPage, onThisComputer, onManageClusters, switchTo }:
     title: 'Waiting for the workspace to start.', line: 'waiting for the workspace',
     body: 'The Navigator thinks with the model in the workspace on this computer, so it can answer once the workspace is ready. Overview, Designer and Clusters still work.',
     actions: <Button type="button" kind="secondary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>,
+  } : gate.kind === 'reconnect' && gate.first ? {
+    title: `${gate.name} isn’t connected yet.`, line: `${gate.name} not connected`,
+    body: `The Navigator thinks with the AI connection on ${gate.name}. Finish connecting it in Clusters to continue. Nothing on ${gate.name} has changed.`,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>{onThisComputer && <Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>}</>,
+  } : gate.kind === 'reconnect' ? {
+    title: `${gate.name} needs reconnecting.`, line: `${gate.name} needs reconnecting`,
+    body: `The Navigator thinks with the AI connection on ${gate.name}. Bridge keeps cluster access only while it is open, so confirm it again to continue. Nothing on ${gate.name} has changed.`,
+    actions: <><Button type="button" kind="primary" onClick={gate.onReconnect}>Reconnect</Button>{onManageClusters && <Button type="button" kind="secondary" onClick={onManageClusters}>Open Clusters</Button>}</>,
+  } : gate.kind === 'choose' ? {
+    title: 'Choose a cluster.', line: 'no cluster connected',
+    body: `The Navigator thinks with the AI connection of the cluster you use. Choose one in Clusters${onThisComputer ? ', or switch to This computer' : ''}. Your agent files are on this computer and still open in Designer.`,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>{onThisComputer && <Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>}</>,
   } : gate.kind === 'unreachable' ? {
     title: `Can’t reach ${gate.name ?? 'the selected cluster'}. Check your network or VPN.`, line: `can’t reach ${gate.name ?? 'the cluster'}`,
     body: `The Navigator thinks with the model on the Orka you have selected, so it can’t answer until ${gate.name ?? 'the cluster'} is reachable. Nothing on the cluster has changed. Your agent files are on this computer and still open in Designer.`,
@@ -133,6 +153,7 @@ const heldCopy: Partial<Record<ChatSnapshot['state'], [string, string]>> = {
   stopUnconfirmed: ['Stop wasn’t confirmed.', 'The answer may still arrive. Nothing was created or changed.'],
   contextUnavailable: ['This conversation could not be confirmed.', 'Start a new conversation. Nothing was created or changed.'],
 };
+const accessLostCopy = ['Access to the selected cluster needs reconnecting.', 'Reconnect it in Clusters to see the Navigator’s answer. Nothing was created or changed.'] as const;
 
 function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCreated, blockedFor, switchTo }: Props) {
   const place = gate.kind === 'ready' ? gate.place : undefined;
@@ -215,13 +236,15 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
   const line = <><span className="nav-line-place">runs on {place ? place.name : 'this computer'}</span>{model && <span className="nav-line-model"> · thinks with {model}</span>}</>;
   // A refused send shows on its own turn below; the field alert is for everything else.
   const failure = error && error.message !== failed?.reason ? error.message : readError;
-  const composer = <form className={`nav-composer${empty ? ' nav-composer-start' : ''}`} aria-label="Chat" onSubmit={event => { event.preventDefault(); void send(draft); }}>
+  // The field's own value when sending: it can be ahead of the last rendered draft while keys are still arriving.
+  const submitted = () => field.current?.value ?? draft;
+  const composer = <form className={`nav-composer${empty ? ' nav-composer-start' : ''}`} aria-label="Chat" onSubmit={event => { event.preventDefault(); void send(submitted()); }}>
     <label className="sr-only" htmlFor={fieldId}>Message</label>
     <textarea id={fieldId} ref={field} rows={empty ? 3 : 1} placeholder="Ask anything, or describe a task" value={draft}
       onChange={event => setDraft(event.target.value)}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
       onKeyDown={event => {
-        if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(draft); }
+        if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(submitted()); }
       }} />
     <div className="nav-composer-foot">
       <span className="nav-line" title={`Navigator · runs on ${place ? place.name : 'this computer'}${model ? ` · thinks with ${model}` : ''}`}><span className="nav-line-lead">Navigator · </span>{line}</span>
@@ -281,6 +304,8 @@ type TurnProps = {
 };
 function Turn({ turn, newest, snapshot, record, actionable, agents, onAsk, onRetry, onReconnect, onStartOver, onOpenPage, onOpenAgent, onAgentCreated, blockedFor, place }: TurnProps) {
   const view = turnView(turn, newest, snapshot);
+  // The cluster's access can no longer authenticate: reconnecting the cluster, not this turn, comes first.
+  const lost = view.kind === 'held' && view.state === 'observationLost' && snapshot?.error === 'accessLost';
   return <li className="nav-turn">
     <p className="nav-user">{turn.message}</p>
     {view.kind === 'thinking' && <Thinking />}
@@ -290,8 +315,9 @@ function Turn({ turn, newest, snapshot, record, actionable, agents, onAsk, onRet
       {newest && <div className="nav-actions"><Button type="button" kind="primary" onClick={onRetry}>Try again</Button><Button type="button" kind="secondary" onClick={() => onOpenPage('Clusters')}>Check the AI connection</Button></div>}
     </article>}
     {view.kind === 'held' && <article className="card nav-card" aria-label="The Navigator’s answer is not confirmed">
-      <div className="alert alert-needs-you" role="alert"><p className="alert-title">{heldCopy[view.state]?.[0]}</p><p>{heldCopy[view.state]?.[1]}</p></div>
+      <div className="alert alert-needs-you" role="alert"><p className="alert-title">{lost ? accessLostCopy[0] : heldCopy[view.state]?.[0]}</p><p>{lost ? accessLostCopy[1] : heldCopy[view.state]?.[1]}</p></div>
       <div className="nav-actions">{view.state === 'contextUnavailable' ? <Button type="button" kind="primary" onClick={onStartOver}>New conversation</Button>
+        : lost ? <Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>
         : <Button type="button" kind="primary" onClick={onReconnect}>Reconnect</Button>}</div>
     </article>}
     {view.kind === 'answer' && <Answer cardKey={String(turn.startedAt)} reply={view.reply} record={record ?? { status: 'proposed' }} actionable={actionable}

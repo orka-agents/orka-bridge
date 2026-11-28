@@ -134,6 +134,17 @@ the sign-in's existing named `create serviceaccounts/token` authority, and
 performs the normal identity, access and Orka reads. Discovery and forwarding
 rights belong to that sign-in, not the narrow ServiceAccount used for Orka.
 
+The token follows the expiry the cluster returns (Bridge asks for ten minutes).
+While Bridge stays open, it requests a new token for the same account through
+the same sign-in shortly before that expiry, and once more if Orka rejects the
+current one. Each renewal repeats Use's checks: the same recorded installation
+and watched namespace, the same account name, the same TokenReview username and
+UID in Orka, and the ten permissions as the new token alone. A renewal never
+switches accounts. When it cannot be made, the cluster shows as needing
+reconnecting until **Use this cluster** confirms it again. A bearer taken from
+the kubeconfig is never renewed by Bridge; when it expires or Orka rejects it,
+the cluster also needs reconnecting.
+
 Before sending an Orka credential, Bridge checks the selected Pod's controller
 ReplicaSet and that ReplicaSet's controller Deployment against the recorded
 Deployment UID. It repeats the checks around opening the forward and refuses

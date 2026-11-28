@@ -28,6 +28,7 @@ export const navigatorErrors: Record<keyof typeof chatErrors, string> = {
   workspaceOutdated: 'The workspace on this computer is older than this Bridge and can’t run the Navigator yet. Nothing was sent to it.',
   workspaceUnavailable: 'The workspace on this computer stopped answering. Quit Bridge and open it again to restart the workspace. Your agents and files are kept.',
   placeChanged: 'This conversation was started with another AI connection. Start a new conversation to continue.',
+  accessLost: 'Access to the selected cluster needs reconnecting. Reconnect it in Clusters to see the answer.',
 };
 
 const commands: Record<ChatCommand, string> = {
@@ -42,7 +43,7 @@ export function isNavigatorSnapshot(value: unknown): value is NavigatorSnapshot 
   const { chat, thinksWith } = value;
   return object(chat) && exactKeys(chat, ['documentId', 'state', 'busy', 'canSend', 'versions', 'error', 'denied', 'keptOnCluster', 'readOnly']) && isChatSnapshot(chat)
     && chat.documentId === NAVIGATOR_ID
-    && chat.versions.every(version => exactKeys(version, ['turns']) && version.turns.every(turn => exactKeys(turn, ['message', 'answer', 'phase', 'tools', 'contextRetained', 'terminationUnconfirmed', 'stopUnconfirmed', 'startedAt', 'finishedAt'])
+    && chat.versions.every(version => exactKeys(version, ['turns']) && version.turns.every(turn => exactKeys(turn, ['message', 'answer', 'phase', 'tools', 'contextRetained', 'terminationUnconfirmed', 'stopUnconfirmed', 'startedAt', 'finishedAt', ...(Object.hasOwn(turn, 'finishedBeforeStop') ? ['finishedBeforeStop'] : [])])
       && turn.tools.every(tool => exactKeys(tool, ['name', 'callId', 'phase']))))
     && (thinksWith === null || object(thinksWith) && exactKeys(thinksWith, ['kind', 'model'])
       && ['copilot', 'openai', 'anthropic', 'cluster'].includes(thinksWith.kind as string) && typeof thinksWith.model === 'string' && thinksWith.model.length > 0 && thinksWith.model.length <= 256);

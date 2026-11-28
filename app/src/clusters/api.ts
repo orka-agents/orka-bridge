@@ -12,7 +12,10 @@ export type AccessView = { status: AccessStatus; providers: ProviderView[]; fail
 export class ClusterRequestError extends Error {
   constructor(readonly failure: ClusterFailure) { super('Cluster information could not be read.'); }
 }
-export type SelectedPlace = { kind: 'thisComputer' } | { kind: 'cluster'; target?: TargetView; providers?: ProviderView[]; providerId?: string };
+// `pending` names the cluster being connected without access confirmed in this run: it needs reconnecting, or a check
+// found it unreachable over the network. Absent with no target, no cluster has been chosen.
+export type PendingPlace = { name: string; key?: string; unreachable?: boolean };
+export type SelectedPlace = { kind: 'thisComputer' } | { kind: 'cluster'; target?: TargetView; providers?: ProviderView[]; providerId?: string; pending?: PendingPlace };
 const statuses: AccessStatus[] = ['connected', 'needServiceAccount', 'denied', 'unavailable', 'unsupportedCredential'];
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const keys = (v: Record<string, unknown>, names: string[]) => Object.keys(v).sort().join(',') === names.sort().join(',');
@@ -33,16 +36,18 @@ async function call<T>(command: string, args: Record<string, unknown>, valid: (v
   }
   throw new ClusterRequestError({ check, result: 'unknown' });
 }
-export type ClusterPlaceSnapshot = { places: Place[]; selectedKey: string | null; persistenceState: 'complete' | 'unavailable' };
+// `accessLost`: the selected place's access can no longer authenticate, so it needs reconnecting.
+export type ClusterPlaceSnapshot = { places: Place[]; selectedKey: string | null; persistenceState: 'complete' | 'unavailable'; accessLost: boolean };
 // Unlike Overview's refresh, this reads only the native session's retained views.
 export async function clusterPlaces(): Promise<ClusterPlaceSnapshot | undefined> {
   if (!isTauri()) return;
   try {
     const value: unknown = await invoke('cluster_places', {});
-    if (!object(value) || !keys(value, ['places', 'selectedKey', 'persistenceState']) || (value.persistenceState !== 'complete' && value.persistenceState !== 'unavailable')) return;
+    if (!object(value) || !keys(value, ['places', 'selectedKey', 'persistenceState', 'accessLost']) || (value.persistenceState !== 'complete' && value.persistenceState !== 'unavailable')
+      || typeof value.accessLost !== 'boolean' || value.accessLost && value.selectedKey === null) return;
     const retained = { places: value.places, historyState: 'complete', unobserved: [] };
     if (isPlaces(retained) && (value.selectedKey === null || typeof value.selectedKey === 'string' && retained.places.some(p => p.key === value.selectedKey))) {
-      return { places: retained.places, selectedKey: value.selectedKey, persistenceState: value.persistenceState };
+      return { places: retained.places, selectedKey: value.selectedKey, persistenceState: value.persistenceState, accessLost: value.accessLost };
     }
   } catch { /* Passive observation never exports native diagnostics or renews access. */ }
 }

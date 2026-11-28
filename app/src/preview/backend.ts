@@ -431,7 +431,7 @@ function clusterReply(command: string, args?: Record<string, unknown>): unknown 
   const target = { id: uuid('team-dev-target'), context_id: uuid('team-dev-context'), context_name: 'team-dev', service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka-agents/orka:preview' };
   const provider = { id: uuid('team-dev-provider'), name: 'team-model', ready: true };
   switch (command) {
-    case 'cluster_places': return { places: [place], selectedKey: key, persistenceState: 'complete' };
+    case 'cluster_places': return { places: [place], selectedKey: key, persistenceState: 'complete', accessLost: false };
     case 'overview_places': return { places: [place], historyState: 'complete', unobserved: [] };
     case 'cluster_select': if (args?.key !== key) throw { check: 'configuration', result: 'unknown' }; return { target, providers: [provider] };
     case 'cluster_catalog': return { defaultModel: null, models: { state: 'ready', items: [{ id: 'gpt-5.6-terra' }] }, tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Fetch a web page and return its text.' }] } };
@@ -594,7 +594,7 @@ async function contextReply(command: string, args?: Record<string, unknown>): Pr
       return usedTarget.target;
     case 'cluster_service_accounts': await wait(0.3); return { names: ['bridge-user', 'default', 'orka-reader'], truncated: false };
     case 'cluster_service_account_preview': await wait(0.3); return { status: 'allowed', checks: orkaPermissions.map(([resource, verb]) => ({ resource, verb, status: 'allowed' })) };
-    case 'cluster_places': return { places: place ? [place] : [], selectedKey: place?.key ?? null, persistenceState: 'complete' };
+    case 'cluster_places': return { places: place ? [place] : [], selectedKey: place?.key ?? null, persistenceState: 'complete', accessLost: false };
     case 'overview_places': return { places: place ? [place] : [], historyState: 'complete', unobserved: [] };
     case 'cluster_select':
       if (!place || !usedTarget || args?.key !== place.key) throw { check: 'configuration', result: 'unknown' };
@@ -694,7 +694,7 @@ async function scenarioReply(command: string, args?: Record<string, unknown>): P
       return { ready: false };
     case 'cluster_places':
       if (!remoteScenario) break;
-      return { places: clusterKnown ? [clusterPlace()] : [], selectedKey: clusterKnown && clusterChecked ? clusterPlace().key : null, persistenceState: 'complete' };
+      return { places: clusterKnown ? [clusterPlace()] : [], selectedKey: clusterKnown && clusterChecked ? clusterPlace().key : null, persistenceState: 'complete', accessLost: false };
     case 'overview_places':
       if (!remoteScenario) break;
       return { places: clusterKnown ? [clusterPlace()] : [], historyState: 'complete', unobserved: [] };
@@ -869,7 +869,7 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
       ? { state: 'complete', installation, agents: [], observedAt: Math.floor(Date.now() / 1000), observation: null, runActive: false, reason: null }
       : { state: 'unavailable', installation: null, agents: [], observedAt: null, observation: null, runActive: false, reason: 'stopped' };
     case 'overview_places': return { places: [], historyState: 'complete', unobserved: [] };
-    case 'cluster_places': return { places: [], selectedKey: null, persistenceState: 'complete' };
+    case 'cluster_places': return { places: [], selectedKey: null, persistenceState: 'complete', accessLost: false };
     case 'cluster_contexts': case 'cluster_reload': return [];
     case 'send_history': return [];
     case 'send_status': return { documentId: documentId(args), view: null, busy: null };

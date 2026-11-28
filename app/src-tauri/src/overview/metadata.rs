@@ -36,6 +36,18 @@ impl From<&TargetBinding> for Identity {
     }
 }
 impl Identity {
+    /// Everything but the context name, so two contexts reaching one Orka compare equal.
+    pub fn installation(&self) -> String {
+        key_of(
+            "",
+            &self.cluster_identity,
+            &self.service_namespace,
+            &self.service_uid,
+            &self.deployment_namespace,
+            &self.deployment_uid,
+            &self.watched_namespace,
+        )
+    }
     pub fn key(&self) -> String {
         key_of(
             &self.context_name,

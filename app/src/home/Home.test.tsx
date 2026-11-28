@@ -56,7 +56,7 @@ afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 
 const ready: NavigatorGate = { kind: 'ready' };
 function home(gate: NavigatorGate = ready, extra: { blockedFor?: (id: string) => string | undefined } = {}) {
-  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn(), onThisComputer: vi.fn() };
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn(), onThisComputer: vi.fn(), onManageClusters: vi.fn() };
   render(<main aria-labelledby="page-title"><Home active revision={0} gate={gate} {...handlers} {...extra} /></main>);
   return handlers;
 }
@@ -197,6 +197,8 @@ test.each<[NavigatorGate, string, string]>([
   [{ kind: 'unreachable' }, 'Can’t reach the selected cluster. Check your network or VPN.', 'Navigator · can’t reach the cluster'],
   [{ kind: 'noConnection', name: 'team-dev' }, 'Choose an AI connection for team-dev.', 'Navigator · no AI connection chosen'],
   [{ kind: 'waiting' }, 'Waiting for the workspace to start.', 'Navigator · waiting for the workspace'],
+  [{ kind: 'reconnect', name: 'team-dev', onReconnect: () => {} }, 'team-dev needs reconnecting.', 'Navigator · team-dev needs reconnecting'],
+  [{ kind: 'reconnect', name: 'team-dev', onReconnect: () => {}, first: true }, 'team-dev isn’t connected yet.', 'Navigator · team-dev not connected'],
 ])('when it cannot answer (%o) the message box is disabled and a card says why', (gate, title, line) => {
   home(gate);
   expect(screen.getByRole('main', { name: 'What do you want done?' })).toBeTruthy();
@@ -230,6 +232,21 @@ test('on a cluster a proposed task runs there, while the agent card still writes
   expect(await screen.findByText('Created. It is running on team-dev.')).toBeTruthy();
 });
 
+test('a cluster that needs reconnecting offers Reconnect and Open Clusters, not a network warning', async () => {
+  const onReconnect = vi.fn(); const user = userEvent.setup(); const { onManageClusters } = home({ kind: 'reconnect', name: 'team-dev', onReconnect });
+  expect(screen.queryByText(/network or VPN/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Switch to This computer' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Reconnect' }));
+  await user.click(screen.getByRole('button', { name: 'Open Clusters' }));
+  expect(onReconnect).toHaveBeenCalledOnce();
+  expect(onManageClusters).toHaveBeenCalledOnce();
+});
+test('with a local workspace, a cluster place still to choose or finish connecting offers This computer', async () => {
+  const user = userEvent.setup(); const { onThisComputer } = home({ kind: 'choose' });
+  expect(screen.getByText(/or switch to This computer/)).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Switch to This computer' }));
+  expect(onThisComputer).toHaveBeenCalledOnce();
+});
 test('an unreachable cluster offers This computer', async () => {
   const user = userEvent.setup(); const { onThisComputer, onOpenPage } = home({ kind: 'unreachable' });
   await user.click(screen.getByRole('button', { name: 'Switch to This computer' }));
@@ -238,7 +255,7 @@ test('an unreachable cluster offers This computer', async () => {
   expect(onOpenPage).toHaveBeenCalledWith('Clusters');
 });
 
-test.each<[NavigatorGate]>([[{ kind: 'unreachable' }], [{ kind: 'noConnection', name: 'team-dev' }]])('where this computer cannot run agents, %o never offers it', gate => {
+test.each<[NavigatorGate]>([[{ kind: 'unreachable' }], [{ kind: 'noConnection', name: 'team-dev' }], [{ kind: 'choose' }], [{ kind: 'reconnect', name: 'team-dev', onReconnect: () => {}, first: true }]])('where this computer cannot run agents, %o never offers it', gate => {
   const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn() };
   render(<main aria-labelledby="page-title"><Home active revision={0} gate={gate} {...handlers} /></main>);
   expect(screen.queryByRole('button', { name: 'Switch to This computer' })).toBeNull();
@@ -386,4 +403,25 @@ test('each place has its own conversation: switching shows that place\'s turns a
   expect(calls.filter(call => call.command === 'navigator_send').at(-1)?.args).toEqual({ message: 'Back here' });
   expect(places[cluster.targetId].map(t => t.message)).toEqual(['On the cluster']);
   expect(calls.some(call => call.command === 'navigator_new')).toBe(false);
+});
+
+test('New is final for the place: reconnecting it in this run does not bring cleared turns back', async () => {
+  nav.turns = [turn('Hello', 'An earlier answer.')];
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn(), onThisComputer: vi.fn() };
+  const gate = (targetId: string, providerId: string): NavigatorGate => ({ kind: 'ready', place: { name: 'team-dev', targetId, providerId, conversation: '["team-dev","control","orka","agents","fixture"]' } });
+  const user = userEvent.setup();
+  const view = render(<main aria-labelledby="page-title"><Home active revision={0} gate={gate(cluster.targetId, cluster.providerId)} {...handlers} /></main>);
+  expect(await screen.findByText('An earlier answer.')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'New conversation' }));
+  await waitFor(() => expect(screen.queryByText('An earlier answer.')).toBeNull());
+  // Reconnecting mints new opaque ids for the same place and AI connection; native keeps its turns.
+  view.rerender(<main aria-labelledby="page-title"><Home active revision={0} gate={gate('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a2')} {...handlers} /></main>);
+  await waitFor(() => expect(calls.filter(call => call.command === 'navigator_status').length).toBeGreaterThan(2));
+  expect(screen.queryByText('An earlier answer.')).toBeNull();
+  expect(screen.getByRole('heading', { level: 1, name: 'What do you want done?' })).toBeTruthy();
+});
+
+test('Home says conversations are kept only while Bridge is open', () => {
+  home();
+  expect(screen.getByText('Conversations are kept only while Bridge is open.')).toBeTruthy();
 });

@@ -8,7 +8,8 @@ export type Detail = { label: string; value: string; copy?: boolean };
 export type Card = {
   key: string; groupKey: string; agentKey: string; title: string; place: string; subject: string;
   status?: Status; pill?: string; testedAt?: number; description: string;
-  meta: { tests?: string };
+  // `agent`: the Agent's name on the cluster, which tells apart two Sends of one file to the same place.
+  meta: { tests?: string; agent?: string };
   documentId?: string; remote: boolean; actions: CardAction[]; details: Detail[];
 };
 export type Note = { text: string; seen?: number; check?: boolean; clusters?: boolean; /** Says only that the list is empty, which the empty Overview already says. */ empty?: boolean };
@@ -134,7 +135,7 @@ export function buildCards(i: Inputs) {
     return {
       key: `${place.key}/${agent.uid}`, groupKey: place.key, agentKey: file?.documentId ?? `agent/${place.key}/${agent.uid}`, title: file ? fileTitle(file) : agent.name, place: name, subject: file?.name ?? agent.name,
       ...s, testedAt: record ? record.time * 1000 : undefined, description: file ? file.summary?.description || 'No description in the agent file.' : `Running on ${name}, not saved here`,
-      meta: { tests: record && place.stale ? `Last Send ${record.verdict}` : record?.report ? `${record.report.passed} of ${record.report.total} passed${earlier ? ', before your edit' : ''}` : undefined },
+      meta: { tests: record && place.stale ? `Last Send ${record.verdict}` : record?.report ? `${record.report.passed} of ${record.report.total} passed${earlier ? ', before your edit' : ''}` : undefined, agent: agent.name },
       documentId: file?.state === 'readable' ? file.documentId : undefined, remote: true,
       actions: file?.state === 'readable' ? [{ id: 'open' },
         ...(!place.stale && !i.filesStale && !file.draft && i.run ? [{ id: 'run' as const }] : [])] : [], details,
@@ -188,6 +189,12 @@ export function agentRows(cards: Card[], place = 'all', name = ''): AgentRow[] {
 export function summaryLabel(cards: { status?: Status }[], partial: boolean) {
   const failed = cards.filter(c => c.status === 'failed').length;
   return `${cards.length} ${cards.length === 1 ? 'agent' : 'agents'}${partial ? ' shown' : ''}${failed ? `, ${failed} failed` : ''}`;
+}
+// The page and the sidebar count the same rows; a filter says how many of them it leaves.
+export function filteredLabel(shown: { status?: Status }[], all: { status?: Status }[], partial: boolean) {
+  if (shown.length === all.length) return summaryLabel(all, partial);
+  const failed = shown.filter(c => c.status === 'failed').length;
+  return `${shown.length} of ${all.length} ${all.length === 1 ? 'agent' : 'agents'}${partial ? ' shown' : ''}${failed ? `, ${failed} failed` : ''}`;
 }
 // Empty means nothing could be hiding: no files, no remembered clusters, no Agents, every read succeeded. A stopped or
 // image-limited workspace still counts as empty; a failed read, a busy list or hidden unowned Agents do not.

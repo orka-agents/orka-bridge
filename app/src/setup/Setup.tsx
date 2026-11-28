@@ -31,7 +31,7 @@ const failureKey = (status?: SetupStatus) => status?.workspaceFailure ? `${statu
 export type UpgradeNotice = 'recovery' | 'required' | 'error' | 'unknown' | 'checking' | 'busy';
 // showCluster opens a remembered cluster's card, or Add a cluster without one, as the Clusters list does; showLocal opens This computer.
 export type LocalClusterControl = { showPlaces: () => void; showLocal: () => void; showCluster: (place?: Place, selected?: boolean) => void };
-export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onLaunch, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, guided = false, onSetUpLater, active = true, onView }: {
+export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onLaunch, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, accessLost = false, onLocalView, onWorkspaceMode, guided = false, onSetUpLater, active = true, onView }: {
   ref?: Ref<LocalClusterControl>;
   onOpenExample: () => void; onOpenAgent?: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
@@ -52,6 +52,8 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   onView?: (view: ClustersView) => void;
   onWorkspaceMode?: (returning: boolean) => void;
   place?: SelectedPlace;
+  /** The cluster in use can no longer authenticate and needs reconnecting. */
+  accessLost?: boolean;
   // The guided first run: reading the example's instructions stays in place, and screens where setup has stopped offer Set up later.
   guided?: boolean; onSetUpLater?: () => void;
 }) {
@@ -435,7 +437,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
       {view === 'places' && <p className="muted">Choose where agents run</p>}
       {view === 'places' && <Button type="button" kind={noClusters && !localNext ? 'primary' : 'secondary'} onClick={() => chooseCluster()}>Add a cluster</Button>}
     </div>
-    {view === 'places' && <Places modelRecovery={modelRecovery} recoveryRef={setPlaceRecovery} snapshot={snapshot} unavailable={snapshotUnavailable} status={error ? undefined : status} view={placesView} place={currentPlace} onLocal={openLocal} onCluster={chooseCluster} />}
+    {view === 'places' && <Places modelRecovery={modelRecovery} recoveryRef={setPlaceRecovery} snapshot={snapshot} unavailable={snapshotUnavailable} status={error ? undefined : status} view={placesView} place={currentPlace} accessLost={accessLost} onLocal={openLocal} onCluster={chooseCluster} />}
     {showPayoff && firstPass && <FirstPass snapshot={firstPass} titleId={titleId} onOpen={openExample} />}
     <div hidden={view !== 'local' || !!showPayoff}>
       {cluster && !localOff && <Button type="button" kind="secondary" onClick={chooseComputer}>Use this computer</Button>}
@@ -489,7 +491,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
         </div>
       </div>
     </div>
-    {entry && <ClusterCard active={active && view === 'cluster'} entry={entry} selection={currentPlace} onPlace={publishPlace} onContextName={setClusterName} onOpenAgent={onOpenAgent ?? onOpenExample} onDone={back} onRemoved={removed} />}
+    {entry && <ClusterCard active={active && view === 'cluster'} entry={entry} selection={currentPlace} accessLost={accessLost} onPlace={publishPlace} onContextName={setClusterName} onOpenAgent={onOpenAgent ?? onOpenExample} onDone={back} onRemoved={removed} />}
     {!upgradePanel && <UpgradeObservation observation={upgradeObservation} />}
     {displayError && <div role="alert"><p>{displayError}</p>
       <Button type="button" kind="secondary" className="action-spaced" disabled={(retryUpgradeStatus ? sending : busy) || upgradeBusy || upgradeObservation.pending}

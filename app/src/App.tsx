@@ -103,6 +103,25 @@ export default function App() {
   }, []);
   const [place, setPlace] = useState<SelectedPlace>({ kind: 'thisComputer' });
   const remote = place.kind === 'cluster';
+  // Cluster access lives in native memory and can stop authenticating when its token can no longer be renewed.
+  // Watched passively (no cluster read) while a cluster is in use, so every surface says it needs reconnecting.
+  const [lostKey, setLostKey] = useState<string>();
+  const selectedTarget = place.kind === 'cluster' ? place.target?.id : undefined;
+  useEffect(() => {
+    setLostKey(undefined);
+    if (!selectedTarget) return;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const observe = async () => {
+      const snapshot = await clusterPlaces();
+      if (!live) return;
+      if (snapshot) setLostKey(snapshot.accessLost && snapshot.selectedKey ? snapshot.selectedKey : undefined);
+      timer = setTimeout(() => { void observe(); }, 2000);
+    };
+    void observe();
+    return () => { live = false; clearTimeout(timer); };
+  }, [selectedTarget]);
+  const accessLost = !!lostKey && !!selectedTarget;
   // The last cluster connected in this run with an AI connection, for Home to offer when this computer can't run the Navigator.
   const [lastCluster, setLastCluster] = useState<SelectedPlace>();
   useEffect(() => { if (place.kind === 'cluster' && place.target && place.providerId) setLastCluster(place); }, [place]);
@@ -352,7 +371,7 @@ export default function App() {
   const overviewWorkspaceNote = !setup ? setupLine : upgradeAttention ? upgradeLine : workspaceStopping ? 'Stopping the workspace'
     : workspaceBusy && (!workspaceTransition || setup?.localVm === 'failed') ? 'Getting your workspace ready…'
       : workspaceTransition ? setupLine : undefined;
-  const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
+  const placeName = remote ? place.target?.context_name ?? place.pending?.name ?? 'Choose a cluster'
     : { local: 'This computer', none: 'This computer', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
   const setupDetail = upgradeAttention ? `${upgradeLine}. ${upgradeDetail}` : setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
   const hostDetail = setup?.localVm === 'failed' ? setupDetail : hostWorkspace?.detail ?? detail;
@@ -372,7 +391,8 @@ export default function App() {
     Overview: welcome ? '' : overviewCounts,
     Designer: creatingAgent ? 'No agent open' : agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? exampleReadOnly ? 'Ready after setup' : 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
-    Clusters: remote ? place.target ? `${place.target.context_name}, connected` : 'Choose a cluster' : welcome ? 'Start here' : returningWorkspace ? view.line : view.tabLine,
+    Clusters: remote ? place.target ? `${place.target.context_name}, ${accessLost ? 'needs reconnecting' : 'connected'}`
+      : place.pending ? `${place.pending.name}, ${place.pending.unreachable ? 'can’t reach' : place.pending.key ? 'needs reconnecting' : 'not connected'}` : 'Choose a cluster' : welcome ? 'Start here' : returningWorkspace ? view.line : view.tabLine,
   };
   const tabTone = exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.cancellation === 'unconfirmed' ? 'needs-you' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const catalogConnected = run?.modelConnected ?? model === 'connected';
@@ -419,6 +439,13 @@ export default function App() {
     openDesigner(id);
     setDocumentAction({ id: ++actionSequence.current, documentId: id, action });
   };
+  // Reconnect opens that cluster's page in Clusters, where Use confirms access again.
+  const reconnectPlace = async (key?: string) => {
+    setPage('Clusters');
+    const snapshot = await clusterPlaces();
+    const item = key ? snapshot?.places.find(candidate => candidate.key === key) : undefined;
+    if (item) localCluster.current?.showCluster(item, snapshot?.selectedKey === key); else localCluster.current?.showPlaces();
+  };
   // Back and Forward go where the sidebar, the agent picker and the Clusters list go, through the same calls.
   const restorePlace = (target: Location) => {
     setDocumentAction(undefined); setSidebarOpen(false);
@@ -444,7 +471,8 @@ export default function App() {
   };
   const localLine = welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' && !returningWorkspace || setup?.model === 'locked' && setup?.localVm === 'ready' ? setupDetail : view.footerLine;
   const footer = [
-    remote ? place.target ? `Orka in ${place.target.service_namespace}/${place.target.service_name}` : 'Not connected' : localLine,
+    remote ? place.target ? accessLost ? 'Needs reconnecting' : `Orka in ${place.target.service_namespace}/${place.target.service_name}`
+      : place.pending?.unreachable ? 'Can’t reach' : place.pending?.key ? 'Needs reconnecting' : 'Not connected' : localLine,
     exampleState === 'loaded' && (saveState !== 'saved' || saveNotice.id === documentId && saveNotice.edited) ? { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState] : undefined,
   ].filter(Boolean);
   const checkFirstTest = () => {
@@ -495,13 +523,17 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup ref={localCluster} onView={setClustersView} place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onLaunch={observeLaunch} guided={guided} onSetUpLater={guided ? setUpLater : undefined}
+          <Setup ref={localCluster} onView={setClustersView} place={place} accessLost={accessLost} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onLaunch={observeLaunch} guided={guided} onSetUpLater={guided ? setUpLater : undefined}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
         {page === 'Home' && <Home active revision={agentsRevision}
           // On a cluster the Navigator thinks with its chosen AI connection, once it is connected in this run.
-          gate={remote ? !place.target ? { kind: 'unreachable' } : !place.providerId ? { kind: 'noConnection', name: place.target.context_name }
-            : { kind: 'ready', place: { name: place.target.context_name, targetId: place.target.id, providerId: place.providerId } }
+          gate={remote ? !place.target ? place.pending?.unreachable ? { kind: 'unreachable', name: place.pending.name }
+            : place.pending ? { kind: 'reconnect', name: place.pending.name, first: !place.pending.key, onReconnect: () => { void reconnectPlace(place.pending?.key); } } : { kind: 'choose' }
+            : accessLost ? { kind: 'reconnect', name: place.target.context_name, onReconnect: () => { void reconnectPlace(lostKey); } }
+            : !place.providerId ? { kind: 'noConnection', name: place.target.context_name }
+            : { kind: 'ready', place: { name: place.target.context_name, targetId: place.target.id, providerId: place.providerId,
+              conversation: JSON.stringify([place.target.context_name, place.target.service_namespace, place.target.service_name, place.target.watched_namespace, place.providers?.find(p => p.id === place.providerId)?.name ?? place.providerId]) } }
             : localOff ? { kind: 'unavailable' } : !workspaceReady || workspaceBusy ? { kind: 'waiting' } : setup?.model !== 'available' || aiObserved === false ? { kind: 'noModel' } : { kind: 'ready' }}
           onOpenPage={next => next === 'Designer' ? openDesigner() : setPage(next)}
           // The task card's results are the agent's Try a task results, so Designer opens on that view.
@@ -513,7 +545,7 @@ export default function App() {
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
           blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}
         {page === 'Designer' && overviewNotice && <p className="muted" role="status">{overviewNotice}</p>}
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} localUnavailable={localOff ? unavailableCopy.detail : undefined} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} onCreating={observeCreating} /></div>}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} accessLost={accessLost} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} localUnavailable={localOff ? unavailableCopy.detail : undefined} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} onCreating={observeCreating} /></div>}
         <Overview onNewAgent={() => openDesigner(undefined, true)} localAiConnected={overviewAiConnected} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} activeDocumentId={firstTest === 'running' ? SAMPLE_DOCUMENT_ID : run?.busy?.documentId} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} workspaceNote={overviewWorkspaceNote} localUnavailable={localOff} filesRevision={agentsRevision} placesRevision={placesRevision} onCounts={setOverviewCounts} onSavedCount={setSavedAgents}
           onOpenDocument={(id, key) => { void openOverviewDocument(id, 'open', key); }}
           onChatDocument={id => openOverviewDocument(id, 'chat')}
@@ -524,9 +556,9 @@ export default function App() {
         {page === 'Designer' && !exampleOpen && <p role="status">Opening your agent…</p>}
       </main>
       <footer className="status-bar">
-        <OrkaSwitcher title={remote ? placeName : hostDetail} place={place} computerLine={savedAgents ? `${localLine} · ${savedAgents} ${savedAgents === 1 ? 'agent' : 'agents'}` : localLine} computerTone={hostTone} onPlace={choosePlace}
+        <OrkaSwitcher title={remote ? placeName : hostDetail} place={place} accessLost={accessLost} computerLine={savedAgents ? `${localLine} · ${savedAgents} ${savedAgents === 1 ? 'agent' : 'agents'}` : localLine} computerTone={hostTone} onPlace={choosePlace}
           onClusters={item => { setPage('Clusters'); localCluster.current?.showCluster(item); }} onManage={() => { setPage('Clusters'); localCluster.current?.showPlaces(); }}>
-          <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span>{remote && place.target && <span className="chip">In use</span>}<span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span>
+          <span className={`live-dot ${remote ? place.target ? accessLost ? 'needs-you' : 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span>{remote && place.target && <span className="chip">In use</span>}<span className="sr-only">: {remote ? place.target ? accessLost ? 'Needs reconnecting' : 'Access confirmed' : 'Not connected' : hostDetail}</span>
         </OrkaSwitcher>
         <span className="status-lines">{footer.map((part, index) => <span key={index}>{index > 0 && <span aria-hidden="true"> · </span>}<span aria-live={index > 0 ? 'polite' : undefined}>{part}</span></span>)}
 </span>
