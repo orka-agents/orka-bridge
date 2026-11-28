@@ -372,7 +372,9 @@ test('model acknowledgment and observed check counts survive navigation', async 
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('Workspace ready')).toBeTruthy();
-  expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('The workspace is ready on this computer.');
+  // The rail's styled tip, kept inside the window, rather than a system tooltip drawn below it.
+  expect(document.querySelector('.host-chip')?.getAttribute('data-tip')).toBe('The workspace is ready on this computer.');
+  expect(document.querySelector('.host-chip')?.hasAttribute('title')).toBe(false);
   expect(document.querySelector('.host-chip')?.textContent).toBe('This computer: The workspace is ready on this computer.');
   expect(document.querySelector('.host-chip .live-dot')?.className).toContain('ready');
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));

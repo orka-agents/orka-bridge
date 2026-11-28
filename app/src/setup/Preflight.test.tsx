@@ -232,7 +232,7 @@ test('preflight cause stays specific in the app status and host pill', async () 
   mockIPC(command => command === 'setup_status' ? { selected: 'localVm', localVm: 'failed', model: 'locked', preflightFailure: 'insufficientMemory', localVmError: 'SECRET_MARKER' } : command === 'setup_requirements' ? requirements : Promise.reject({ kind: 'unavailable' }));
   render(<App />); await openLocalSetup();
   await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('less installed memory'));
-  expect(document.querySelector('.host-chip')?.getAttribute('title')).toContain('less installed memory');
+  expect(document.querySelector('.host-chip')?.getAttribute('data-tip')).toContain('less installed memory');
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
 });
 
