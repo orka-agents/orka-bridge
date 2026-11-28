@@ -71,3 +71,38 @@ test('a finished workspace opens on Home with the Navigator', async () => {
   expect(screen.getByRole('button', { name: 'Home' }).getAttribute('aria-current')).toBe('page');
   expect(document.getElementById('tab-status-Home')?.textContent).toBe('Navigator');
 });
+
+// After a relaunch a remembered cluster has no access in this run. Trying it and failing to confirm access says it
+// needs reconnecting; only an OS-reported connection failure says the cluster can't be reached.
+test.each([
+  [{ check: 'orkaIdentity', result: 'unknown' }, 'team-dev needs reconnecting.', 'team-dev, needs reconnecting'],
+  [{ check: 'clusterApi', result: 'connectionFailed' }, 'Can’t reach team-dev. Check your network or VPN.', 'team-dev, can’t reach'],
+])('after a relaunch Home tells a cluster that needs reconnecting from one it can’t reach (%o)', async (failure, title, tab) => {
+  vi.stubGlobal('isTauri', true);
+  const target = { id: '00000000-0000-4000-8000-000000000002', context_id: '00000000-0000-4000-8000-000000000001', context_name: 'team-dev',
+    service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'orka:v1' };
+  const place = { key: 'team-dev-key', context: 'team-dev', service: 'control/orka', namespace: 'agents', stale: true, observedAt: 1_700_000_000_000, checkedAt: 1_700_000_000_000, agents: [] };
+  mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
+    if (command === 'setup_status') return { selected: null, localVm: 'notIntegrated', model: 'locked' };
+    if (command === 'cluster_places') return { places: [place], selectedKey: null, persistenceState: 'complete', accessLost: false };
+    if (command === 'cluster_reconnect') return target;
+    if (command === 'cluster_use') return { status: 'unavailable', providers: [], failure };
+    if (command === 'overview_places') return { places: [place], historyState: 'complete', unobserved: [] };
+    if (command === 'agents_list') return [];
+    return null;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Use' }));
+  await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
+  await screen.findByRole('alert');
+  expect(document.getElementById('tab-status-Clusters')?.textContent).toBe(tab);
+  await user.click(screen.getByRole('button', { name: 'Home' }));
+  expect(await screen.findByRole('heading', { level: 2, name: title })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Switch to This computer' }) === null).toBe(!title.startsWith('Can’t'));
+  if (!title.startsWith('Can’t')) {
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open Clusters' })).toBeTruthy();
+  }
+});

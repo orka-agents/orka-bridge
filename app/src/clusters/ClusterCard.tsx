@@ -15,6 +15,8 @@ type Failure = { failure: ClusterFailure; operation: 'Read kubeconfig' | 'Reload
 // again without asking. Its name only; never a credential.
 const accounts = new Map<string, string>();
 const installation = (t: TargetView) => JSON.stringify([t.context_name, t.service_namespace, t.service_name, t.watched_namespace]);
+// Only an OS-reported connection failure to the cluster or its Orka means the network; everything else needs reconnecting.
+const unreachable = (failure: ClusterFailure) => failure.result === 'connectionFailed' && ['clusterApi', 'orkaConnection'].includes(failure.check) || undefined;
 type Entry = { revision: number; current?: SelectedPlace; remembered?: Place };
 export default function ClusterCard({ active = true, entry, selection, accessLost = false, onPlace, onContextName, onOpenAgent, onDone, onRemoved }: { active?: boolean; entry?: Entry; selection?: SelectedPlace; accessLost?: boolean; onContextName?: (name: string | undefined) => void; onPlace: (place: SelectedPlace) => void; onOpenAgent: () => void; onDone?: () => void; onRemoved?: (key: string, targetId: string | undefined, navigate: boolean) => void }) {
   const [choices, setChoices] = useState<ContextView[]>([]);
@@ -179,7 +181,7 @@ export default function ClusterCard({ active = true, entry, selection, accessLos
       // Reloading keeps the place in use unless its own context changed in kubeconfig.
       if (selection?.kind === 'cluster' && selection.target) {
         const snapshot = await clusterPlaces();
-        if (snapshot && snapshot.selectedKey === null) onPlace({ kind: 'cluster' });
+        if (snapshot && snapshot.selectedKey === null) onPlace({ kind: 'cluster', pending: { name: selection.target.context_name } });
       }
     }
     catch (error) { if (request === epoch.current) setError({ failure: failedCheck(error, 'configuration'), operation: 'Reload kubeconfig' }); }
@@ -211,7 +213,8 @@ export default function ClusterCard({ active = true, entry, selection, accessLos
     admitted.current = true; const request = ++epoch.current; setBusy(true); setError(undefined); setNotice(''); setDetails(false);
     setAccess(undefined);
     // Native Use invalidates the old access before it replies. Do not leave App holding it.
-    onPlace({ kind: 'cluster' });
+    const pending = { name: target.context_name, key: retained?.key };
+    onPlace({ kind: 'cluster', pending });
     try {
       const usedAccount = accounts.get(installation(target));
       const name = needsAccount && account.trim() ? account.trim() : usedAccount ?? null;
@@ -231,8 +234,15 @@ export default function ClusterCard({ active = true, entry, selection, accessLos
         : value.providers.length === 1 ? value.providers[0].id : '';
       providerName.current = value.providers.find(p => p.id === selectedProvider)?.name ?? remembered;
       setProviderId(selectedProvider);
-      onPlace(value.status === 'connected' ? { kind: 'cluster', target, providers: value.providers, providerId: selectedProvider } : { kind: 'cluster' });
-    } catch (error) { if (request === epoch.current) setError({ failure: failedCheck(error, 'orkaConnection'), operation: 'Use cluster' }); }
+      onPlace(value.status === 'connected' ? { kind: 'cluster', target, providers: value.providers, providerId: selectedProvider }
+        : { kind: 'cluster', pending: { ...pending, unreachable: value.failure ? unreachable(value.failure) : undefined } });
+    } catch (error) {
+      if (request === epoch.current) {
+        const failure = failedCheck(error, 'orkaConnection');
+        setError({ failure, operation: 'Use cluster' });
+        onPlace({ kind: 'cluster', pending: { ...pending, unreachable: unreachable(failure) } });
+      }
+    }
     finally { if (request === epoch.current) { admitted.current = false; setBusy(false); } }
   }
   return <section className="cluster-card" aria-label="Connect an existing cluster" aria-busy={busy} hidden={!active}>

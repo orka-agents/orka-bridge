@@ -12,7 +12,10 @@ export type AccessView = { status: AccessStatus; providers: ProviderView[]; fail
 export class ClusterRequestError extends Error {
   constructor(readonly failure: ClusterFailure) { super('Cluster information could not be read.'); }
 }
-export type SelectedPlace = { kind: 'thisComputer' } | { kind: 'cluster'; target?: TargetView; providers?: ProviderView[]; providerId?: string };
+// `pending` names the cluster being connected without access confirmed in this run: it needs reconnecting, or a check
+// found it unreachable over the network. Absent with no target, no cluster has been chosen.
+export type PendingPlace = { name: string; key?: string; unreachable?: boolean };
+export type SelectedPlace = { kind: 'thisComputer' } | { kind: 'cluster'; target?: TargetView; providers?: ProviderView[]; providerId?: string; pending?: PendingPlace };
 const statuses: AccessStatus[] = ['connected', 'needServiceAccount', 'denied', 'unavailable', 'unsupportedCredential'];
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const keys = (v: Record<string, unknown>, names: string[]) => Object.keys(v).sort().join(',') === names.sort().join(',');

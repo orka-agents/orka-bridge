@@ -16,8 +16,9 @@ import './home.css';
 // this computer, or a connected cluster's chosen AI connection (`place`).
 // `reconnect`: the cluster is reachable as far as Bridge knows, but its access must be confirmed again (it lasts only
 // while Bridge is open, and a token that can no longer be renewed stops working).
+// `choose`: a cluster is selected as the place, but none is connected.
 export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string }
-  | { kind: 'reconnect'; name: string; onReconnect: () => void };
+  | { kind: 'reconnect'; name: string; onReconnect: () => void } | { kind: 'choose' };
 export type HomePage = 'Overview' | 'Designer' | 'Clusters';
 type Props = {
   active: boolean; revision: number; gate: NavigatorGate;
@@ -69,6 +70,10 @@ function Gated({ gate, onOpenPage, onThisComputer, onManageClusters }: Props & {
     title: `${gate.name} needs reconnecting.`, line: `${gate.name} needs reconnecting`,
     body: `The Navigator thinks with the AI connection on ${gate.name}. Bridge keeps cluster access only while it is open, so confirm it again to continue. Nothing on ${gate.name} has changed.`,
     actions: <><Button type="button" kind="primary" onClick={gate.onReconnect}>Reconnect</Button>{onManageClusters && <Button type="button" kind="secondary" onClick={onManageClusters}>Open Clusters</Button>}</>,
+  } : gate.kind === 'choose' ? {
+    title: 'Choose a cluster.', line: 'no cluster connected',
+    body: 'The Navigator thinks with the AI connection of the cluster you use. Choose one in Clusters, or switch to This computer. Your agent files are on this computer and still open in Designer.',
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button></>,
   } : gate.kind === 'unreachable' ? {
     title: `Can’t reach ${gate.name ?? 'the selected cluster'}. Check your network or VPN.`, line: `can’t reach ${gate.name ?? 'the cluster'}`,
     body: `The Navigator thinks with the model on the Orka you have selected, so it can’t answer until ${gate.name ?? 'the cluster'} is reachable. Nothing on the cluster has changed. Your agent files are on this computer and still open in Designer.`,

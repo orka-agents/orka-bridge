@@ -109,7 +109,7 @@ export default function OrkaSwitcher({ children, title, place, accessLost = fals
       } catch {
         // A refused selection also clears native's previous one, so a cluster in use is no longer usable.
         confirmed.delete(row.place.key);
-        if (place.kind === 'cluster') onPlace({ kind: 'cluster' });
+        if (place.kind === 'cluster') onPlace({ kind: 'cluster', pending: { name: row.place.context, key: row.place.key } });
       }
     }
     onClusters(row.place);

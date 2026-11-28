@@ -82,7 +82,8 @@ test('failed reload clears account and old contexts, and remains recoverable', a
   await screen.findByRole('alert');
   expect(screen.queryByRole('textbox', { name: 'ServiceAccount name' })).toBeNull();
   expect(screen.queryByRole('option', { name: 'team' })).toBeNull();
-  expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  // The account step had not confirmed access: the place names the cluster still to connect.
+  expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster', pending: { name: 'team', key: undefined, unreachable: undefined } });
   ipc.mockImplementation(() => [fresh]);
   await reloadConfig(user);
   expect(await contextChoice(user, 'corrected')).toBeTruthy();
@@ -120,5 +121,5 @@ test.each([['keeps', 'key-a'], ['drops', null]])('reload %s the place in use as 
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Reloading kubeconfig…' })).toBeNull());
   await act(async () => { await new Promise(done => setTimeout(done, 0)); });
   if (selectedKey) expect(onPlace).not.toHaveBeenCalled();
-  else expect(onPlace).toHaveBeenCalledExactlyOnceWith({ kind: 'cluster' });
+  else expect(onPlace).toHaveBeenCalledExactlyOnceWith({ kind: 'cluster', pending: { name: 'team' } });
 });

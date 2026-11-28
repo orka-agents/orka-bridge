@@ -364,7 +364,7 @@ export default function App() {
   const overviewWorkspaceNote = !setup ? setupLine : upgradeAttention ? upgradeLine : workspaceStopping ? 'Stopping the workspace'
     : workspaceBusy && (!workspaceTransition || setup?.localVm === 'failed') ? 'Getting your workspace ready…'
       : workspaceTransition ? setupLine : undefined;
-  const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
+  const placeName = remote ? place.target?.context_name ?? place.pending?.name ?? 'Choose a cluster'
     : { local: 'This computer', none: 'This computer', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
   const setupDetail = upgradeAttention ? `${upgradeLine}. ${upgradeDetail}` : setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
   const hostDetail = setup?.localVm === 'failed' ? setupDetail : hostWorkspace?.detail ?? detail;
@@ -384,7 +384,8 @@ export default function App() {
     Overview: welcome ? '' : overviewCounts,
     Designer: creatingAgent ? 'No agent open' : agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? exampleReadOnly ? 'Ready after setup' : 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
-    Clusters: remote ? place.target ? `${place.target.context_name}, ${accessLost ? 'needs reconnecting' : 'connected'}` : 'Choose a cluster' : welcome ? 'Start here' : returningWorkspace ? view.line : view.tabLine,
+    Clusters: remote ? place.target ? `${place.target.context_name}, ${accessLost ? 'needs reconnecting' : 'connected'}`
+      : place.pending ? `${place.pending.name}, ${place.pending.unreachable ? 'can’t reach' : 'needs reconnecting'}` : 'Choose a cluster' : welcome ? 'Start here' : returningWorkspace ? view.line : view.tabLine,
   };
   const tabTone = exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.cancellation === 'unconfirmed' ? 'needs-you' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const catalogConnected = run?.modelConnected ?? model === 'connected';
@@ -463,7 +464,8 @@ export default function App() {
   };
   const localLine = welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' && !returningWorkspace || setup?.model === 'locked' && setup?.localVm === 'ready' ? setupDetail : view.footerLine;
   const footer = [
-    remote ? place.target ? accessLost ? 'Needs reconnecting' : `Orka in ${place.target.service_namespace}/${place.target.service_name}` : 'Not connected' : localLine,
+    remote ? place.target ? accessLost ? 'Needs reconnecting' : `Orka in ${place.target.service_namespace}/${place.target.service_name}`
+      : place.pending ? place.pending.unreachable ? 'Can’t reach' : 'Needs reconnecting' : 'Not connected' : localLine,
     exampleState === 'loaded' && (saveState !== 'saved' || saveNotice.id === documentId && saveNotice.edited) ? { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState] : undefined,
   ].filter(Boolean);
   const checkFirstTest = () => {
@@ -519,7 +521,9 @@ export default function App() {
         </div>
         {page === 'Home' && <Home active revision={agentsRevision}
           // On a cluster the Navigator thinks with its chosen AI connection, once it is connected in this run.
-          gate={remote ? !place.target ? { kind: 'unreachable' } : accessLost ? { kind: 'reconnect', name: place.target.context_name, onReconnect: () => { void reconnectPlace(lostKey); } }
+          gate={remote ? !place.target ? place.pending?.unreachable ? { kind: 'unreachable', name: place.pending.name }
+            : place.pending ? { kind: 'reconnect', name: place.pending.name, onReconnect: () => { void reconnectPlace(place.pending?.key); } } : { kind: 'choose' }
+            : accessLost ? { kind: 'reconnect', name: place.target.context_name, onReconnect: () => { void reconnectPlace(lostKey); } }
             : !place.providerId ? { kind: 'noConnection', name: place.target.context_name }
             : { kind: 'ready', place: { name: place.target.context_name, targetId: place.target.id, providerId: place.providerId } }
             : !workspaceReady || workspaceBusy ? { kind: 'waiting' } : setup?.model !== 'available' || aiObserved === false ? { kind: 'noModel' } : { kind: 'ready' }}

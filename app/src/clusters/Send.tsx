@@ -234,7 +234,10 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   const checked = checkingEnabled && check?.key === checkKey ? check : undefined;
   const matched = checked?.value && sameSource(source, checked.value.source) === true;
   const mismatched = checked?.value?.source != null && !matched;
-  const reason = blocked ?? (foreignBusy ? `${foreignBusy.name} is sending tests.` : undefined) ?? (!target || !provider ? 'Choose a cluster and AI connection in Clusters first'
+  const pending = place.kind === 'cluster' && !target ? place.pending : undefined;
+  const reason = blocked ?? (foreignBusy ? `${foreignBusy.name} is sending tests.` : undefined) ?? (!target || !provider ? pending
+    ? pending.unreachable ? `Can’t reach ${pending.name}. Check your network or VPN, then send.` : `${pending.name} needs reconnecting. Reconnect it in Clusters, then send.`
+    : 'Choose a cluster and AI connection in Clusters first'
     : !agentHash || !testsHash ? 'Saved file versions are unavailable. Open your agent again before sending.'
     : !checked ? 'Checking this destination…' : checked.error ?? (mismatched ? 'Your saved files changed. Reload them to check this destination.'
     : !checked.value?.canSend ? 'Resolve the destination checks before sending.' : undefined));

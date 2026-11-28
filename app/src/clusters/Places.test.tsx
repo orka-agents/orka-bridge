@@ -264,7 +264,7 @@ test('a Use recheck clears the frontend target before native replies and Back ca
   await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Manage' }));
   await user.click(await screen.findByRole('button', { name: 'Show details' }));
   await user.click(await screen.findByRole('button', { name: 'Check access again' }));
-  expect(observe).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  expect(observe).toHaveBeenLastCalledWith({ kind: 'cluster', pending: { name: 'team-dev', key: primary.key } });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.queryByText('In use')).toBeNull();
   const calls = observe.mock.calls.length;
