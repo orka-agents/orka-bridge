@@ -22,7 +22,7 @@ use crate::runtime::{
     credential_store::CredentialStore,
     identity::{file_identity, FileIdentity},
     image_cache,
-    journal::InstallationRecord,
+    journal::{InstallationRecord, StatePhase},
     types::RuntimeError,
 };
 use crate::setup::SetupStore;
@@ -246,8 +246,18 @@ pub(crate) struct Settled {
 struct Canonical {
     identity: FileIdentity,
     installation: Option<Uuid>,
+    /// The committed record's phase; none before `Journal::create` wrote its first record.
+    phase: Option<StatePhase>,
     /// The workspace's own owner lock, proving no native worker holds it.
     owner: crate::runtime::journal::OwnerLock,
+}
+impl Canonical {
+    /// A first install that never finished: no guest was ever handed its state disk to format,
+    /// so the workspace holds nothing of the person's. After a restart nothing can finish it,
+    /// because only the process that created the state disk may install its image or format it.
+    fn never_booted(&self) -> bool {
+        self.phase != Some(StatePhase::Consumed)
+    }
 }
 /// Past the durable intent, a failure is an interrupted transaction.
 fn interrupted<E>(transaction: Uuid) -> impl FnOnce(E) -> Failure {
@@ -459,7 +469,7 @@ impl FreshWorkspace {
             RuntimeError::RetainedState => Refusal::Layout,
             _ => Refusal::InUse,
         })?;
-        let installation = match read_small(&dir, "record.json", 32 * 1024)? {
+        let (installation, phase) = match read_small(&dir, "record.json", 32 * 1024)? {
             Some(bytes) => {
                 let record: InstallationRecord =
                     serde_json::from_slice(&bytes).map_err(|_| Refusal::Layout)?;
@@ -471,7 +481,7 @@ impl FreshWorkspace {
                     Ok(m) if m.is_file() => {}
                     _ => return Err(Refusal::Layout),
                 }
-                Some(record.installation_id)
+                (Some(record.installation_id), Some(record.phase))
             }
             None => {
                 // Only what Journal::create writes before its first record: the lock, an empty
@@ -488,7 +498,7 @@ impl FreshWorkspace {
                         _ => return Err(Refusal::Layout),
                     }
                 }
-                None
+                (None, None)
             }
         };
         if self.identity_of(CANONICAL)?.as_ref() != Some(&identity) {
@@ -497,6 +507,7 @@ impl FreshWorkspace {
         Ok(Some(Canonical {
             identity,
             installation,
+            phase,
             owner,
         }))
     }
@@ -632,8 +643,63 @@ impl FreshWorkspace {
         })? {
             return Err(Refusal::UpdateHistory.into());
         }
+        let canonical = self.canonical()?;
+        self.retire(previous.as_ref(), canonical, setup, store, &point)
+    }
+    /// Start a first install that never finished again from scratch, at launch, before anything
+    /// opens the workspace. Only a `local-vm-v1` that no guest ever booted is retired, and only
+    /// while no workspace update has records and no fresh workspace is unfinished; it goes the
+    /// way Start a fresh workspace retires a workspace, so a crash here is finished the same way.
+    /// Anything else is left exactly as found for the ordinary launch to judge.
+    pub(crate) fn discard_unfinished(
+        &mut self,
+        setup: &SetupStore,
+        store: &impl CredentialStore,
+    ) -> Result<Option<Settled>, Failure> {
+        self.discard_unfinished_with(setup, store, |_| Ok(()))
+    }
+    fn discard_unfinished_with(
+        &mut self,
+        setup: &SetupStore,
+        store: &impl CredentialStore,
+        point: impl Fn(&str) -> Result<(), RuntimeError>,
+    ) -> Result<Option<Settled>, Failure> {
+        let previous = self
+            .read_intent()
+            .map_err(|_| Failure::Conflict(vec![INTENT.into()]))?;
+        // An unfinished fresh workspace is recovery's to finish, never this.
+        if previous
+            .as_ref()
+            .is_some_and(|intent| intent.phase != Phase::Settled)
+        {
+            return Ok(None);
+        }
+        // Update records name the workspace in `local-vm-v1`, including a destination that is
+        // still being built; an update store that cannot be read counts as records.
+        if !matches!(
+            crate::workspace_upgrade::has_transaction(&self.data, &self.local),
+            Ok(false)
+        ) {
+            return Ok(None);
+        }
+        let canonical = match self.canonical() {
+            Ok(Some(canonical)) if canonical.never_booted() => canonical,
+            _ => return Ok(None),
+        };
+        self.retire(previous.as_ref(), Some(canonical), setup, store, &point)
+            .map(Some)
+    }
+    /// Retire `canonical` (or record that nothing was in place) and settle.
+    fn retire(
+        &mut self,
+        previous: Option<&Intent>,
+        canonical: Option<Canonical>,
+        setup: &SetupStore,
+        store: &impl CredentialStore,
+        point: &impl Fn(&str) -> Result<(), RuntimeError>,
+    ) -> Result<Settled, Failure> {
         let mut earlier: Vec<Earlier> = Vec::new();
-        if let Some(previous) = &previous {
+        if let Some(previous) = previous {
             for (transaction, directory) in previous.retired() {
                 if let Some(directory) = directory {
                     if entry_present(&self.parent, &discarded(transaction)) {
@@ -649,7 +715,6 @@ impl FreshWorkspace {
             // Too many unconfirmed deletions to keep track of: never lose sight of one.
             return Err(Refusal::Unavailable.into());
         }
-        let canonical = self.canonical()?;
         let transaction = Uuid::new_v4();
         let name = discarded(transaction);
         if entry_present(&self.parent, &name) {
@@ -715,7 +780,7 @@ impl FreshWorkspace {
         intent.phase = Phase::Retired;
         self.persist(&intent).map_err(interrupted(transaction))?;
         point("retired-recorded").map_err(interrupted(transaction))?;
-        self.settle(&mut intent, setup, store, &point)?;
+        self.settle(&mut intent, setup, store, point)?;
         Ok(self.settled(&intent))
     }
     fn settled(&self, intent: &Intent) -> Settled {
@@ -1040,6 +1105,33 @@ pub fn recover_startup(
             found: owner.display_paths(&found),
         })),
         Err(Failure::Refused(_)) => Err(RuntimeError::RetainedState),
+    }
+}
+/// At launch, after `recover_startup` and before the workspace is configured: a first install
+/// that a crash or a forced quit interrupted is started again from scratch rather than left as a
+/// workspace nothing can open. `Ok` says whether its retired directory waits for deletion, which
+/// is the same background cleanup a fresh workspace uses; nothing retired is `Ok(false)`. A
+/// retirement that could not finish is reported as a fresh workspace that did not finish, which
+/// keeps the workspace stopped until Bridge finishes it, as after any interrupted fresh workspace.
+pub fn discard_unfinished_install(
+    data: &Path,
+    local: &Path,
+    setup: &SetupStore,
+    store: &impl CredentialStore,
+) -> Result<bool, FreshStatusDto> {
+    if !matches!(fs::symlink_metadata(local.join(CANONICAL)), Ok(m) if m.is_dir()) {
+        return Ok(false);
+    }
+    let Ok(mut owner) = FreshWorkspace::open(data, local) else {
+        return Ok(false);
+    };
+    match owner.discard_unfinished(setup, store) {
+        Ok(Some(settled)) => Ok(!settled.reclaimable.is_empty()),
+        Ok(None) | Err(Failure::Refused(_)) => Ok(false),
+        Err(Failure::Interrupted(transaction)) => Err(FreshStatusDto::Interrupted { transaction }),
+        Err(Failure::Conflict(found)) => Err(FreshStatusDto::Conflict {
+            found: owner.display_paths(&found),
+        }),
     }
 }
 #[cfg(test)]

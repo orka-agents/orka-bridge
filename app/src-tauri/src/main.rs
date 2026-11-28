@@ -1031,6 +1031,28 @@ fn main() {
                 ),
                 _ => Ok(None),
             };
+            // A first install that never finished starts again from scratch, as a fresh
+            // workspace would: nothing else can open it.
+            let (fresh, discarded) = match (
+                fresh,
+                app.path().app_data_dir(),
+                app.path().app_local_data_dir(),
+            ) {
+                (Ok(status), Ok(data), Ok(local))
+                    if status.as_ref().is_none_or(|status| !status.blocks_launch()) =>
+                {
+                    match bridge_engine::workspace_fresh::discard_unfinished_install(
+                        &data,
+                        &local,
+                        &store,
+                        &bridge_engine::runtime::credential_store::OsCredentialStore,
+                    ) {
+                        Ok(cleaning) => (Ok(status), cleaning),
+                        Err(unfinished) => (Ok(Some(unfinished)), false),
+                    }
+                }
+                (fresh, _, _) => (fresh, false),
+            };
             let recovery = match (app.path().app_data_dir(), app.path().app_local_data_dir()) {
                 (Ok(data), Ok(local)) => {
                     bridge_engine::workspace_upgrade::recover_startup(&data, &local)
@@ -1062,7 +1084,7 @@ fn main() {
                     cleaning
                 }
                 _ => false,
-            };
+            } || discarded;
             vm.set_workspace_replaced(recovery.as_ref().copied().unwrap_or(true));
             if let (Ok(data), Ok(local)) =
                 (app.path().app_data_dir(), app.path().app_local_data_dir())

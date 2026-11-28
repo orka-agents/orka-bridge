@@ -1101,3 +1101,166 @@ fn a_held_directory_handle_refuses_the_rename_and_keeps_the_workspace() {
     assert!(scene.discarded().is_empty());
     admit(&scene.local).unwrap();
 }
+
+/// Rewrites the scene's committed record to the phase an install reached before it stopped.
+/// `consumed` also records the boot that consumed it, as a real first boot does.
+fn record_phase(scene: &Scene, phase: &str) {
+    let path = scene.local.join(CANONICAL).join("record.json");
+    let mut record: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record["phase"] = phase.into();
+    if phase == "consumed" {
+        record["bootNonce"] = Uuid::new_v4().to_string().into();
+    }
+    fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+}
+/// A first install interrupted while it copied the image: the staged generation, no binding.
+fn interrupted_copy(scene: &Scene) {
+    let root = scene.local.join(CANONICAL);
+    fs::remove_dir_all(root.join("image")).unwrap();
+    fs::create_dir_all(root.join("image/.pending-1")).unwrap();
+    fs::write(root.join("image/.pending-1/os.qcow2"), b"partial").unwrap();
+    fs::write(root.join("image-owner.lock"), b"").unwrap();
+}
+fn discard(scene: &Scene, store: &Store) -> Result<bool, FreshStatusDto> {
+    discard_unfinished_install(&scene.data, &scene.local, &scene.setup, store)
+}
+
+#[test]
+fn an_install_that_never_booted_is_started_again_from_scratch_at_launch() {
+    // Every point a first install can stop at once `local-vm-v1` exists: before the first
+    // record, while copying the image, while preparing the state disk, prepared but before the
+    // guest was handed it.
+    for phase in [None, Some("empty"), Some("preparing"), Some("prepared")] {
+        let scene = Scene::new();
+        interrupted_copy(&scene);
+        match phase {
+            Some(phase) => record_phase(&scene, phase),
+            None => {
+                let root = scene.local.join(CANONICAL);
+                fs::remove_dir_all(&root).unwrap();
+                fs::create_dir(&root).unwrap();
+                fs::write(root.join("owner.lock"), b"").unwrap();
+                fs::write(root.join("state.disk"), b"").unwrap();
+            }
+        }
+        let before = scene.intact();
+        let store = Store::default();
+        assert_eq!(discard(&scene, &store), Ok(true), "{phase:?}");
+        // Retired the way a fresh workspace retires one: moved whole, never copied.
+        assert!(!scene.local.join(CANONICAL).exists());
+        let [name] = scene.discarded().try_into().unwrap();
+        assert_eq!(
+            directory_identity(&scene.local.join(&name)),
+            before.identity
+        );
+        assert_eq!(files(&scene.local.join(&name)), before.files);
+        assert_eq!(scene.intent().unwrap().phase, Phase::Settled);
+        scene.assert_kept_outside_workspace();
+        // First install may create the new installation; cleanup deletes only the retired one.
+        admit(&scene.local).unwrap();
+        crate::workspace_upgrade::admit(&scene.data, &scene.local.join(CANONICAL)).unwrap();
+        assert!(scene.owner().clean().unwrap().is_empty());
+        assert!(scene.discarded().is_empty());
+        // Nothing else is retired at the next launch, and nothing is reported then.
+        assert_eq!(discard(&scene, &store), Ok(false));
+        assert_eq!(
+            recover_startup(&scene.data, &scene.local, &scene.setup, &store).unwrap(),
+            None
+        );
+    }
+}
+
+#[test]
+fn a_workspace_a_guest_booted_is_never_discarded_at_launch() {
+    let scene = Scene::new();
+    record_phase(&scene, "consumed");
+    let before = scene.intact();
+    assert_eq!(discard(&scene, &Store::default()), Ok(false));
+    assert_eq!(scene.intact(), before);
+    assert!(scene.intent().is_none());
+    assert!(scene.discarded().is_empty());
+}
+
+#[test]
+fn update_records_or_an_unreadable_update_store_keep_an_unfinished_install_in_place() {
+    for record in [
+        "intent.json",
+        "completed-00000000-0000-4000-8000-000000000001.json",
+    ] {
+        let scene = Scene::new();
+        interrupted_copy(&scene);
+        let before = scene.intact();
+        let store_dir = scene.local.join("workspace-upgrades-v1");
+        fs::create_dir(&store_dir).unwrap();
+        fs::write(store_dir.join(record), b"{\"unreadable\":true}").unwrap();
+        assert_eq!(discard(&scene, &Store::default()), Ok(false), "{record}");
+        assert_eq!(scene.intact(), before);
+        assert!(scene.discarded().is_empty());
+    }
+    // An update store holding only its lock has no records: the install starts again.
+    let scene = Scene::new();
+    interrupted_copy(&scene);
+    let store_dir = scene.local.join("workspace-upgrades-v1");
+    fs::create_dir(&store_dir).unwrap();
+    fs::write(store_dir.join("owner.lock"), b"").unwrap();
+    assert_eq!(discard(&scene, &Store::default()), Ok(true));
+}
+
+#[test]
+fn a_live_worker_or_an_unfinished_fresh_workspace_keeps_the_install_in_place() {
+    let scene = Scene::new();
+    interrupted_copy(&scene);
+    let before = scene.intact();
+    let live = Journal::open(&scene.local.join(CANONICAL)).unwrap();
+    assert_eq!(discard(&scene, &Store::default()), Ok(false));
+    drop(live);
+    assert_eq!(scene.intact(), before);
+    assert!(scene.intent().is_none());
+    // A fresh workspace that stopped after its intent is recovery's to finish, never this.
+    assert!(scene.replace(&Store::default(), Some("intent")).is_err());
+    let intent = scene.intent().unwrap();
+    assert_eq!(intent.phase, Phase::Intent);
+    assert_eq!(discard(&scene, &Store::default()), Ok(false));
+    assert_eq!(scene.intent(), Some(intent));
+    assert_eq!(scene.intact(), before);
+}
+
+#[test]
+fn a_crash_while_discarding_is_finished_like_any_fresh_workspace() {
+    for point in [
+        "intent",
+        "rename",
+        "renamed",
+        "retired-recorded",
+        "ai",
+        "settled",
+    ] {
+        let scene = Scene::new();
+        interrupted_copy(&scene);
+        let before = scene.intact();
+        let stopped =
+            scene
+                .owner()
+                .discard_unfinished_with(&scene.setup, &Store::default(), |at| {
+                    if at == point {
+                        Err(RuntimeError::Closed)
+                    } else {
+                        Ok(())
+                    }
+                });
+        assert!(stopped.is_err(), "{point}");
+        // The next launch finishes or undoes it, and then the install starts from scratch.
+        let store = Store::default();
+        let status = recover_startup(&scene.data, &scene.local, &scene.setup, &store).unwrap();
+        assert!(
+            status.as_ref().is_none_or(|status| !status.blocks_launch()),
+            "{point}: {status:?}"
+        );
+        assert!(matches!(discard(&scene, &store), Ok(_)), "{point}");
+        assert!(!scene.local.join(CANONICAL).exists(), "{point}");
+        admit(&scene.local).unwrap();
+        // Whatever moved is the unfinished install, whole.
+        let [name] = scene.discarded().try_into().unwrap();
+        assert_eq!(files(&scene.local.join(&name)), before.files, "{point}");
+    }
+}
