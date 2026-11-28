@@ -46,7 +46,9 @@ export function runLine(end: Ending, where?: string) {
   }[end];
 }
 // Where the Navigator's tasks run: the selected cluster with its AI connection, or this computer when absent.
-export type TaskPlace = ChatPlace & { name: string };
+// `conversation` is the place's stable identity (context, Orka service, watched namespace, AI connection name): the
+// opaque ids change each time the cluster is connected again in this run, the conversation does not.
+export type TaskPlace = ChatPlace & { name: string; conversation?: string };
 
 function Phases({ outcome, end }: { outcome: TaskOutcome; end: Ending }) {
   const at = end === 'Running' ? Math.max(stepIndex(outcome.phase), 0) : end === 'Succeeded' ? steps.length : outcome.reached;

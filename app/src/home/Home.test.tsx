@@ -359,3 +359,24 @@ test('each place has its own conversation: switching shows that place\'s turns a
   expect(places[cluster.targetId].map(t => t.message)).toEqual(['On the cluster']);
   expect(calls.some(call => call.command === 'navigator_new')).toBe(false);
 });
+
+test('New is final for the place: reconnecting it in this run does not bring cleared turns back', async () => {
+  nav.turns = [turn('Hello', 'An earlier answer.')];
+  const handlers = { onOpenPage: vi.fn(), onOpenAgent: vi.fn(), onAgentCreated: vi.fn(), onThisComputer: vi.fn() };
+  const gate = (targetId: string, providerId: string): NavigatorGate => ({ kind: 'ready', place: { name: 'team-dev', targetId, providerId, conversation: '["team-dev","control","orka","agents","fixture"]' } });
+  const user = userEvent.setup();
+  const view = render(<main aria-labelledby="page-title"><Home active revision={0} gate={gate(cluster.targetId, cluster.providerId)} {...handlers} /></main>);
+  expect(await screen.findByText('An earlier answer.')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'New conversation' }));
+  await waitFor(() => expect(screen.queryByText('An earlier answer.')).toBeNull());
+  // Reconnecting mints new opaque ids for the same place and AI connection; native keeps its turns.
+  view.rerender(<main aria-labelledby="page-title"><Home active revision={0} gate={gate('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a2')} {...handlers} /></main>);
+  await waitFor(() => expect(calls.filter(call => call.command === 'navigator_status').length).toBeGreaterThan(2));
+  expect(screen.queryByText('An earlier answer.')).toBeNull();
+  expect(screen.getByRole('heading', { level: 1, name: 'What do you want done?' })).toBeTruthy();
+});
+
+test('Home says conversations are kept only while Bridge is open', () => {
+  home();
+  expect(screen.getByText('Conversations are kept only while Bridge is open.')).toBeTruthy();
+});

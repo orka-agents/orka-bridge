@@ -525,7 +525,8 @@ export default function App() {
             : place.pending ? { kind: 'reconnect', name: place.pending.name, onReconnect: () => { void reconnectPlace(place.pending?.key); } } : { kind: 'choose' }
             : accessLost ? { kind: 'reconnect', name: place.target.context_name, onReconnect: () => { void reconnectPlace(lostKey); } }
             : !place.providerId ? { kind: 'noConnection', name: place.target.context_name }
-            : { kind: 'ready', place: { name: place.target.context_name, targetId: place.target.id, providerId: place.providerId } }
+            : { kind: 'ready', place: { name: place.target.context_name, targetId: place.target.id, providerId: place.providerId,
+              conversation: JSON.stringify([place.target.context_name, place.target.service_namespace, place.target.service_name, place.target.watched_namespace, place.providers?.find(p => p.id === place.providerId)?.name ?? place.providerId]) } }
             : !workspaceReady || workspaceBusy ? { kind: 'waiting' } : setup?.model !== 'available' || aiObserved === false ? { kind: 'noModel' } : { kind: 'ready' }}
           onOpenPage={next => next === 'Designer' ? openDesigner() : setPage(next)}
           // The task card's results are the agent's Try a task results, so Designer opens on that view.

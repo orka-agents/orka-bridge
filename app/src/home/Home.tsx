@@ -43,7 +43,9 @@ export default function Home(props: Props) {
   const { gate } = props;
   // Each place has its own conversation: switching shows that place's, and never continues another's.
   const placeKey = gate.kind === 'ready' && gate.place ? `${gate.place.targetId}/${gate.place.providerId}` : '';
-  useLayoutEffect(() => { selectConversationPlace(placeKey); }, [placeKey]);
+  // The record of what New cleared follows the place, not this run's connection to it: reconnecting keeps it.
+  const conversationKey = gate.kind === 'ready' && gate.place ? gate.place.conversation ?? placeKey : '';
+  useLayoutEffect(() => { selectConversationPlace(conversationKey); }, [conversationKey]);
   if (gate.kind !== 'ready') return <Gated {...props} gate={gate} />;
   return <Navigator key={placeKey} {...props} />;
 }
@@ -53,6 +55,7 @@ function Hero({ lede = true }: { lede?: boolean }) {
     <div className="art-orca" aria-hidden="true" />
     <h1 id="page-title">What do you want done?</h1>
     {lede && <p className="muted">The Navigator explains Orka and sets things up with you. Nothing is created until you confirm a card.</p>}
+    {lede && <p className="muted">Conversations are kept only while Bridge is open.</p>}
   </div>;
 }
 
