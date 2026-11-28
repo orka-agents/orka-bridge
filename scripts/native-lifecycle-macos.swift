@@ -104,6 +104,21 @@ func pressableAction(_ element: AXUIElement, _ label: String) -> Bool {
 func shownStrings(_ root: AXUIElement) -> [String] {
     nodes(root).flatMap { element in ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String } }
 }
+// One line of copy as drawn: WebKit exposes each inline element as its own static text, so a size kept on one line
+// ("6.4 GB" in a .no-break span, setup/Setup.tsx KeepUnits) splits its sentence into three nodes. Join each element's
+// static-text descendants in reading order (an inline element may also come through as a group around its text).
+func shownLines(_ root: AXUIElement) -> [String] {
+    func parts(_ element: AXUIElement, _ depth: Int) -> [String] {
+        (attribute(element, "AXChildren") as? [AXUIElement] ?? []).flatMap { child -> [String] in
+            if attribute(child, "AXRole") as? String == "AXStaticText" { return [attribute(child, "AXValue") as? String ?? ""] }
+            return depth < 2 && attribute(child, "AXRole") as? String == "AXGroup" ? parts(child, depth + 1) : []
+        }
+    }
+    return nodes(root).compactMap { element in
+        let line = parts(element, 0)
+        return line.count > 1 ? line.joined() : nil
+    }
+}
 func writableTextArea(_ element: AXUIElement) -> Bool {
     var writable = DarwinBoolean(false)
     return attribute(element, "AXRole") as? String == "AXTextArea" && AXUIElementIsAttributeSettable(element, "AXValue" as CFString, &writable) == .success && writable.boolValue
@@ -292,7 +307,7 @@ wait("Computer requirements did not settle") {
 press(find(main, "workspace-inside") { pressable($0, "What's inside") })
 currentStage = "local-size-block"; print("STAGE: \(currentStage)")
 wait("Local size facts did not settle") {
-    let shown = shownStrings(main)
+    let shown = shownStrings(main) + shownLines(main)
     return [#"Needs virtualization(,| and) \d+\.\d GB of memory"#, #"Data disk can grow to \d+\.\d GB"#, #"Bridge checks the download before starting it\."#].allSatisfy { pattern in
         shown.contains { $0.range(of: pattern, options: .regularExpression) != nil }
     } && !shown.contains { $0.hasPrefix("Reading") || $0.contains("Unavailable in this build") }
