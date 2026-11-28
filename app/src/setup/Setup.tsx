@@ -404,7 +404,9 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); }, showLocal() { openLocal(); }, showCluster(item?: Place, selected = false) { chooseCluster(item, selected); } }));
   const titleId = active ? 'page-title' : undefined;
   if (!status && !error || launchPending) return <><h1 id={titleId}>Clusters</h1><p role="status">Checking the workspace…</p></>;
-  if (welcome && status) return <Welcome titleId={titleId} onStart={start} unavailable={localOff} requirements={requirements} />;
+  // Native's fresh-workspace plan also says whether first install would reuse a download already on this computer.
+  const downloaded = status?.workspaceFreshPlan?.image.kind === 'cached';
+  if (welcome && status) return <Welcome titleId={titleId} onStart={start} unavailable={localOff} requirements={requirements} downloaded={downloaded} />;
   const selected = status?.selected === 'localVm';
   const modelRecovery = ['failed', 'resetFailed', 'removalFailed', 'resetting'].includes(modelState);
   // A failed connection keeps the stage's name; the AI card beside the steps says what went wrong.
@@ -457,7 +459,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                 <label htmlFor="workspace-local">On this computer</label>{localOff ? <span className="chip">{unavailableCopy.line}</span> : <span className="chip">Recommended</span>}
                 <div className="workspace-option-detail">
                   {localOff ? <p className="workspace-option-req" id="workspace-local-off">{unavailableCopy.reason}</p>
-                    : <p className="workspace-option-req">{requirements ? setupNeeds(requirements) : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>}
+                    : <p className="workspace-option-req">{requirements ? setupNeeds(requirements, downloaded) : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>}
                   {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated' && <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} onFailed={setPreflightFailed} onCluster={() => { setLocation('cluster'); document.getElementById('workspace-cluster')?.focus(); }} onSetUpLater={onSetUpLater} />}
                   {!localOff && !(location === 'local' && preflightFailed) && <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
                     <div id="workspace-inside" hidden={!inside}>

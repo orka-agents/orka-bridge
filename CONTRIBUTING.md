@@ -46,6 +46,7 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `wsStarting` | First setup, the workspace starting with its progress; Connect the AI checks the GitHub sign-in at once and waits with the account and model | Opens there |
 | `wsReadyNoAi` | A first setup left with the workspace ready and no AI: the setup card keeps What's inside and Start a fresh workspace… | Opens on Clusters; This computer → Connect the AI |
 | `firstDownloadFails` | First run: the workspace download fails partway, then Try again finishes it | Get started → Set up → Continue |
+| `firstCached` | First run on a computer that already has the workspace's download: Welcome and the choice say Already downloaded | Welcome, then Get started → Set up |
 | `firstTestFails` | First run: the first agent's test fails | Get started → Set up → Continue, then Connect the AI |
 | `firstTestStale` | First run: the first test's result is from an earlier edit, so it needs running again | Get started → Set up → Continue, then Connect the AI |
 | `firstTestUnknown` | First run: the first test's result can't be confirmed | Get started → Set up → Continue, then Connect the AI |

@@ -48,6 +48,15 @@ test('Get started remembers the welcome without starting a workspace, including 
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
 
+test('a download already on this computer reads as already downloaded on Welcome and the choice', async () => {
+  native({ ...unselected, workspaceFreshPlan: { image: { kind: 'cached' } } }); const user = userEvent.setup(); render(<App />);
+  expect(await screen.findByText('Already downloaded')).toBeTruthy();
+  expect(screen.queryByText(/Mostly a/)).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Get started' }));
+  await user.click(await screen.findByRole('button', { name: 'Set up' }));
+  expect(await screen.findByText('Already downloaded. Needs virtualization and 6.4 GB of memory.')).toBeTruthy();
+});
+
 test('welcome chrome advances only after Get started, including with denied preference storage', async () => {
   native(); vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError'); });
   const user = userEvent.setup(); render(<App />);

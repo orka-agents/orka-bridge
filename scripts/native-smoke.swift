@@ -944,7 +944,8 @@ for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum",
     try capture("welcome-\(size)-end", "Clusters")
     // A release build names its download; the bare "Mostly a download" means the sizes never arrived.
     // Welcome draws its fallback until the native requirements answer.
-    let sizedLine = { nativeStrings().contains { $0.range(of: #"Mostly a \d+\.\d GB download"#, options: .regularExpression) != nil } }
+    // A profile that already holds the download says so, with the measured start time instead.
+    let sizedLine = { nativeStrings().contains { $0.range(of: #"Mostly a \d+\.\d GB download|Already downloaded, then about \d+ minutes? to start"#, options: .regularExpression) != nil } }
     let sizedDeadline = Date(timeIntervalSinceNow: 10)
     while !sizedLine() && Date() < sizedDeadline { Thread.sleep(forTimeInterval: 0.5) }
     let sized = sizedLine()

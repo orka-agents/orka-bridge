@@ -9,7 +9,7 @@ export function hasSeenWelcome() {
 }
 
 // Someone who already runs Orka picks their cluster on the next screens, beside this computer.
-export default function Welcome({ titleId, onStart, unavailable, requirements }: { titleId?: string; onStart: () => void; unavailable?: boolean; requirements?: WorkspaceRequirements | null }) {
+export default function Welcome({ titleId, onStart, unavailable, requirements, downloaded = false }: { titleId?: string; onStart: () => void; unavailable?: boolean; requirements?: WorkspaceRequirements | null; downloaded?: boolean }) {
   return <section className="welcome-screen">
     <div className="art-orca" aria-hidden="true" />
     <h1 id={titleId}><span>Your agents. Your models.</span> <span>Your keys. Your cluster.</span></h1>
@@ -22,7 +22,7 @@ export default function Welcome({ titleId, onStart, unavailable, requirements }:
     <div className="welcome-actions">
       <Button kind="primary" size="large" type="button" onClick={onStart}>Get started</Button>
       {/* Nothing is downloaded on a build without the local cluster, so there is no download to time. */}
-      {unavailable ? <p className="muted">{unavailableCopy.welcome}</p> : <span className="muted">{setupTime(requirements)}</span>}
+      {unavailable ? <p className="muted">{unavailableCopy.welcome}</p> : <span className="muted">{setupTime(requirements, downloaded)}</span>}
     </div>
   </section>;
 }

@@ -57,6 +57,7 @@ export const scenarios = {
   wsStarting: 'First setup, the workspace starting',
   wsReadyNoAi: 'First setup left with the workspace ready and no AI',
   firstDownloadFails: 'First run: the workspace download fails once',
+  firstCached: 'First run with the workspace download already on this computer',
   firstTestFails: 'First run: the first test fails',
   firstTestStale: 'First run: the first test needs running again',
   firstTestUnknown: 'First run: the first test result is unknown',
@@ -97,7 +98,7 @@ let gh: Gh = (['missing', 'signedOut', 'signedIn'] as const).find(value => value
 const now = () => Date.now() * speed;
 // The first-run scenarios start as a new computer does and differ only where they say.
 const copilotScenario = scenario.startsWith('copilot');
-const firstRun = scenario === 'firstDownloadFails' || scenario === 'firstTestFails' || scenario === 'firstTestStale' || scenario === 'firstTestUnknown' || copilotScenario;
+const firstRun = scenario === 'firstDownloadFails' || scenario === 'firstCached' || scenario === 'firstTestFails' || scenario === 'firstTestStale' || scenario === 'firstTestUnknown' || copilotScenario;
 // noWorkspace…: a build without the local cluster (a Linux build) reports this computer as not integrated.
 const noWorkspace = scenario === 'noWorkspace' || scenario === 'noWorkspaceChosen';
 const fresh = scenario === 'noWorkspace' || scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow' || scenario === 'checkAtStart' || firstRun;
@@ -448,7 +449,7 @@ function clusterReply(command: string, args?: Record<string, unknown>): unknown 
 // Scenarios that open in states the ordinary walk can't reach. Replies come from ./fixtures; a command
 // a scenario doesn't own falls through to the ordinary script in handle().
 const unscripted = Symbol('unscripted');
-const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed', 'clusterReady', 'clusterContexts', 'wsStarting', 'wsReadyNoAi', 'firstDownloadFails', 'firstTestFails', 'firstTestStale', 'firstTestUnknown'].includes(scenario);
+const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed', 'clusterReady', 'clusterContexts', 'wsStarting', 'wsReadyNoAi', 'firstDownloadFails', 'firstCached', 'firstTestFails', 'firstTestStale', 'firstTestUnknown'].includes(scenario);
 const upgradeScenario = scenario === 'wsUpdate' || scenario === 'wsRestore' || scenario === 'wsRecovery';
 const sendScenario = ['sendBlocked', 'sendRunning', 'sendFailed', 'sendPassed', 'sendLocalFailed'].includes(scenario);
 const remoteScenario = sendScenario || scenario === 'clusterDenied' || scenario === 'clusterUnreachable';
@@ -503,8 +504,9 @@ let freshWorkspace: Record<string, unknown> | null = scenario === 'freshInterrup
   : scenario === 'freshConflict' ? { state: 'conflict', found: ['C:\\Users\\you\\AppData\\Local\\ai.orka.bridge\\local-vm-v1', retiredFolder(uuid('fresh-conflict'))] } : null;
 let cleanupRefused = scenario === 'aiStuck' || scenario === 'freshBlocked';
 // Native's plan: whether the action can start, and whether first install reuses the cached download.
-const freshPlan = { ...(scenario === 'freshBlocked' ? { blocked: 'updateHistory' } : {}), image: scenario === 'freshDownload' ? { kind: 'download', bytes: 1_967_572_914 } : { kind: 'cached' } };
-function freshReport() { return { workspaceFreshPlan: freshPlan, ...(freshWorkspace ? { workspaceFresh: freshWorkspace } : {}) }; }
+// A new computer has nothing downloaded yet; elsewhere first install reuses the download already here.
+const freshPlan = () => ({ ...(scenario === 'freshBlocked' ? { blocked: 'updateHistory' } : {}), image: scenario === 'freshDownload' ? { kind: 'download', bytes: 1_967_572_914 } : fresh && !selected && scenario !== 'firstCached' ? { kind: 'download' } : { kind: 'cached' } });
+function freshReport() { return { workspaceFreshPlan: freshPlan(), ...(freshWorkspace ? { workspaceFresh: freshWorkspace } : {}) }; }
 let freshCount = 0;
 async function freshStart() {
   if (freshWorkspace?.state === 'replacing' || startedAt !== null) return { state: 'refused', reason: 'busy', restarted: false };
