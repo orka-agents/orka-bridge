@@ -178,6 +178,8 @@ h1, h2, p { margin: 0; }
 h1 { font: var(--type-title); letter-spacing: -.025em; text-wrap: balance; }
 h2, h3 { font: var(--type-card); letter-spacing: var(--tracking-card); }
 code, .mono { font-family: var(--font-mono); font-size: .92em; font-variant-ligatures: none; }
+/* Names and generated values (a 64-character hash, a 250-character name) wrap inside their line instead of widening it. */
+code { overflow-wrap: anywhere; }
 pre { font-family: var(--font-mono); font-variant-ligatures: none; }
 .reading { font: var(--type-reading); max-width: 70ch; white-space: pre-wrap; overflow-wrap: anywhere; }
 button { font: inherit; color: inherit; cursor: pointer; }

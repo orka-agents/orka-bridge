@@ -150,3 +150,17 @@ test('stages and stale file differences report only known facts', () => {
   expect(changedFiles({ agent: 'b', tests: 'd' }, { agent: 'a', tests: 'c' }, true)).toBe('Agent and test files changed since this run.');
   expect(changedFiles(undefined, undefined, true)).toBe('Your agent has unsaved edits.');
 });
+test('a long unbroken expectation, name or generated value wraps inside its card instead of widening the page', () => {
+  const hash = 'cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918';
+  const { container } = render(<TestResults report={{ verdict: 'passed', cases: [{ ...passed, assertions: [{ id: 'hash', kind: 'contains', expected: hash, verdict: 'passed' }, { id: 'words', kind: 'contains', expected: 'the page says', verdict: 'passed' }] }] }} stale={false} />);
+  const values = [...container.querySelectorAll('.test-expected')];
+  expect(values.map(value => [value.textContent, value.classList.contains('test-expected-token')])).toEqual([[hash, true], ['the page says', false]]);
+  const css = (path: string) => readFileSync(path, 'utf8');
+  // The hash may break anywhere; ordinary words keep word breaks.
+  expect(css('src/components/test-results.css')).toContain('.test-expected-token { word-break: break-all; }');
+  // Grids that hold results and Details rows clamp their one column, so no long child can widen the card.
+  expect(css('src/components/design-system.css')).toMatch(/\.card-details > div \{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
+  expect(css('src/clusters/clusters.css')).toMatch(/\.send-panel \.send-result \{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
+  // Names and generated values in code wrap wherever they appear.
+  expect(css('src/app.css')).toContain('code { overflow-wrap: anywhere; }');
+});

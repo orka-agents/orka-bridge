@@ -153,7 +153,7 @@ select.cluster-mono-field { font: 500 13px/18px var(--font-mono); font-variant-l
 .send-panel .send-local > span { color: var(--color-status-failed); }
 .send-panel .send-reason { margin-top: var(--space-2); color: var(--color-text-secondary); }
 /* The result: a hairline, then the headline, coloured by the result. */
-.send-panel .send-result { display: grid; gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--color-border-strong); }
+.send-panel .send-result { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--color-border-strong); }
 .send-panel .send-result > p { overflow-wrap: anywhere; }
 .send-headline { margin: 0; font: 700 20px/26px var(--font-ui); letter-spacing: -0.02em; overflow-wrap: anywhere; }
 .send-headline-passed { color: var(--color-status-succeeded); }

@@ -29,6 +29,10 @@ export function changedFiles(current: SourceId | undefined, captured: SourceId |
 export function TestProgress({ stage }: { stage: string }) {
   return <div className="test-progress"><span className="test-progress-bar" aria-hidden="true"><span /></span><span role="status">{stage}</span><Elapsed /></div>;
 }
+// A long unbroken expectation (a 64-character hash) may break between any two characters; ordinary words don't.
+export function ExpectedValue({ value }: { value: string }) {
+  return <span className={/\S{24,}/.test(value) ? 'test-expected test-expected-token' : 'test-expected'}>{value}</span>;
+}
 export function testReason(c: Case, vendor?: 'openai' | 'anthropic' | null) {
   if (c.phase === 'NotRun') return 'This test was not submitted.';
   if (c.phase === 'CreditLimited' && vendor) {
@@ -60,7 +64,7 @@ export function TestResults({ report, stale, vendor, collapsed = false }: { repo
         <Details hint="Test expectations and execution">
           <p>Execution: {c.phase}</p>
           {c.verdict === 'cancelled' && <p>Actions already taken are not undone.</p>}
-          <ul>{c.assertions.map(a => <li key={a.id}>{a.kind === 'contains' ? <>Answer includes “{a.expected}”</> : <>Uses <code>{a.expected}</code></>}: {{ passed: 'Met', failed: 'Not met', unknown: 'Unknown' }[a.verdict]}</li>)}</ul>
+          <ul>{c.assertions.map(a => <li key={a.id}>{a.kind === 'contains' ? <>Answer includes “<ExpectedValue value={a.expected} />”</> : <>Uses <code>{a.expected}</code></>}: {{ passed: 'Met', failed: 'Not met', unknown: 'Unknown' }[a.verdict]}</li>)}</ul>
         </Details>
       </div>
     </Disclosure>)}
