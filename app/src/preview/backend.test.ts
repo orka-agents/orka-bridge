@@ -6,7 +6,7 @@ import { sendCall, sendPreflight } from '../clusters/send-api';
 import { readAgents, readFiles, readPlaces } from '../overview/api';
 import { chatCall } from '../designer/chat-api';
 import { agentCall, SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
-import { runCall } from '../designer/run-api';
+import { jobCall, runCall } from '../designer/run-api';
 import { isTestDraft } from '../designer/test-definitions';
 import { checkCopilot, connectKey, connectModel, resetModel } from '../setup/modelState';
 import { readPreflight } from '../setup/preflight-state';
@@ -152,6 +152,28 @@ describe('preview backend replies', () => {
     await preview('scenario=memoryLow');
     expect(await readPreflight(6 * 1024 ** 3)).toMatchObject({ memory: 'insufficient', virtualization: 'ready' });
     expect(await setupStatus()).toMatchObject({ ok: true, status: { selected: null, localVm: 'idle' } });
+  });
+
+  it('opens checkAtStart with a build that checks this computer only when the workspace starts', async () => {
+    await preview('scenario=checkAtStart');
+    expect(await readPreflight(6 * 1024 ** 3)).toBe('atStart');
+    expect(await setupStatus()).toMatchObject({ ok: true, status: { selected: null, localVm: 'idle' } });
+  });
+
+  it('drafts, runs and reviews a saved job under its own id, with native\'s refusals', async () => {
+    const job = '5f0c2a1e-7b3d-4c8e-9a61-2d4f8b0e6c13';
+    await preview('scenario=ready&speed=100');
+    expect(await jobCall('job_run_start', job, 'Tell me the title of example.com')).toEqual({ ok: false, message: 'Connect the AI before running the job.' });
+    await preview('scenario=connected&speed=100');
+    for (const [id, prompt] of [[SAMPLE_DOCUMENT_ID, 'Read it'], [job, ' padded '], [job, ''], [job, 'a\u0007b'], [job, 'x'.repeat(8 * 1024 + 1)]]) {
+      expect(await jobCall('job_run_start', id, prompt)).toEqual({ ok: false, message: 'The job is invalid.' });
+    }
+    expect(await jobCall('job_run_start', job, 'Tell me the title of example.com')).toMatchObject({ ok: true, snapshot: { state: 'running', busy: { name: 'Your job' }, report: null, job: { stage: 'draft', instructions: null, review: null, finishedAt: null } } });
+    await vi.waitFor(async () => expect(await jobCall('agent_run_status', job)).toMatchObject({ ok: true, snapshot: { state: 'complete', report: null, error: null, job: { stage: 'review', tools: ['web_fetch'], used: ['web_fetch'], review: { verdict: 'done' } } } }), { timeout: 3000 });
+    // An agent's run is untouched by the job's.
+    expect(await runCall('agent_run_status')).toMatchObject({ ok: true, snapshot: { state: 'idle' } });
+    await jobCall('job_run_start', job, 'Tell me the title of example.com');
+    expect(await jobCall('agent_run_cancel', job)).toMatchObject({ ok: true, snapshot: { state: 'complete', cancellation: 'cancelled', job: { review: null } } });
   });
 
   it('opens stopped and failed workspaces, and restarts the ones that can restart', async () => {

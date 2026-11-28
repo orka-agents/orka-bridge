@@ -26,6 +26,7 @@ export const scenarios = {
   vmFailed: 'Virtualization turned off',
   clusterReady: 'A cluster connected in this run',
   memoryLow: 'Not enough memory at setup',
+  checkAtStart: 'Computer checks run when the workspace starts',
   wsStopped: 'Workspace stopped',
   wsCouldntStart: "Workspace couldn't start",
   wsForced: 'Workspace forcibly stopped',
@@ -98,7 +99,7 @@ const copilotScenario = scenario.startsWith('copilot');
 const firstRun = scenario === 'firstDownloadFails' || scenario === 'firstTestFails' || scenario === 'firstTestStale' || scenario === 'firstTestUnknown' || copilotScenario;
 // noWorkspace…: a build without the local cluster (a Linux build) reports this computer as not integrated.
 const noWorkspace = scenario === 'noWorkspace' || scenario === 'noWorkspaceChosen';
-const fresh = scenario === 'noWorkspace' || scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow' || firstRun;
+const fresh = scenario === 'noWorkspace' || scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow' || scenario === 'checkAtStart' || firstRun;
 // firstDownloadFails: the first download stops partway with a network failure; Try again then succeeds.
 let downloadFails = scenario === 'firstDownloadFails';
 let selected: 'localVm' | null = fresh ? null : 'localVm';
@@ -182,7 +183,53 @@ type Run = { documentId: string; startedAt: number; attemptId: string | null; co
 let run: Run | null = null;
 let runCount = 0;
 const runModel = 'gpt-5.6-terra';
+// A saved job's run (job_run_start): drafted, run, then reviewed, a few seconds each, under its own id. Native reports
+// the job's result only in `job`; its stage reports grade the drafter's check and the reviewer's format, so they never appear.
+type Job = { startedAt: number; cancelledAt: number | null; count: number };
+const jobs = new Map<string, Job>();
+let jobCount = 0;
+const jobStageEnds = [['draft', 3], ['run', 8], ['review', 11]] as const;
+const jobPrompt = (prompt: unknown) => typeof prompt === 'string' && prompt.length > 0 && prompt === prompt.trim() && new TextEncoder().encode(prompt).length <= 8 * 1024 && [...prompt].every(c => c === '\n' || c === '\t' || !(c.charCodeAt(0) < 32 || c.charCodeAt(0) >= 127 && c.charCodeAt(0) < 160));
+function jobSnapshot(documentId: string, job: Job) {
+  const elapsed = ((job.cancelledAt ?? now()) - job.startedAt) / 1000;
+  const [stage] = jobStageEnds.find(([, end]) => elapsed < end) ?? jobStageEnds[2];
+  const running = job.cancelledAt === null && elapsed < jobStageEnds[2][1];
+  const drafted = stage !== 'draft';
+  const answered = stage === 'review';
+  const reviewed = answered && !running && job.cancelledAt === null;
+  const role = stage === 'draft' ? 'job-drafter' : stage === 'run' ? 'job' : 'job-reviewer';
+  // Native times are Unix milliseconds; the preview clock runs at speed, so convert back to wall time.
+  const wall = (at: number) => Math.round(at / speed);
+  const ended = job.cancelledAt ?? job.startedAt + jobStageEnds[2][1] * 1000;
+  return {
+    documentId, attemptId: null, source: null, modelConnected, model: runModel, vendor: 'openai', pending: null, error: null, report: null,
+    busy: running ? { documentId, name: 'Your job' } : null,
+    state: running ? 'running' : 'complete', stage: running ? 'observe' : 'done', canRun: !running && ready() && modelConnected,
+    ...(running ? { canCancel: true } : job.cancelledAt !== null ? { cancellation: 'cancelled' } : {}),
+    acknowledged: [{ kind: 'Agent', name: `bridge-${role}-${job.count}`, uid: uuid(`${role}-agent${job.count}`) }, { kind: 'Task', name: `bridge-${role}-${job.count}-1`, uid: uuid(`${role}-task${job.count}`) }],
+    job: {
+      stage, instructions: drafted ? 'Fetch the page and reply with its title only.' : null, tools: drafted ? ['web_fetch'] : [],
+      answer: answered ? 'The title is Example Domain.' : null, used: answered ? ['web_fetch'] : [],
+      review: reviewed ? { verdict: 'done', summary: 'It gives the page’s title.', gaps: [] } : null,
+      startedAt: wall(job.startedAt), finishedAt: running ? null : wall(ended),
+    },
+  };
+}
+function startJob(args?: Record<string, unknown>) {
+  // The same refusals as native: the AI first, then a job's id never names an agent.
+  if (!(ready() && modelConnected)) throw 'Connect the AI before running the job.';
+  const id = typeof args?.id === 'string' ? args.id : '';
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) || /^[0-]+$/.test(id) || docs.has(id) || id === SAMPLE_DOCUMENT_ID || id === NAVIGATOR_ID || !jobPrompt(args?.prompt)) throw 'The job is invalid.';
+  const running = jobs.get(id);
+  if (running && jobSnapshot(id, running).state === 'running') return jobSnapshot(id, running);
+  const job = { startedAt: now(), cancelledAt: null, count: ++jobCount };
+  jobs.set(id, job);
+  return jobSnapshot(id, job);
+}
+
 function runSnapshot(documentId: string) {
+  const job = jobs.get(documentId);
+  if (job) return jobSnapshot(documentId, job);
   const doc = docs.get(documentId);
   const canRun = ready() && modelConnected;
   const base = { documentId, busy: null, modelConnected, source: doc ? source(doc) : null, pending: null, error: null };
@@ -573,6 +620,8 @@ async function scenarioReply(command: string, args?: Record<string, unknown>): P
   }
   switch (command) {
     case 'setup_preflight':
+      // checkAtStart: as release builds, which check virtualization and memory only when the workspace starts.
+      if (scenario === 'checkAtStart') return null;
       if (scenario !== 'memoryLow') break;
       return { platform: 'windows', virtualization: 'ready', memory: 'insufficient', installedMemoryBytes: 4 * GiB, requiredMemoryBytes: 6 * GiB };
     case 'setup_status':
@@ -800,9 +849,12 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
     case 'agent_run_cancel': {
       // Stop ends a running test; a finished one is left as it was.
       const id = documentId(args);
+      const job = jobs.get(id);
+      if (job && jobSnapshot(id, job).state === 'running') job.cancelledAt = now();
       if (run?.documentId === id && runSnapshot(id).state === 'running') run.cancelledAt = now();
       return runSnapshot(id);
     }
+    case 'job_run_start': return startJob(args);
     case 'agent_run_check_cancellation': return runSnapshot(documentId(args));
     case 'agent_chat_status': case 'agent_chat_reconnect': return chatSnapshot(documentId(args), placeOf(args));
     case 'agent_chat_new': chatNew(documentId(args), args); return chatSnapshot(documentId(args), placeOf(args));
