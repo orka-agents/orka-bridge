@@ -240,6 +240,18 @@ impl Inventory {
             }
         }
     }
+    /// Drops the retained access of every place whose binding `keep` rejects.
+    pub(crate) fn retain_access(&self, keep: impl Fn(&TargetBinding) -> bool) {
+        let mut state = self.state.lock().unwrap();
+        let generation = state.next_generation();
+        for entry in state.entries.values_mut() {
+            if entry.access.as_ref().is_some_and(|a| !keep(a.binding())) {
+                entry.generation = generation;
+                entry.access = None;
+                entry.view.stale = true;
+            }
+        }
+    }
     pub(crate) fn snapshot(&self) -> Vec<Place> {
         self.state
             .lock()

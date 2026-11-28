@@ -271,22 +271,51 @@ impl ClusterSession {
             .contexts()
             .map_err(|_| UNKNOWN_CONFIGURATION)
     }
-    /// Rereads configuration offline, queued behind any discovery or Use. Old IDs and
-    /// access are invalid even if the read fails; a running Send keeps its frozen access.
+    /// Rereads configuration offline, queued behind any discovery or Use. A context whose own
+    /// kubeconfig entry is unchanged keeps its IDs and confirmed access; every other ID and
+    /// access is invalid, as all are if the read fails. A running Send keeps its frozen access.
     pub async fn reload(&self) -> Result<Vec<ContextView>, ClusterFailure> {
         let mut session = self.0.lock().await;
-        *session = Session::default();
-        self.6.invalidate(None);
-        *self.4.lock().unwrap() = None;
+        self.reread(&mut session).await?;
         session
-            .client(self)
-            .await?
+            .client
+            .as_ref()
+            .ok_or(UNKNOWN_CONFIGURATION)?
             .contexts()
             .map_err(|_| UNKNOWN_CONFIGURATION)
     }
+    async fn reread(&self, session: &mut Session) -> Result<(), ClusterFailure> {
+        let old = session.client.take();
+        let read = session.client(self).await;
+        let client = match read {
+            Ok(client) => client,
+            Err(failure) => {
+                self.6.invalidate(None);
+                *self.4.lock().unwrap() = None;
+                return Err(failure);
+            }
+        };
+        match &old {
+            Some(old) => client.adopt_unchanged(old),
+            None => {
+                self.6.invalidate(None);
+                *self.4.lock().unwrap() = None;
+                return Ok(());
+            }
+        }
+        self.6.retain_access(|binding| client.keeps(binding));
+        let mut selected = self.4.lock().unwrap();
+        if selected
+            .as_ref()
+            .is_some_and(|(_, access)| !client.keeps(access.binding()))
+        {
+            *selected = None;
+        }
+        Ok(())
+    }
+    /// Browsing another context never retires the access already in use.
     pub async fn discover(&self, context_id: &str) -> Result<Vec<TargetView>, ClusterFailure> {
         let mut session = self.0.lock().await;
-        *self.4.lock().unwrap() = None;
         let client = session.client(self).await?;
         let context = client
             .contexts()
@@ -315,9 +344,10 @@ impl ClusterSession {
     pub async fn reconnect(&self, key: &str) -> Result<TargetView, ClusterFailure> {
         let mut session = self.0.lock().await;
         let saved = self.6.get(key).ok_or(UNKNOWN_CONFIGURATION)?;
-        *self.4.lock().unwrap() = None;
-        *session = Session::default();
-        let client = session.client(self).await?;
+        // Rechecking a remembered place rereads kubeconfig, keeping the place in use unless
+        // its own context changed; only Use replaces it.
+        self.reread(&mut session).await?;
+        let client = session.client.as_mut().ok_or(UNKNOWN_CONFIGURATION)?;
         let contexts: Vec<_> = client
             .contexts()
             .map_err(|_| UNKNOWN_CONFIGURATION)?
@@ -432,6 +462,78 @@ impl ClusterSession {
             }
             Err(outcome) => outcome.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod browsing_tests {
+    use super::*;
+
+    fn kubeconfig(server_a: &str) -> Kubeconfig {
+        Kubeconfig::from_yaml(&format!(
+            "apiVersion: v1\nkind: Config\ncurrent-context: a\nclusters:\n- name: a\n  cluster:\n    server: {server_a}\n- name: b\n  cluster:\n    server: http://127.0.0.1:2\nusers:\n- name: u\n  user:\n    token: fixture\ncontexts:\n- name: a\n  context:\n    cluster: a\n    user: u\n- name: b\n  context:\n    cluster: b\n    user: u\n"
+        ))
+        .unwrap()
+    }
+    fn binding(context: &ContextView) -> TargetBinding {
+        TargetBinding {
+            cluster_identity: "a".repeat(64),
+            context_id: context.id,
+            context_name: context.name.clone(),
+            server_address: "http://127.0.0.1:1/".into(),
+            service_name: "orka".into(),
+            service_namespace: "control".into(),
+            service_uid: "service".into(),
+            deployment_name: "controller".into(),
+            deployment_namespace: "control".into(),
+            deployment_uid: "deployment".into(),
+            watched_namespace: "agents".into(),
+            image: "orka:fixture".into(),
+            api_port: 8080,
+        }
+    }
+
+    #[tokio::test]
+    async fn browsing_and_reloading_keep_the_place_in_use_until_its_context_changes() {
+        let current = Arc::new(std::sync::Mutex::new(kubeconfig("http://127.0.0.1:1")));
+        let reader: KubeconfigReader = {
+            let current = current.clone();
+            Arc::new(move || Ok(current.lock().unwrap().clone()))
+        };
+        let client = ClusterClient::new(kubeconfig("http://127.0.0.1:1"), Arc::new(PodOrkaRead));
+        let owner = ClusterSession::with_reader(client, reader);
+        let contexts = owner.contexts().await.unwrap();
+        let a = contexts.iter().find(|c| c.name == "a").unwrap().clone();
+        let b = contexts.iter().find(|c| c.name == "b").unwrap().clone();
+        let target = TargetId(Uuid::new_v4());
+        let access = Arc::new(RemoteAccess::fixture(binding(&a), Arc::new(PodOrkaRead)));
+        owner
+            .0
+            .lock()
+            .await
+            .client
+            .as_mut()
+            .unwrap()
+            .targets
+            .insert(target, binding(&a));
+        owner.6.remember(access.clone());
+        *owner.4.lock().unwrap() = Some((target, access));
+        let key = crate::overview_places::Place::new(binding(&a)).key;
+
+        // Discovering another context (here unreachable) only browses.
+        let _ = owner.discover(&b.id.0.to_string()).await;
+        assert_eq!(owner.places().selected_key.as_deref(), Some(key.as_str()));
+        // An unchanged reload keeps ids, discovered targets and the confirmed access.
+        let reloaded = owner.reload().await.unwrap();
+        assert!(reloaded.iter().any(|c| c.id == a.id && c.name == "a"));
+        assert_eq!(owner.places().selected_key.as_deref(), Some(key.as_str()));
+        assert!(owner.send_access(&target.0.to_string()).0.is_some());
+        // Changing that context's own entry retires its access and ids.
+        *current.lock().unwrap() = kubeconfig("http://127.0.0.1:3");
+        let reloaded = owner.reload().await.unwrap();
+        assert!(reloaded.iter().all(|c| c.id != a.id));
+        assert!(owner.places().selected_key.is_none());
+        assert!(owner.send_access(&target.0.to_string()).0.is_none());
     }
 }
 

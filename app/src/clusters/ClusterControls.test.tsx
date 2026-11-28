@@ -43,7 +43,7 @@ test('keyboard context picker searches native metadata without selecting or disc
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'kubectl context' }));
   expect(ipc.mock.calls).toEqual([['cluster_contexts', {}], ['cluster_discover', { contextId: context.id }]]);
-  expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  expect(onPlace).not.toHaveBeenCalled();
   expect(screen.getByRole('button', { name: 'kubectl context', description: context.name })).toBeTruthy();
   expect(screen.queryByText('Access confirmed')).toBeNull();
 });

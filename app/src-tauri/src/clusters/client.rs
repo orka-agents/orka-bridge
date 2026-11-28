@@ -44,7 +44,7 @@ enum Identity {
 pub struct ClusterClient {
     kubeconfig: Kubeconfig,
     contexts: Vec<ContextView>,
-    targets: HashMap<TargetId, TargetBinding>,
+    pub(super) targets: HashMap<TargetId, TargetBinding>,
     orka: Arc<dyn OrkaRead>,
     exec: ExecOwner,
 }
@@ -121,6 +121,30 @@ impl ClusterClient {
     }
     pub fn contexts(&self) -> Result<Vec<ContextView>, ClusterError> {
         Ok(self.contexts.clone())
+    }
+    /// A reread kubeconfig keeps the ids and discovered installations of every context whose
+    /// own entry (context, cluster and user) is unchanged, so browsing never retires them.
+    pub(super) fn adopt_unchanged(&mut self, old: &ClusterClient) {
+        for context in &mut self.contexts {
+            let Some(previous) = old.contexts.iter().find(|c| c.name == context.name) else {
+                continue;
+            };
+            if !same_entry(&old.kubeconfig, &self.kubeconfig, &context.name) {
+                continue;
+            }
+            context.id = previous.id;
+            for (id, binding) in &old.targets {
+                if binding.context_id == previous.id {
+                    self.targets.insert(*id, binding.clone());
+                }
+            }
+        }
+    }
+    /// Whether this configuration still holds the exact context a binding was discovered with.
+    pub(super) fn keeps(&self, binding: &TargetBinding) -> bool {
+        self.contexts
+            .iter()
+            .any(|c| c.id == binding.context_id && c.name == binding.context_name)
     }
     pub async fn resolve_creator(
         &self,
@@ -354,6 +378,26 @@ impl ClusterClient {
             return Err(Providers.fail(CheckResult::NoProviders));
         }
         Ok(access)
+    }
+}
+#[cfg(test)]
+impl RemoteAccess {
+    /// Confirmed access for native tests; it reaches no server until a test sends through it.
+    pub(crate) fn fixture(binding: TargetBinding, orka: Arc<dyn OrkaRead>) -> Self {
+        Self {
+            creator: Client::try_from(kube::Config::new("http://127.0.0.1:1".parse().unwrap()))
+                .unwrap(),
+            bearer: "fixture-bearer".into(),
+            creator_bearer: "fixture-creator".into(),
+            expiry: None,
+            binding,
+            orka,
+            providers: vec![ProviderView {
+                id: ProviderId(Uuid::new_v4()),
+                name: "fixture".into(),
+                ready: true,
+            }],
+        }
     }
 }
 impl RemoteAccess {
@@ -884,6 +928,25 @@ async fn permissions(client: Client, namespace: &str) -> Result<(), AccessOutcom
         }
     }
     Ok(())
+}
+/// One context's whole kubeconfig entry, compared in memory only and never exported.
+fn context_entry(config: &Kubeconfig, name: &str) -> Option<Value> {
+    fn one<T>(mut items: impl Iterator<Item = T>) -> Option<T> {
+        let item = items.next()?;
+        items.next().is_none().then_some(item)
+    }
+    let context = one(config.contexts.iter().filter(|c| c.name == name))?
+        .context
+        .as_ref()?;
+    let cluster = one(config.clusters.iter().filter(|c| c.name == context.cluster))?;
+    let user = match &context.user {
+        Some(user) => Some(one(config.auth_infos.iter().filter(|a| &a.name == user))?),
+        None => None,
+    };
+    serde_json::to_value((context, cluster, user)).ok()
+}
+fn same_entry(old: &Kubeconfig, new: &Kubeconfig, name: &str) -> bool {
+    matches!((context_entry(old, name), context_entry(new, name)), (Some(a), Some(b)) if a == b)
 }
 fn dns_label(s: &str) -> bool {
     s.len() <= 63 && dns_part(s)

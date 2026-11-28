@@ -54,9 +54,10 @@ test('added cluster names the page and keeps only Done and Open outside details'
   await user.click(screen.getByRole('button', { name: 'Change context' }));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'kubectl context' })));
   await chooseContext(user, context.name);
-  // Another context is a cluster not yet in use: the page is Add a cluster again until Use this cluster succeeds.
+  // Another context is a cluster not yet in use: the page is Add a cluster again until Use this cluster succeeds,
+  // while the place already in use stays in use.
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Add a cluster');
-  expect(document.querySelector('.host-chip .chip')).toBeNull();
+  expect(document.querySelector('.host-chip .chip')?.textContent).toBe('In use');
 });
 
 test.each([false, true])('Keep cluster restores visible focus even if details closed: %s', async close => {

@@ -137,13 +137,14 @@ test('Add stays blank while remembered Connect resolves a fresh target without c
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_discover');
   await chooseContext(user, context.name);
   await screen.findByText('Cluster found');
-  expect(observe).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  // Browsing a context never replaces the place in use.
+  expect(observe).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Use' }));
-  await screen.findByRole('button', { name: 'Use this cluster' });
+  // The place in use is still in use, so its row manages it rather than connecting it again.
+  await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Manage' }));
+  expect(await screen.findByText('Access confirmed')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'kubectl context' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Change context' })).toBeTruthy();
-  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_reconnect')).toEqual([['cluster_reconnect', { key: primary.key }]]);
+  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_reconnect');
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_discover')).toHaveLength(1);
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
 });
@@ -496,12 +497,12 @@ test('a remembered Manage entry remains removable when its passive metadata read
   expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy();
 });
 
-test('remembered reconnect revokes the old frontend target before native replies and Back fences its late result', async () => {
+test('checking another remembered cluster keeps the place in use and Back fences its late result', async () => {
   const { ipc } = native(); const old = ipc.getMockImplementation()!; const pending = deferred<unknown>();
   mockIPC(command => command === 'cluster_reconnect' ? pending.promise : old(command));
   const observe = vi.fn(); const user = userEvent.setup(); render(<Host initial={connected} observe={observe} />);
   await user.click(within(await screen.findByRole('region', { name: 'team-other' })).getByRole('button', { name: 'Check' }));
-  expect(observe).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  expect(observe).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await act(async () => pending.resolve(target));
   expect(screen.getByRole('heading', { name: 'Clusters' })).toBeTruthy();

@@ -140,8 +140,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   async function reconnect(key: string) {
     const request = ++epoch.current; setBusy(true); setError(undefined);
     initialLoaded.current = false; setChoices([]); setFoundContexts(new Set());
-    // Native reconnect retires the prior session before resolving fresh handles.
-    onPlace({ kind: 'cluster' });
+    // Rechecking a remembered place keeps the place in use: only Use, Remove or a changed context replaces it.
     try {
       const value = await reconnectCluster(key);
       if (request !== epoch.current) return;
@@ -168,8 +167,15 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     reloadActive.current = true; initialLoaded.current = false; admitted.current = false; const request = ++epoch.current;
     setChangingContext(true); setReloading(true); setBusy(true); setChoices([]); setFoundContexts(new Set()); setContextId(''); setTargets(undefined); setTargetId('');
     setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
-    onPlace({ kind: 'cluster' });
-    try { const value = await reloadContexts(); if (request === epoch.current) { setChoices(value); initialLoaded.current = true; } }
+    try {
+      const value = await reloadContexts();
+      if (request === epoch.current) { setChoices(value); initialLoaded.current = true; }
+      // Reloading keeps the place in use unless its own context changed in kubeconfig.
+      if (selection?.kind === 'cluster' && selection.target) {
+        const snapshot = await clusterPlaces();
+        if (snapshot && snapshot.selectedKey === null) onPlace({ kind: 'cluster' });
+      }
+    }
     catch (error) { if (request === epoch.current) setError({ failure: failedCheck(error, 'configuration'), operation: 'Reload kubeconfig' }); }
     finally { if (request === epoch.current) { reloadActive.current = false; setReloading(false); setBusy(false); } }
   }
@@ -183,8 +189,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     const request = ++epoch.current;
     setContextId(id); setTargets(undefined); setTargetId(''); setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
     setRetained(undefined); setSummary(undefined); setConfirmRemoval(false); setRemoveError(false);
-    // Discovery revokes remote handles, but does not replace a selected local workspace.
-    if (selection?.kind !== 'thisComputer') onPlace({ kind: 'cluster' });
+    // Browsing a context never replaces the place in use; only Use does.
     if (!id) { setBusy(false); return; }
     setBusy(true);
     try {

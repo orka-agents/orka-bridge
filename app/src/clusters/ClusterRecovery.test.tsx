@@ -36,14 +36,15 @@ test.each(['empty', 'error'])('reload recovers after %s initial config without r
   expect(await contextChoice(user, 'corrected')).toBeTruthy();
   expect(ipc.mock.calls.map(([command]) => command)).toEqual(['cluster_contexts', 'cluster_reload']);
 });
-test('reload clears all confirmed selection and requires explicit Use again', async () => {
+test('reload clears the card and requires explicit Use again, without dropping the place in use', async () => {
   const { user, onPlace, ipc } = setup(); await select(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   await screen.findByRole('combobox', { name: 'AI connection' });
   expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster', target, providers: [provider], providerId: provider.id });
+  const calls = onPlace.mock.calls.length;
   await reloadConfig(user);
   await contextChoice(user, 'corrected');
-  expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  expect(onPlace).toHaveBeenCalledTimes(calls);
   expect(screen.getByRole('button', { name: 'kubectl context' }).textContent).toContain('Choose a context');
   expect(screen.queryByRole('combobox', { name: 'AI connection' })).toBeNull();
   expect(screen.queryByText('Cluster found')).toBeNull();
@@ -64,7 +65,8 @@ test.each(['cluster_contexts', 'cluster_discover', 'cluster_use'])('reload ignor
   await act(async () => old.resolve(command === 'cluster_contexts' ? [context] : command === 'cluster_discover' ? [target] : connected));
   expect(screen.queryByText('Access confirmed')).toBeNull();
   expect(screen.queryByText('Cluster found')).toBeNull();
-  expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  // A late reply never publishes a target; reloading itself never replaces the place in use.
+  expect(onPlace.mock.calls.every(([place]) => !place.target)).toBe(true);
   await act(async () => reload.resolve([fresh]));
   expect(await contextChoice(user, 'corrected')).toBeTruthy();
   expect(screen.queryByRole('option', { name: 'team' })).toBeNull();
@@ -104,4 +106,19 @@ test('first failed check has one cause/action, safe copied labels and visible cl
   await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
   expect(await screen.findByText(/share the visible error message/i)).toBeTruthy();
   expect(document.body.textContent).not.toContain('SECRET');
+});
+
+test.each([['keeps', 'key-a'], ['drops', null]])('reload %s the place in use as native reports its context', async (_, selectedKey) => {
+  vi.stubGlobal('isTauri', true);
+  const place = { key: 'key-a', context: 'team', service: 'control/orka', namespace: 'agents', stale: false, observedAt: 1, checkedAt: 1, agents: [] };
+  mockIPC(command => command === 'cluster_contexts' || command === 'cluster_reload' ? [context]
+    : command === 'cluster_places' ? { places: [place], selectedKey, persistenceState: 'complete' } : Promise.reject('Unsupported'));
+  const onPlace = vi.fn(); const user = userEvent.setup();
+  const selection = { kind: 'cluster' as const, target, providers: [provider], providerId: provider.id };
+  render(<ClusterCard selection={selection} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  await reloadConfig(user);
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Reloading kubeconfig…' })).toBeNull());
+  await act(async () => { await new Promise(done => setTimeout(done, 0)); });
+  if (selectedKey) expect(onPlace).not.toHaveBeenCalled();
+  else expect(onPlace).toHaveBeenCalledExactlyOnceWith({ kind: 'cluster' });
 });
