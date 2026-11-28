@@ -1256,7 +1256,7 @@ fn a_crash_while_discarding_is_finished_like_any_fresh_workspace() {
             status.as_ref().is_none_or(|status| !status.blocks_launch()),
             "{point}: {status:?}"
         );
-        assert!(matches!(discard(&scene, &store), Ok(_)), "{point}");
+        assert!(discard(&scene, &store).is_ok(), "{point}");
         assert!(!scene.local.join(CANONICAL).exists(), "{point}");
         admit(&scene.local).unwrap();
         // Whatever moved is the unfinished install, whole.
