@@ -197,6 +197,7 @@ test.each<[NavigatorGate, string, string]>([
   [{ kind: 'noConnection', name: 'team-dev' }, 'Choose an AI connection for team-dev.', 'Navigator · no AI connection chosen'],
   [{ kind: 'waiting' }, 'Waiting for the workspace to start.', 'Navigator · waiting for the workspace'],
   [{ kind: 'reconnect', name: 'team-dev', onReconnect: () => {} }, 'team-dev needs reconnecting.', 'Navigator · team-dev needs reconnecting'],
+  [{ kind: 'reconnect', name: 'team-dev', onReconnect: () => {}, first: true }, 'team-dev isn’t connected yet.', 'Navigator · team-dev not connected'],
 ])('when it cannot answer (%o) the message box is disabled and a card says why', (gate, title, line) => {
   home(gate);
   expect(screen.getByRole('main', { name: 'What do you want done?' })).toBeTruthy();

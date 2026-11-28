@@ -253,7 +253,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   const chatPlace = clusterName && targetId && providerId ? { name: clusterName, targetId, providerId } : undefined;
   const pending = place.kind === 'cluster' ? place.pending : undefined;
   const remoteBlock = !remote ? undefined : !targetId ? pending ? pending.unreachable ? `Can’t reach ${pending.name}. Check your network or VPN, then try a task on it.`
-      : `${pending.name} needs reconnecting. Reconnect it in Clusters to try a task on it.` : 'Connect this cluster in Clusters to try a task on it.'
+      : pending.key ? `${pending.name} needs reconnecting. Reconnect it in Clusters to try a task on it.` : `Finish connecting ${pending.name} in Clusters to try a task on it.` : 'Connect this cluster in Clusters to try a task on it.'
     : accessLost ? `${clusterName} needs reconnecting. Reconnect it in Clusters to try a task on it.`
     : !providerId ? `Choose an AI connection for ${clusterName} in Clusters to try a task on it.` : undefined;
   const chatBlocked = !remote && !workspaceReady ? 'Waiting for the workspace to start.' : instructionsMissing ? 'Write instructions in Agent view before trying a task.' : remoteBlock ? remoteBlock

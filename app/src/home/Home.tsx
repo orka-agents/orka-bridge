@@ -18,7 +18,7 @@ import './home.css';
 // while Bridge is open, and a token that can no longer be renewed stops working).
 // `choose`: a cluster is selected as the place, but none is connected.
 export type NavigatorGate = { kind: 'ready'; place?: TaskPlace } | { kind: 'waiting' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'noConnection'; name: string }
-  | { kind: 'reconnect'; name: string; onReconnect: () => void } | { kind: 'choose' };
+  | { kind: 'reconnect'; name: string; onReconnect: () => void; first?: boolean } | { kind: 'choose' };
 export type HomePage = 'Overview' | 'Designer' | 'Clusters';
 type Props = {
   active: boolean; revision: number; gate: NavigatorGate;
@@ -69,6 +69,10 @@ function Gated({ gate, onOpenPage, onThisComputer, onManageClusters }: Props & {
     title: 'Waiting for the workspace to start.', line: 'waiting for the workspace',
     body: 'The Navigator thinks with the model in the workspace on this computer, so it can answer once the workspace is ready. Overview, Designer and Clusters still work.',
     actions: <Button type="button" kind="secondary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>,
+  } : gate.kind === 'reconnect' && gate.first ? {
+    title: `${gate.name} isn’t connected yet.`, line: `${gate.name} not connected`,
+    body: `The Navigator thinks with the AI connection on ${gate.name}. Finish connecting it in Clusters to continue. Nothing on ${gate.name} has changed.`,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button></>,
   } : gate.kind === 'reconnect' ? {
     title: `${gate.name} needs reconnecting.`, line: `${gate.name} needs reconnecting`,
     body: `The Navigator thinks with the AI connection on ${gate.name}. Bridge keeps cluster access only while it is open, so confirm it again to continue. Nothing on ${gate.name} has changed.`,

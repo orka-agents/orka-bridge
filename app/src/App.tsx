@@ -385,7 +385,7 @@ export default function App() {
     Designer: creatingAgent ? 'No agent open' : agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? exampleReadOnly ? 'Ready after setup' : 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: remote ? place.target ? `${place.target.context_name}, ${accessLost ? 'needs reconnecting' : 'connected'}`
-      : place.pending ? `${place.pending.name}, ${place.pending.unreachable ? 'can’t reach' : 'needs reconnecting'}` : 'Choose a cluster' : welcome ? 'Start here' : returningWorkspace ? view.line : view.tabLine,
+      : place.pending ? `${place.pending.name}, ${place.pending.unreachable ? 'can’t reach' : place.pending.key ? 'needs reconnecting' : 'not connected'}` : 'Choose a cluster' : welcome ? 'Start here' : returningWorkspace ? view.line : view.tabLine,
   };
   const tabTone = exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.cancellation === 'unconfirmed' ? 'needs-you' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const catalogConnected = run?.modelConnected ?? model === 'connected';
@@ -465,7 +465,7 @@ export default function App() {
   const localLine = welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' && !returningWorkspace || setup?.model === 'locked' && setup?.localVm === 'ready' ? setupDetail : view.footerLine;
   const footer = [
     remote ? place.target ? accessLost ? 'Needs reconnecting' : `Orka in ${place.target.service_namespace}/${place.target.service_name}`
-      : place.pending ? place.pending.unreachable ? 'Can’t reach' : 'Needs reconnecting' : 'Not connected' : localLine,
+      : place.pending?.unreachable ? 'Can’t reach' : place.pending?.key ? 'Needs reconnecting' : 'Not connected' : localLine,
     exampleState === 'loaded' && (saveState !== 'saved' || saveNotice.id === documentId && saveNotice.edited) ? { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState] : undefined,
   ].filter(Boolean);
   const checkFirstTest = () => {
@@ -522,7 +522,7 @@ export default function App() {
         {page === 'Home' && <Home active revision={agentsRevision}
           // On a cluster the Navigator thinks with its chosen AI connection, once it is connected in this run.
           gate={remote ? !place.target ? place.pending?.unreachable ? { kind: 'unreachable', name: place.pending.name }
-            : place.pending ? { kind: 'reconnect', name: place.pending.name, onReconnect: () => { void reconnectPlace(place.pending?.key); } } : { kind: 'choose' }
+            : place.pending ? { kind: 'reconnect', name: place.pending.name, first: !place.pending.key, onReconnect: () => { void reconnectPlace(place.pending?.key); } } : { kind: 'choose' }
             : accessLost ? { kind: 'reconnect', name: place.target.context_name, onReconnect: () => { void reconnectPlace(lostKey); } }
             : !place.providerId ? { kind: 'noConnection', name: place.target.context_name }
             : { kind: 'ready', place: { name: place.target.context_name, targetId: place.target.id, providerId: place.providerId,
