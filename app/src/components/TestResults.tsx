@@ -54,7 +54,8 @@ export function TestResults({ report, stale, vendor, collapsed = false }: { repo
   if (!report) return null;
   const order = { failed: 0, unknown: 1, passed: 2, cancelled: 3 };
   return <div className={stale ? 'test-results result-stale' : 'test-results'}>
-    {stale && <p>Earlier result</p>}
+    {/* A collapsed card's headline already says it is an earlier result. */}
+    {stale && !collapsed && <p>Earlier result</p>}
     {[...report.cases].sort((a, b) => order[a.verdict] - order[b.verdict]).map(c => <Disclosure className="test-result" data-result-id={c.id} key={`${c.id}:${c.verdict}:${stale}`} defaultOpen={!collapsed && c.verdict !== 'passed'} label={<><span className="test-name"><code>{c.id}</code>{validTestTitle(c.title) && <span>{c.title}</span>}</span><StatusPill state={stale ? 'stale' : c.verdict === 'cancelled' ? 'not-started' : c.verdict === 'unknown' ? 'needs-you' : c.verdict}>{stale ? 'Earlier result' : c.phase === 'NotRun' ? 'Not run' : words[c.verdict]}</StatusPill></>}>
       <div className="test-answer">
         <h5 className="section-label">Question</h5><p className="reading">{c.question}</p>

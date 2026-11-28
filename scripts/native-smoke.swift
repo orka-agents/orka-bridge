@@ -463,8 +463,8 @@ func sendFrameVisible(_ observations: [VNRecognizedTextObservation]) -> Bool {
     let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     // The Send card's own rerun action is a marker too: at 540x640 the result head can sit above a frame anchored on
     // the card's actions, and "Run cluster tests again" appears nowhere but the Send card (clusters/Send.tsx againLabel).
-    // Likewise its own Details hint "Resources and file hashes", which stays under a recovery-actions frame at 540x640.
-    let markers = ["Run cluster tests again", "Resources and file hashes","Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
+    // Likewise its own Details hint "How Send works, checks and file hashes", which stays under a recovery-actions frame at 540x640.
+    let markers = ["Run cluster tests again", "How Send works","Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
         "Earlier result", "Send needs attention", "Running tests",
         "Cancelling tests", "Cancellation requested.", "Cannot cancel with this cluster identity", "This Orka cannot cancel tests.", "Cancellation not confirmed.", "Tests cancelled on the cluster.", "Tests finished before cancellation."]
     return markers.contains { text.localizedCaseInsensitiveContains($0) }
@@ -740,7 +740,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
                     ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.hasPrefix(choice) == true }
                 }, "Missing local setup choice: \(choice)")
             }
-            require(nativeStrings().contains { showsText($0, "Step 1 of 4") } && nativeButtons("Continue").count == 1,
+            require(nativeStrings().contains { showsText($0, "Choose where agents run") } && nativeButtons("Continue").count == 1,
                     "Local setup choice lost its step counter or Continue")
         }
         if !welcome {
@@ -838,7 +838,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32, region: String? 
         // A state capture may leave the card header above the viewport. Locate
         // its actual button instead of searching only in the caller's direction.
         let buttons = label == "Details" ? nativeButtons(label, root: root).filter { element in
-            ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("Resources and file hashes") == true }
+            ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("How Send works, checks and file hashes") == true }
         } : nativeButtons(label, root: root)
         if buttons.count == 1, let bounds = nativeBounds(buttons[0]), !bodyBounds().contains(bounds) {
             scrollMain(Int32((bodyBounds().minY + 32 - bounds.minY).rounded()))

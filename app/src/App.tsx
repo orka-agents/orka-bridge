@@ -104,9 +104,11 @@ export default function App() {
   // The last cluster connected in this run with an AI connection, for Home to offer when this computer can't run the Navigator.
   const [lastCluster, setLastCluster] = useState<SelectedPlace>();
   useEffect(() => { if (place.kind === 'cluster' && place.target && place.providerId) setLastCluster(place); }, [place]);
-  // The guided first run ends once the person moves on: another page, a cluster instead of this computer, or Set up later.
+  // The guided first run ends once the person moves on: another page, a cluster connected instead of this computer, or
+  // Set up later. Choosing a context or pressing Use this cluster isn't connected yet; access confirmed is.
   // That includes Setup opening Designer when the automatic first test doesn't pass, so the person sees why.
-  useEffect(() => { if (guided && (page !== 'Clusters' || remote)) leaveGuided(); }, [guided, page, remote, leaveGuided]);
+  const connected = place.kind === 'cluster' && !!place.target;
+  useEffect(() => { if (guided && (page !== 'Clusters' || connected)) leaveGuided(); }, [guided, page, connected, leaveGuided]);
   const content = useRef<HTMLElement>(null);
   useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);

@@ -164,3 +164,9 @@ test('a long unbroken expectation, name or generated value wraps inside its card
   // Names and generated values in code wrap wherever they appear.
   expect(css('src/app.css')).toContain('code { overflow-wrap: anywhere; }');
 });
+test('a collapsed card whose headline says Earlier result does not print it again above the rows', () => {
+  const { container } = render(<TestResults report={report} stale collapsed />);
+  expect([...container.querySelectorAll('.test-results > p')].map(p => p.textContent)).not.toContain('Earlier result');
+  // Each row still carries its own Earlier result pill.
+  expect(container.querySelectorAll('.test-result .pill.status-stale')).toHaveLength(2);
+});

@@ -4,7 +4,7 @@ import ContextPicker from './ContextPicker';
 import ServiceAccountPicker from './ServiceAccountPicker';
 import { useEffect, useRef, useState } from 'react';
 import { type AccessView, type ClusterFailure, type ContextView, connectCluster, contexts, discover, failedCheck, reloadContexts, reconnectCluster, forgetCluster, clusterPlaces, type SelectedPlace, type TargetView } from './api';
-import { clusterDetails, clusterRecovery } from './recovery';
+import { clusterDetails, clusterFailureWords, clusterRecovery } from './recovery';
 import { Button } from '../components/Button';
 import { StatusIcon } from '../components/DesignSystem';
 import { readPlaces, type Place } from '../overview/api';
@@ -286,7 +286,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
       </div>}</Disclosure>}
     {error && <Disclosure label="Details" open={details} onOpenChange={setDetails}>{details && <div className="cluster-error-details">
       {target && !connected && <p className="cluster-found-line">Cluster found: <code className="code-chip">{target.watched_namespace}</code> · <code className="code-chip">{target.service_namespace} / {target.service_name}</code></p>}
-      <p>Check: {error.failure.check}</p><p>Result: {error.failure.result}</p>
+      <p>Step: {clusterFailureWords(error.failure).step}</p><p>Result: {clusterFailureWords(error.failure).result}</p>
       <Button type="button" kind="secondary" onClick={() => { void copy(); }}>Copy details for help</Button>
       <Button type="button" kind="quiet" disabled={reloading || removing} onClick={() => { void reload(); }}>Reload kubeconfig</Button>
       <p className="muted">After reloading kubeconfig, choose a context and check access again.</p>

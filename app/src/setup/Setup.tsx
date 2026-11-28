@@ -442,7 +442,8 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
       <div className={workspace ? `setup workspace-setup-grid returning-grid${updateBlocked || status?.localVm === 'failed' ? ' returning-grid-wide' : ''}` : selected ? `setup workspace-setup-grid${status?.localVm === 'failed' ? ' workspace-setup-failed' : ''}${twoCards ? ' returning-grid setup-cards' : ''}` : 'workspace-choice local-preflight'}>
         {!selected && !workspace && <>
           <section className="card">
-            <p className="workspace-choice-step muted">Step 1 of 4 · Choose where agents run</p>
+            {/* The guided run counts its own three steps in the title bar; the four-step count is the workspace setup's. */}
+            <p className="workspace-choice-step muted">{guided ? 'Choose where agents run' : 'Step 1 of 4 · Choose where agents run'}</p>
             <fieldset className="workspace-options">
               <legend className="workspace-sr-only">Where agents run</legend>
               <div className={`workspace-option${location === 'local' ? ' workspace-selected' : ''}${localOff ? ' workspace-option-off' : ''}`}>

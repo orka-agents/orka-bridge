@@ -125,6 +125,31 @@ test('naming details are available on request without hiding either storage choi
   expect(naming.open).toBe(true);
 });
 
+test('an invalid name gets the rule in words beside the field, not the engine\'s bubble, and creates nothing', async () => {
+  let creates = 0;
+  native(command => { if (command === 'agent_create') creates++; });
+  const user = userEvent.setup(); render(<Example />);
+  await user.click(await screen.findByRole('button', { name: 'New agent' }));
+  const field = screen.getByRole('textbox', { name: 'Name' });
+  expect(field.closest('form')?.noValidate).toBe(true);
+  await user.type(field, 'Bad Name');
+  expect(field.getAttribute('aria-invalid')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+  const error = await screen.findByText('Use only lowercase letters, numbers and hyphens, with no spaces.');
+  expect(error.classList.contains('field-error')).toBe(true);
+  expect(field.getAttribute('aria-invalid')).toBe('true');
+  expect(field.getAttribute('aria-describedby')).toBe('new-agent-name-error new-agent-name-hint');
+  expect(document.activeElement).toBe(field);
+  await user.clear(field); await user.type(field, '-helper');
+  expect(screen.getByText('Begin and end with a letter or number.')).toBeTruthy();
+  await user.clear(field);
+  expect(screen.getByText('Enter a name.')).toBeTruthy();
+  await user.type(field, 'helper');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(field.getAttribute('aria-invalid')).toBeNull();
+  expect(creates).toBe(0);
+});
+
 test('cancel preserves the mounted draft and creates nothing', async () => {
   let creates = 0;
   native(command => { if (command === 'agent_create') creates++; });
