@@ -106,6 +106,14 @@ test('a held, unconfirmed task offers Reconnect and Stop instead of a new task',
   expect(commands()).toEqual(['agent_chat_reconnect']);
   expect(within(result()).getByRole('button', { name: 'Stop' })).toBeTruthy();
 });
+test('Run sends exactly what the field holds, even when the last keys have not rendered yet', async () => {
+  await open();
+  fireEvent.change(field(), { target: { value: 'Read https://does-not-exist.inva' } });
+  // The browser has already put the last keys in the field; React has not rendered them yet.
+  field().value = 'Read https://does-not-exist.invalid';
+  fireEvent.click(runButton()); await settle();
+  expect(sends().map(c => c.args.message)).toEqual(['Read https://does-not-exist.invalid']);
+});
 test('a Stop that arrived after the task finished says so instead of passing silently', async () => {
   snapshot = { ...idle, versions: [{ turns: [{ ...turn, finishedBeforeStop: true }] }] };
   await open();

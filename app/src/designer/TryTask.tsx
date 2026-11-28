@@ -154,6 +154,13 @@ export default function TryTask({ documentId, agentName, model, blocked, place, 
     const now = document.activeElement;
     if (!now || now === document.body || now === before) composer.current?.focus();
   };
+  // What the field holds when Run is pressed: the DOM value can be ahead of the last rendered draft when keys
+  // arrive faster than React renders, and the task sent must be exactly what the person sees.
+  const submitted = () => {
+    const value = composer.current?.value ?? draft;
+    if (value !== draft) setDraft(value);
+    return value;
+  };
   const run = (message: string) => settle(async () => {
     if (reason || !message.trim()) return;
     const index = turns.length;
@@ -191,14 +198,14 @@ export default function TryTask({ documentId, agentName, model, blocked, place, 
   // Without a turn for it yet, recovery belongs to the composer; once the task shows, to its result.
   const recoveryOnCard = !!current && !awaitingTurn && (canStop || canReconnect);
   return <section className="try-task" aria-label={`Try a task on ${where}`}>
-    <form className="card card-strong try-composer" onSubmit={event => { event.preventDefault(); void run(draft); }}>
+    <form className="card card-strong try-composer" onSubmit={event => { event.preventDefault(); void run(submitted()); }}>
       <label className="try-composer-label" htmlFor={fieldId}>Give <span className="try-agent">{agentName}</span> one task</label>
       <textarea className="field" ref={composer} id={fieldId} rows={2} placeholder="Describe the task" value={draft} aria-describedby={hintId}
         onChange={event => setDraft(event.target.value)}
         onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) {
-            event.preventDefault(); void run(draft);
+            event.preventDefault(); void run(submitted());
           }
         }} />
       <div className="try-composer-foot">

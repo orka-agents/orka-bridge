@@ -222,13 +222,15 @@ function Navigator({ active, revision, gate, onOpenPage, onOpenAgent, onAgentCre
     : <>runs on this computer{thinksWith && thinksWith.kind !== 'cluster' && <span className="nav-line-wide"> · thinks with {vendors[thinksWith.kind]} · {thinksWith.model}</span>}</>;
   // A refused send shows on its own turn below; the field alert is for everything else.
   const failure = error && error.message !== failed?.reason ? error.message : readError;
-  const composer = <form className={`nav-composer${empty ? ' nav-composer-start' : ''}`} aria-label="Chat" onSubmit={event => { event.preventDefault(); void send(draft); }}>
+  // The field's own value when sending: it can be ahead of the last rendered draft while keys are still arriving.
+  const submitted = () => field.current?.value ?? draft;
+  const composer = <form className={`nav-composer${empty ? ' nav-composer-start' : ''}`} aria-label="Chat" onSubmit={event => { event.preventDefault(); void send(submitted()); }}>
     <label className="sr-only" htmlFor={fieldId}>Message</label>
     <textarea id={fieldId} ref={field} rows={empty ? 3 : 1} placeholder="Ask anything, or describe a task" value={draft}
       onChange={event => setDraft(event.target.value)}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
       onKeyDown={event => {
-        if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(draft); }
+        if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void send(submitted()); }
       }} />
     <div className="nav-composer-foot">
       <span className="nav-line">Navigator · {line}</span>
