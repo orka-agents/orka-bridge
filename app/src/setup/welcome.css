@@ -56,8 +56,8 @@
 .workspace-option > .chip { font: var(--type-label); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--color-text); padding: var(--space-0-5) var(--space-2); }
 .workspace-option-detail { grid-column: 2 / 4; color: var(--color-text-secondary); display: grid; gap: var(--space-2); }
 .workspace-option-detail p { margin: 0; }
-.workspace-option-detail > p.workspace-option-req { font: var(--type-caption); font-family: var(--font-mono); font-variant-ligatures: none; }
-/* The lede sits inside What's inside, so it is not a direct child of the detail. */
+.workspace-option-detail p.workspace-option-req { font: var(--type-caption); font-family: var(--font-mono); font-variant-ligatures: none; }
+/* The lede and the disk detail sit inside What's inside, so they are not direct children of the detail. */
 .workspace-option-detail p.workspace-option-lede { font: var(--type-body); font-size: 15px; line-height: 21px; }
 /* Beside Continue: what it does next, in the boards' mono hint. */
 .workspace-continue-hint { font: 400 13px/18px var(--font-mono); font-variant-ligatures: none; color: var(--color-text-secondary); }
@@ -98,5 +98,5 @@
 .places-workspace > div:not([hidden]):has(> .local-preflight), .places-workspace .local-preflight, .places-workspace .local-preflight > .card { display: contents; }
 .places-workspace .local-preflight .workspace-choice-step { order: -1; margin-bottom: calc(var(--space-2-5) - var(--space-4)); font-size: 12px; }
 .local-preflight .workspace-option > label { font-size: 20px; }
-.workspace-option-detail > p.workspace-option-req { font-size: 13px; line-height: 18px; }
+.workspace-option-detail p.workspace-option-req { font-size: 13px; line-height: 18px; }
 .workspace-option-detail { font-size: 14px; }

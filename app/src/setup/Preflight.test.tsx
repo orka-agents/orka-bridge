@@ -150,7 +150,29 @@ test('virtualization failure offers native fixed-topic help, sanitized copy, and
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
 });
 
-test.each([null, { ...ready, extra: 'SECRET_MARKER' }, { ...ready, requiredMemoryBytes: 1 }, { ...ready, installedMemoryBytes: -1 }, { ...ready, memory: 'SECRET_MARKER' }])('unreadable observations settle to unknown and defer to native launch: %j', async value => {
+test.each([
+  ['pending', new Promise(() => {}), 'Checking this computer before setup.', true],
+  ['run at start', null, 'Bridge checks virtualization and memory when the workspace starts.', true],
+  ['passed', ready, 'These checks do not change this computer.', false],
+])('a %s check reads as normal: no warning, no failure and Continue stays the main action', async (name, observation, line, shown) => {
+  await native(observation);
+  // A passed check's words also sit beside Continue as its hint; the check's own line is the status.
+  const status = await waitFor(() => { const found = screen.getAllByText(line).find(element => element.id === 'preflight-reason'); expect(found).toBeTruthy(); return found!; });
+  expect(status.className).toBe(shown ? 'muted' : 'sr-only');
+  expect(document.body.textContent).not.toMatch(/couldn't check/i);
+  expect(screen.queryByRole('alert')).toBeNull();
+  if (name !== 'pending') await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));
+});
+
+test('a failed check still reads as a problem and blocks Continue', async () => {
+  await native({ ...ready, platform: 'macos', virtualization: 'unsupported' });
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(screen.getByText('Not supported on this Mac')).toBeTruthy();
+  expect(screen.queryByText(/when the workspace starts/)).toBeNull();
+  expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
+});
+
+test.each([{ ...ready, extra: 'SECRET_MARKER' }, { ...ready, requiredMemoryBytes: 1 }, { ...ready, installedMemoryBytes: -1 }, { ...ready, memory: 'SECRET_MARKER' }])('unreadable observations settle to unknown and defer to native launch: %j', async value => {
   const { ipc } = await native(value);
   expect(await screen.findByText("Bridge couldn't check virtualization or memory yet. It checks again when the workspace starts.")).toBeTruthy();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));

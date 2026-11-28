@@ -285,10 +285,10 @@ press(setUp)
 let requirements = find(main, "computer-requirements-panel") { text($0).contains("Computer requirements") }
 wait("Computer requirements did not settle") {
     shownStrings(requirements).contains { line in
-        ["These checks do not change this computer.", "This computer has", "Virtualization:", "Bridge couldn't check"].contains { line.contains($0) }
+        ["These checks do not change this computer.", "Bridge checks virtualization and memory when the workspace starts.", "This computer has", "Virtualization:", "Bridge couldn't check"].contains { line.contains($0) }
     }
 }
-// Required memory and maximum data-disk growth stay visible; the disclosure opens.
+// Required memory stays on the card; opening the disclosure shows data-disk growth.
 press(find(main, "workspace-inside") { pressable($0, "What's inside") })
 currentStage = "local-size-block"; print("STAGE: \(currentStage)")
 wait("Local size facts did not settle") {
