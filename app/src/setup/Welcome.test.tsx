@@ -121,7 +121,9 @@ test('debug requirements without a download retain RAM checks and disk facts wit
 test('release welcome exposes unavailability before Get started without replacing the workflow copy', async () => {
   const ipc = native({ ...unselected, localVm: 'notIntegrated' }, null); render(<App />);
   expect(await screen.findByRole('button', { name: 'Get started' })).toBeTruthy();
-  expect(screen.getByText("This build can't run agents on this computer. Next, you connect a cluster you already have.")).toBeTruthy();
+  expect(screen.getByText("This build can't run agents here. Next, you connect a cluster you already have.")).toBeTruthy();
+  // The lede doesn't promise tests on this computer either.
+  expect(screen.getByText("Build an agent on this computer, then test it and run it on your team's Orka cluster.")).toBeTruthy();
   // Nothing is downloaded here, so no download line contradicts it.
   expect(screen.queryByText(/Mostly a/)).toBeNull();
   expect(screen.getByText('Share it')).toBeTruthy();

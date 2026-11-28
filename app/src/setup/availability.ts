@@ -11,7 +11,8 @@ export const unavailableCopy = {
   // Home's card where the Navigator would wait for this computer.
   title: 'Not available on this build.',
   // Under Welcome's Get started, which leads to Clusters.
-  welcome: "This build can't run agents on this computer. Next, you connect a cluster you already have.",
+  lede: "Build an agent on this computer, then test it and run it on your team's Orka cluster.",
+  welcome: "This build can't run agents here. Next, you connect a cluster you already have.",
   // Why the choice can't be made, beside it.
   reason: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
 };

@@ -27,7 +27,8 @@ export default function NewAgent({ active, model, onRegistered, onCreated, onCan
   const input = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; input.current?.focus(); void creationRoot().then(value => { if (mounted.current) setRoot(value); }); return () => { mounted.current = false; }; }, []);
-  const stem = name || '<name>';
+  // The folder preview names only a name that can be used, so it never shows a path that can't be created.
+  const stem = name && !nameProblem(name) ? name : '<name>';
   const destination = storage === 'bridge' ? root : repo?.path;
   const separator = destination?.includes('\\') ? '\\' : '/';
   const disabled = busy || picking;

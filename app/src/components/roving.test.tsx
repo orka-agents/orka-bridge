@@ -2,6 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, expect, test } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { rovingIndex, rovingKeyDown } from './roving';
 
 afterEach(cleanup);
@@ -38,4 +39,9 @@ test('a disabled view is skipped', async () => {
   const user = userEvent.setup(); render(<Views disabled="Try a task" />);
   screen.getByRole('button', { name: 'Agent' }).focus();
   await user.keyboard('{ArrowRight}'); expect(pressed()).toEqual(['File']);
+});
+
+test('each segment keeps the width of its bold label, so choosing one moves nothing beside the control', () => {
+  const css = readFileSync('src/app.css', 'utf8');
+  expect(css).toContain('.view-switch button[data-label]::after { content: attr(data-label); height: 0; overflow: hidden; visibility: hidden; font-weight: 600;');
 });
